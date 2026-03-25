@@ -313,16 +313,23 @@ export default function EmployeePage() {
     init()
   }, [])
 
-  useEffect(() => {
-    if (user) {
-      if (tab === 'schedule') {
-        loadWeekData(user.id, weekBaseDate)
-      }
-      if (tab === 'today') {
-        loadTodayOverview(user.id, todayMode)
-      }
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+useEffect(() => {
+  if (!user) return
+
+  const run = async () => {
+    if (tab === 'schedule') {
+      await loadWeekData(user.id, weekBaseDate)
     }
-  }, [weekBaseDate, user, tab, todayMode])
+
+    if (tab === 'today') {
+      await loadTodayOverview(user.id, todayMode)
+    }
+  }
+
+  void run()
+}, [weekBaseDate, user, tab, todayMode])
+
 
   async function handleAttendance(type: 'check_in' | 'check_out') {
     if (!user) return
