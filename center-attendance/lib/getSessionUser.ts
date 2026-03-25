@@ -1,12 +1,21 @@
-import { createClient } from '@supabase/supabase-js'
+import { cookies } from 'next/headers'
 
-export const supabaseAdmin = createClient(
-  process.env.SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!,
-  {
-    auth: {
-      persistSession: false,
-      autoRefreshToken: false,
-    },
+export async function getSessionUser() {
+  const cookieStore = await cookies()
+
+  const userId = cookieStore.get('userId')?.value
+  const loginId = cookieStore.get('loginId')?.value
+  const role = cookieStore.get('role')?.value
+  const name = cookieStore.get('name')?.value
+
+  if (!userId || !loginId || !role) {
+    return null
   }
-)
+
+  return {
+    id: Number(userId),
+    loginId,
+    role,
+    name: name ?? '',
+  }
+}
