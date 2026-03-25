@@ -3,7 +3,12 @@ import { supabaseAdmin } from '@/lib/supabaseAdmin'
 import crypto from 'crypto'
 
 function signSession(payload: string) {
-  const secret = process.env.APP_SESSION_SECRET!
+  const secret = process.env.APP_SESSION_SECRET
+
+  if (!secret) {
+    throw new Error('APP_SESSION_SECRET is required')
+  }
+
   return crypto.createHmac('sha256', secret).update(payload).digest('hex')
 }
 
