@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '@/lib/supabase'
-import AdminDailySchedule from '@/components/AdminDailySchedule'
 
 type MainTab = 'schedule' | 'children' | 'staff' | 'summary'
 type ViewMode = 'all' | 'staff' | 'daily'
@@ -69,24 +68,38 @@ type MonthlyGroupPriceRow = {
   unit_price: number
 }
 
-type SummaryRow = {
+type SummarySettlementRow = {
   child_id: number
   child_name: string
   age_text: string
   voucher_label: string
-  attended_count: number
+  lesson_count: number
+  group_count: number
   absent_count: number
   same_day_absent_count: number
-  makeup_count: number
-  used_count: number
-  group_used_count: number
-  individual_used_count: number
-  individual_amount: number
   group_unit_price: number
-  group_amount: number
   total_amount: number
-  didim_applied_count: number
-  didim_over_count: number
+}
+
+type ChildAttendanceRow = {
+  child_id: number
+  child_name: string
+  age_text: string
+  attended_count: number
+  makeup_count: number
+  absent_count: number
+  same_day_absent_count: number
+  monthly_dates: string
+}
+
+type TeacherLessonRow = {
+  key: string
+  teacher_name: string
+  child_name: string
+  attended_dates: string
+  makeup_dates: string
+  absent_dates: string
+  same_day_absent_dates: string
 }
 
 type ChildForm = {
@@ -120,7 +133,27 @@ type EditingCell = {
   staffId: number
 } | null
 
-const VOUCHER_OPTIONS = ['디딤', '아청심', '드림스타트', '배움', '일반']
+type DisplayScheduleItem = {
+  key: string
+  date: string
+  hourSlot: string
+  minuteSlot: number
+  staffId: number
+  teacherName: string
+  voucherType: string
+  note: string
+  isGroup: boolean
+  groupId: string | null
+  groupName: string | null
+  rows: ScheduleEntryRow[]
+}
+
+type AttendanceModalState = {
+  open: boolean
+  item: DisplayScheduleItem | null
+}
+
+const VOUCHER_OPTIONS = ['일반', '디딤', '아청심', '드림스타트', '배움']
 
 function toDateString(date: Date) {
   const y = date.getFullYear()
@@ -152,15 +185,7 @@ function buildWeekDates(baseDate: Date) {
 }
 
 function getHourSlots() {
-  return Array.from({ length: 12 }, (_, i) => String(i + 9).padStart(2, '0') + ':00')
-}
-
-function getHourLabel(hourSlot: string) {
-  return hourSlot
-}
-
-function getMinutesOptions() {
-  return ['00', '10', '20', '30', '40', '50']
+  return Array.from({ length: 12 }, (_, i) => `${String(i + 9).padStart(2, '0')}:00`)
 }
 
 function getAgeText(birthDate: string | null) {
@@ -229,9 +254,9 @@ function downloadCsvFile(
 }
 
 function buildClassTime(hourSlot: string, minute: string | number | null | undefined) {
-  const hour = hourSlot.slice(0, 2)
+  const hh = hourSlot.slice(0, 2)
   const mm = String(Number(minute ?? 0)).padStart(2, '0')
-  return `${hour}:${mm}`
+  return `${hh}:${mm}`
 }
 
 function getVoucherPrices(child: ChildRow) {
@@ -240,19 +265,8 @@ function getVoucherPrices(child: ChildRow) {
   return value
 }
 
-type DisplayScheduleItem = {
-  key: string
-  date: string
-  hourSlot: string
-  minuteSlot: number
-  staffId: number
-  teacherName: string
-  voucherType: string
-  note: string
-  isGroup: boolean
-  groupId: string | null
-  groupName: string | null
-  rows: ScheduleEntryRow[]
+function uniqueDateList(values: string[]) {
+  return Array.from(new Set(values)).sort().join(', ')
 }
 
 export default function AdminPage() {
@@ -286,6 +300,13 @@ export default function AdminPage() {
   const [isGroupLesson, setIsGroupLesson] = useState(false)
   const [groupName, setGroupName] = useState('')
   const [selectedGroupChildIds, setSelectedGroupChildIds] = useState<number[]>([])
+  const [groupSearch, setGroupSearch] = useState('')
+  const [childSearch, setChildSearch] = useState('')
+
+  const [attendanceModal, setAttendanceModal] = useState<AttendanceModalState>({
+    open: false,
+    item: null,
+  })
 
   const [childForm, setChildForm] = useState<ChildForm>({
     id: null,
@@ -294,11 +315,11 @@ export default function AdminPage() {
     birthDate: '',
     phone: '',
     voucherTypes: [],
-    basePrice: '',
-    didimPrice: '',
-    achungsimPrice: '',
-    dreamStartPrice: '',
-    baeumPrice: '',
+    basePrice: '60000',
+    didimPrice: '10000',
+    achungsimPrice: '54000',
+    dreamStartPrice: '40000',
+    baeumPrice: '10000',
     notes: '',
     isActive: true,
   })
@@ -324,12 +345,24 @@ export default function AdminPage() {
     [employeeStaffs, selectedStaffId]
   )
 
+  const filteredChildren = useMemo(() => {
+    const q = childSearch.trim()
+    if (!q) return children
+    return children.filter((c) => c.child_name.includes(q))
+  }, [children, childSearch])
+
+  const filteredGroupChildren = useMemo(() => {
+    const q = groupSearch.trim()
+    const base = children.filter((c) => c.is_active)
+    if (!q) return base
+    return base.filter((c) => c.child_name.includes(q))
+  }, [children, groupSearch])
+
   async function loadStaffs() {
     const { data, error } = await supabase
       .from('staff_accounts')
       .select('*')
       .order('name', { ascending: true })
-
     if (error) throw error
     setStaffs((data ?? []) as StaffRow[])
   }
@@ -339,7 +372,6 @@ export default function AdminPage() {
       .from('children')
       .select('*')
       .order('child_name', { ascending: true })
-
     if (error) throw error
     setChildren((data ?? []) as ChildRow[])
   }
@@ -386,7 +418,10 @@ export default function AdminPage() {
       .select('id, child_id, month_key, unit_price')
       .eq('month_key', csvMonth)
 
-    if (error) throw error
+    if (error) {
+      setMonthlyGroupPrices({})
+      return
+    }
 
     const next: Record<number, string> = {}
     ;((data ?? []) as MonthlyGroupPriceRow[]).forEach((row) => {
@@ -437,6 +472,7 @@ export default function AdminPage() {
     setIsGroupLesson(false)
     setGroupName('')
     setSelectedGroupChildIds([])
+    setGroupSearch('')
   }
 
   function getScheduleEntries(dateStr: string, hourSlot: string, staffId: number) {
@@ -454,10 +490,7 @@ export default function AdminPage() {
     const groupMap = new Map<string, DisplayScheduleItem>()
 
     rows.forEach((row) => {
-      const itemKey =
-        row.is_group && row.group_id
-          ? `group-${row.group_id}`
-          : `single-${row.id}`
+      const itemKey = row.is_group && row.group_id ? `group-${row.group_id}` : `single-${row.id}`
 
       if (!groupMap.has(itemKey)) {
         groupMap.set(itemKey, {
@@ -562,11 +595,11 @@ export default function AdminPage() {
         birthDate: '',
         phone: '',
         voucherTypes: [],
-        basePrice: '',
-        didimPrice: '',
-        achungsimPrice: '',
-        dreamStartPrice: '',
-        baeumPrice: '',
+        basePrice: '60000',
+        didimPrice: '10000',
+        achungsimPrice: '54000',
+        dreamStartPrice: '40000',
+        baeumPrice: '10000',
         notes: '',
         isActive: true,
       })
@@ -639,7 +672,9 @@ export default function AdminPage() {
           return
         }
 
-        const groupId = editingGroupId || crypto.randomUUID()
+        const groupId =
+          editingGroupId || (typeof crypto !== 'undefined' ? crypto.randomUUID() : `group-${Date.now()}`)
+
         const groupRows = selectedGroupChildIds.map((childId) => ({
           date: dateStr,
           time_slot: hourSlot,
@@ -656,12 +691,11 @@ export default function AdminPage() {
         }))
 
         if (editingGroupId) {
-          const { error: deleteOldError } = await supabase
+          const { error: clearError } = await supabase
             .from('schedule_entries')
             .update({ is_active: false })
             .eq('group_id', editingGroupId)
-
-          if (deleteOldError) throw deleteOldError
+          if (clearError) throw clearError
         }
 
         const { error } = await supabase.from('schedule_entries').insert(groupRows)
@@ -718,8 +752,7 @@ export default function AdminPage() {
       setMessage(err?.message ?? '시간표 저장 실패')
     }
   }
-
-  async function handleDeleteSchedule(item: DisplayScheduleItem) {
+async function handleDeleteSchedule(item: DisplayScheduleItem) {
     try {
       const ok = window.confirm('이 시간표를 삭제할까요?')
       if (!ok) return
@@ -729,7 +762,6 @@ export default function AdminPage() {
           .from('schedule_entries')
           .update({ is_active: false })
           .eq('group_id', item.groupId)
-
         if (error) throw error
       } else {
         const targetId = item.rows[0]?.id
@@ -739,7 +771,6 @@ export default function AdminPage() {
           .from('schedule_entries')
           .update({ is_active: false })
           .eq('id', targetId)
-
         if (error) throw error
       }
 
@@ -859,46 +890,83 @@ export default function AdminPage() {
     }
   }
 
-  function getIndividualRowAmount(
-    row: ClassLogRow,
-    child: ChildRow,
-    didimIndex: number
-  ) {
+  function getIndividualRowAmount(row: ScheduleEntryRow, child: ChildRow, didimIndex: number) {
     const voucherPrices = getVoucherPrices(child)
     const basePrice = Number(child.base_price ?? 0)
 
     if (row.is_group) return 0
-
-    if (row.voucher_type === '디딤') {
-      return didimIndex <= 3 ? 0 : basePrice
-    }
-    if (row.voucher_type === '아청심') {
-      return Number(voucherPrices['아청심'] ?? 0)
-    }
-    if (row.voucher_type === '드림스타트') {
-      return Number(voucherPrices['드림스타트'] ?? 0)
-    }
-    if (row.voucher_type === '배움') {
-      return Number(voucherPrices['배움'] ?? 0)
-    }
+    if (row.voucher_type === '디딤') return didimIndex <= 3 ? 0 : basePrice
+    if (row.voucher_type === '아청심') return Number(voucherPrices['아청심'] ?? 0)
+    if (row.voucher_type === '드림스타트') return Number(voucherPrices['드림스타트'] ?? 0)
+    if (row.voucher_type === '배움') return Number(voucherPrices['배움'] ?? 0)
     return basePrice
   }
 
-  const summaryRows = useMemo<SummaryRow[]>(() => {
+  const attendanceSummaryRows = useMemo<ChildAttendanceRow[]>(() => {
     return children
       .filter((child) => child.is_active)
       .map((child) => {
         const rows = classLogs.filter((log) => Number(log.child_id) === Number(child.id))
-        const attended = rows.filter((r) => r.status === 'attended').length
-        const absent = rows.filter((r) => r.status === 'absent').length
-        const sameDayAbsent = rows.filter((r) => r.status === 'same_day_absent').length
-        const makeup = rows.filter((r) => r.status === 'makeup').length
-        const usedRows = rows.filter(
-          (r) => r.status === 'attended' || r.status === 'makeup' || r.status === 'same_day_absent'
-        )
+        return {
+          child_id: child.id,
+          child_name: child.child_name,
+          age_text: getAgeText(child.birth_date),
+          attended_count: rows.filter((r) => r.status === 'attended').length,
+          makeup_count: rows.filter((r) => r.status === 'makeup').length,
+          absent_count: rows.filter((r) => r.status === 'absent').length,
+          same_day_absent_count: rows.filter((r) => r.status === 'same_day_absent').length,
+          monthly_dates: uniqueDateList(rows.map((r) => r.class_date)),
+        }
+      })
+      .sort((a, b) => a.child_name.localeCompare(b.child_name, 'ko'))
+  }, [children, classLogs])
 
-        const groupRows = usedRows.filter((r) => Boolean(r.is_group))
-        const individualRows = usedRows.filter((r) => !r.is_group)
+  const teacherLessonRows = useMemo<TeacherLessonRow[]>(() => {
+    const teacherMap = new Map<number, string>(staffs.map((s) => [Number(s.id), s.name]))
+    const childMap = new Map<number, string>(children.map((c) => [Number(c.id), c.child_name]))
+    const grouped = new Map<string, ClassLogRow[]>()
+
+    classLogs.forEach((log) => {
+      const key = `${log.staff_id}-${log.child_id}`
+      if (!grouped.has(key)) grouped.set(key, [])
+      grouped.get(key)!.push(log)
+    })
+
+    return Array.from(grouped.entries()).map(([key, rows]) => {
+      const first = rows[0]
+      return {
+        key,
+        teacher_name: teacherMap.get(Number(first.staff_id)) ?? `선생님(${first.staff_id})`,
+        child_name: childMap.get(Number(first.child_id)) ?? `학생(${first.child_id})`,
+        attended_dates: uniqueDateList(rows.filter((r) => r.status === 'attended').map((r) => r.class_date)),
+        makeup_dates: uniqueDateList(rows.filter((r) => r.status === 'makeup').map((r) => r.class_date)),
+        absent_dates: uniqueDateList(rows.filter((r) => r.status === 'absent').map((r) => r.class_date)),
+        same_day_absent_dates: uniqueDateList(
+          rows.filter((r) => r.status === 'same_day_absent').map((r) => r.class_date)
+        ),
+      }
+    })
+  }, [staffs, children, classLogs])
+
+  const settlementRows = useMemo<SummarySettlementRow[]>(() => {
+    const start = `${csvMonth}-01`
+    const endDate = new Date(start)
+    endDate.setMonth(endDate.getMonth() + 1)
+    endDate.setDate(0)
+    const end = toDateString(endDate)
+
+    const monthlyScheduleRows = allScheduleEntries.filter(
+      (row) => row.date >= start && row.date <= end && row.is_active
+    )
+
+    return children
+      .filter((child) => child.is_active)
+      .map((child) => {
+        const rows = monthlyScheduleRows.filter((r) => Number(r.child_id) === Number(child.id))
+        const attendanceRows = classLogs.filter((r) => Number(r.child_id) === Number(child.id))
+
+        const groupRows = rows.filter((r) => Boolean(r.is_group))
+        const individualRows = rows.filter((r) => !r.is_group)
 
         let didimCounter = 0
         let individualAmount = 0
@@ -920,58 +988,34 @@ export default function AdminPage() {
           child_name: child.child_name,
           age_text: getAgeText(child.birth_date),
           voucher_label: getVoucherLabel(child.vouchers),
-          attended_count: attended,
-          absent_count: absent,
-          same_day_absent_count: sameDayAbsent,
-          makeup_count: makeup,
-          used_count: usedRows.length,
-          group_used_count: groupRows.length,
-          individual_used_count: individualRows.length,
-          individual_amount: individualAmount,
+          lesson_count: individualRows.length,
+          group_count: groupRows.length,
+          absent_count: attendanceRows.filter((r) => r.status === 'absent').length,
+          same_day_absent_count: attendanceRows.filter((r) => r.status === 'same_day_absent').length,
           group_unit_price: groupUnitPrice,
-          group_amount: groupAmount,
           total_amount: individualAmount + groupAmount,
-          didim_applied_count: Math.min(didimCounter, 3),
-          didim_over_count: Math.max(didimCounter - 3, 0),
         }
       })
       .sort((a, b) => a.child_name.localeCompare(b.child_name, 'ko'))
-  }, [children, classLogs, monthlyGroupPrices])
+  }, [csvMonth, allScheduleEntries, children, classLogs, monthlyGroupPrices])
 
   function downloadStudentCsv() {
-    const monthRows = summaryRows.map((row) => [
+    const monthRows = settlementRows.map((row) => [
       csvMonth,
       row.child_name,
       row.age_text,
       row.voucher_label,
-      row.attended_count,
+      row.lesson_count,
+      row.group_count,
       row.absent_count,
       row.same_day_absent_count,
-      row.makeup_count,
-      row.used_count,
-      row.group_used_count,
-      row.individual_amount,
-      row.group_amount,
+      row.group_unit_price,
       row.total_amount,
     ])
 
     downloadCsvFile(
       `학생CSV_${csvMonth}.csv`,
-      [
-        '월',
-        '학생',
-        '나이',
-        '바우처',
-        '출석',
-        '결석',
-        '당일결석',
-        '보강',
-        '사용',
-        '그룹횟수',
-        '개별금액',
-        '그룹금액',
-        '총금액',
-      ],
+      ['월', '학생', '나이', '바우처', '수업횟수', '그룹횟수', '결석', '당일결석', '그룹단가', '총금액'],
       monthRows
     )
   }
@@ -1039,13 +1083,18 @@ export default function AdminPage() {
                   placeholder="그룹명"
                   className="w-full rounded border bg-white px-2 py-1 text-xs"
                 />
-
+                <input
+                  value={groupSearch}
+                  onChange={(e) => setGroupSearch(e.target.value)}
+                  placeholder="학생 이름 검색"
+                  className="w-full rounded border bg-white px-2 py-1 text-xs"
+                />
                 <div className="rounded border p-2">
                   <div className="mb-2 text-[11px] text-slate-500">
                     학생 선택 ({selectedGroupChildIds.length}/8)
                   </div>
-                  <div className="grid max-h-40 grid-cols-2 gap-1 overflow-y-auto">
-                    {children.filter((c) => c.is_active).map((c) => {
+                  <div className="grid max-h-40 grid-cols-1 gap-1 overflow-y-auto">
+                    {filteredGroupChildren.map((c) => {
                       const active = selectedGroupChildIds.includes(c.id)
                       return (
                         <button
@@ -1053,9 +1102,7 @@ export default function AdminPage() {
                           type="button"
                           onClick={() => toggleGroupChild(c.id)}
                           className={`rounded px-2 py-1 text-left text-[11px] ${
-                            active
-                              ? 'bg-rose-500 text-white'
-                              : 'bg-slate-100 text-slate-700'
+                            active ? 'bg-rose-500 text-white' : 'bg-slate-100 text-slate-700'
                           }`}
                         >
                           {getDisplayName(c)}
@@ -1124,68 +1171,44 @@ export default function AdminPage() {
           </div>
         ) : (
           <>
-            <div className="mb-1 flex flex-wrap gap-1">
-              <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] text-slate-700">
-                [{String(item.minuteSlot).padStart(2, '0')}]
-              </span>
+            <button
+              type="button"
+              onClick={() => setAttendanceModal({ open: true, item })}
+              className="w-full text-left"
+            >
+              <div className="font-medium text-slate-800">
+                {`${item.hourSlot.slice(0, 2)}:${String(item.minuteSlot).padStart(2, '0')}, `}
+                {item.isGroup
+                  ? `${item.groupName || '그룹수업'}`
+                  : `${children.find((c) => c.id === Number(item.rows[0]?.child_id))?.child_name ?? ''} (${
+                      getAgeText(children.find((c) => c.id === Number(item.rows[0]?.child_id))?.birth_date ?? null)
+                    })`}
+              </div>
+            </button>
+
+            <div className="mt-1 flex flex-wrap gap-1">
               <span className={`rounded-full border px-2 py-0.5 text-[11px] ${getVoucherClass(item.voucherType)}`}>
                 {item.voucherType || '일반'}
               </span>
               {item.isGroup ? (
                 <span className="rounded-full border border-rose-200 bg-rose-50 px-2 py-0.5 text-[11px] text-rose-700">
-                  {item.groupName || '그룹수업'}
+                  그룹
                 </span>
               ) : null}
             </div>
 
-            <div className="space-y-2">
-              {item.rows.map((entry) => {
-                const child = children.find((c) => c.id === Number(entry.child_id))
-                const attendance = attendanceMap.get(getAttendanceKey(entry))
-
-                return (
-                  <div key={entry.id} className="rounded border border-slate-100 p-2">
-                    <div className="font-medium text-slate-800">
-                      {child?.child_name ?? `학생(${entry.child_id})`}
-                      {child ? ` (${getAgeText(child.birth_date)})` : ''}
-                    </div>
-
-                    {attendance?.status ? (
-                      <div className={`mt-1 inline-block rounded-full px-2 py-0.5 text-[11px] ${getStatusClass(attendance.status)}`}>
-                        {getStatusLabel(attendance.status)}
-                      </div>
-                    ) : null}
-
-                    <div className="mt-2 grid grid-cols-2 gap-1">
-                      <button
-                        onClick={() => handleSaveAttendance(entry, 'attended')}
-                        className="rounded bg-blue-100 px-2 py-1 text-[11px] text-blue-700"
-                      >
-                        출석
-                      </button>
-                      <button
-                        onClick={() => handleSaveAttendance(entry, 'absent')}
-                        className="rounded bg-rose-100 px-2 py-1 text-[11px] text-rose-700"
-                      >
-                        결석
-                      </button>
-                      <button
-                        onClick={() => handleSaveAttendance(entry, 'same_day_absent')}
-                        className="rounded bg-red-100 px-2 py-1 text-[11px] text-red-700"
-                      >
-                        당일결석
-                      </button>
-                      <button
-                        onClick={() => handleSaveAttendance(entry, 'makeup')}
-                        className="rounded bg-sky-100 px-2 py-1 text-[11px] text-sky-700"
-                      >
-                        보강
-                      </button>
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
+            {!item.isGroup ? (
+              <div className="mt-1 text-[11px] text-slate-500">
+                {children.find((c) => c.id === Number(item.rows[0]?.child_id))?.child_name}
+              </div>
+            ) : (
+              <div className="mt-1 text-[11px] text-slate-500">
+                {item.rows
+                  .map((r) => children.find((c) => c.id === Number(r.child_id))?.child_name ?? '')
+                  .filter(Boolean)
+                  .join(', ')}
+              </div>
+            )}
 
             <div className="mt-2 flex gap-1">
               <button
@@ -1213,11 +1236,9 @@ export default function AdminPage() {
 
     return (
       <div key={`${dateStr}-${staffId}`} className="rounded-2xl border bg-white p-4">
-        <div className="mb-3 flex items-center justify-between gap-3">
-          <div>
-            <div className="font-semibold">{toShortMonthDay(date)}</div>
-            <div className="text-sm text-slate-500">{staff?.name}</div>
-          </div>
+        <div className="mb-3">
+          <div className="font-semibold">{toShortMonthDay(date)}</div>
+          <div className="text-sm text-slate-500">{staff?.name}</div>
         </div>
 
         <div className="space-y-3">
@@ -1230,7 +1251,7 @@ export default function AdminPage() {
 
             return (
               <div key={`${dateStr}-${staffId}-${hourSlot}`} className="rounded-xl border p-3">
-                <div className="mb-2 font-medium">{getHourLabel(hourSlot)}</div>
+                <div className="mb-2 font-medium">{hourSlot}</div>
 
                 {isEditing ? (
                   <div className="space-y-2">
@@ -1256,8 +1277,14 @@ export default function AdminPage() {
                           placeholder="그룹명"
                           className="w-full rounded border bg-white px-2 py-2 text-sm"
                         />
+                        <input
+                          value={groupSearch}
+                          onChange={(e) => setGroupSearch(e.target.value)}
+                          placeholder="학생 이름 검색"
+                          className="w-full rounded border bg-white px-2 py-2 text-sm"
+                        />
                         <div className="grid max-h-40 grid-cols-1 gap-1 overflow-y-auto rounded border p-2">
-                          {children.filter((c) => c.is_active).map((c) => {
+                          {filteredGroupChildren.map((c) => {
                             const active = selectedGroupChildIds.includes(c.id)
                             return (
                               <button
@@ -1345,12 +1372,12 @@ export default function AdminPage() {
                         setIsGroupLesson(false)
                         setGroupName('')
                         setSelectedGroupChildIds([])
+                        setGroupSearch('')
                       }}
                       className="w-full rounded border border-dashed border-slate-300 px-2 py-2 text-left text-sm text-slate-500"
                     >
                       + 추가
                     </button>
-
                     {items.map((item) => renderScheduleCard(item, dateStr, staffId))}
                   </div>
                 )}
@@ -1360,74 +1387,6 @@ export default function AdminPage() {
         </div>
       </div>
     )
-  }
-
-  function downloadStudentCsv() {
-    const monthRows = summaryRows.map((row) => [
-      csvMonth,
-      row.child_name,
-      row.age_text,
-      row.voucher_label,
-      row.attended_count,
-      row.absent_count,
-      row.same_day_absent_count,
-      row.makeup_count,
-      row.used_count,
-      row.group_used_count,
-      row.individual_amount,
-      row.group_amount,
-      row.total_amount,
-    ])
-
-    downloadCsvFile(
-      `학생CSV_${csvMonth}.csv`,
-      [
-        '월',
-        '학생',
-        '나이',
-        '바우처',
-        '출석',
-        '결석',
-        '당일결석',
-        '보강',
-        '사용',
-        '그룹횟수',
-        '개별금액',
-        '그룹금액',
-        '총금액',
-      ],
-      monthRows
-    )
-  }
-
-  function downloadStaffCsv() {
-    const monthRows = allScheduleEntries
-      .filter((row) => row.date.startsWith(csvMonth) && row.is_active)
-      .map((row) => {
-        const child = children.find((c) => c.id === Number(row.child_id))
-        return [
-          row.date,
-          row.teacher_name,
-          row.time_slot,
-          String(row.minute_slot ?? 0).padStart(2, '0'),
-          child?.child_name ?? row.child_id,
-          row.voucher_type,
-          row.is_group ? row.group_name || '그룹수업' : '',
-        ]
-      })
-
-    downloadCsvFile(
-      `선생님CSV_${csvMonth}.csv`,
-      ['날짜', '선생님', '시간', '분', '학생', '바우처', '그룹'],
-      monthRows
-    )
-  }
-
-  function handleLogout() {
-    localStorage.removeItem('staff_id')
-    localStorage.removeItem('staff_name')
-    localStorage.removeItem('staff_role')
-    window.location.href = '/'
   }
 
   return (
@@ -1577,7 +1536,9 @@ export default function AdminPage() {
                 시간표 불러오는 중...
               </div>
             ) : viewMode === 'daily' ? (
-              <AdminDailySchedule />
+              <div className="rounded-2xl border bg-white p-4">
+                <AdminDailySchedule />
+              </div>
             ) : viewMode === 'staff' && !selectedStaff ? (
               <div className="rounded-xl border bg-slate-50 p-6 text-center text-slate-500">
                 선생님을 선택하세요.
@@ -1589,7 +1550,6 @@ export default function AdminPage() {
                     <thead>
                       <tr>
                         <th className="border bg-slate-100 px-1 py-2">시간</th>
-
                         {viewMode === 'staff'
                           ? weekDates.map((date, idx) => (
                               <th key={`staff-${idx}`} className="min-w-[170px] border bg-slate-100 px-1 py-2">
@@ -1621,12 +1581,10 @@ export default function AdminPage() {
                     <tbody>
                       {hourSlots.map((hourSlot) => (
                         <tr key={hourSlot}>
-                          <td className="whitespace-nowrap border bg-slate-50 px-1 py-1 font-medium">
-                            {getHourLabel(hourSlot)}
-                          </td>
+                          <td className="whitespace-nowrap border bg-slate-50 px-1 py-1 font-medium">{hourSlot}</td>
 
                           {viewMode === 'staff' && selectedStaff
-                           ? weekDates.map((date) => {
+                            ? weekDates.map((date) => {
                                 const dateStr = toDateString(date)
                                 const items = buildDisplayItems(dateStr, hourSlot, Number(selectedStaff.id))
                                 const isEditing =
@@ -1663,31 +1621,34 @@ export default function AdminPage() {
                                               placeholder="그룹명"
                                               className="w-full rounded border bg-white px-2 py-1 text-xs"
                                             />
-
+                                            <input
+                                              value={groupSearch}
+                                              onChange={(e) => setGroupSearch(e.target.value)}
+                                              placeholder="학생 이름 검색"
+                                              className="w-full rounded border bg-white px-2 py-1 text-xs"
+                                            />
                                             <div className="rounded border p-2">
                                               <div className="mb-2 text-[11px] text-slate-500">
                                                 학생 선택 ({selectedGroupChildIds.length}/8)
                                               </div>
                                               <div className="grid max-h-40 grid-cols-1 gap-1 overflow-y-auto">
-                                                {children
-                                                  .filter((c) => c.is_active)
-                                                  .map((c) => {
-                                                    const active = selectedGroupChildIds.includes(c.id)
-                                                    return (
-                                                      <button
-                                                        key={c.id}
-                                                        type="button"
-                                                        onClick={() => toggleGroupChild(c.id)}
-                                                        className={`rounded px-2 py-1 text-left text-[11px] ${
-                                                          active
-                                                            ? 'bg-rose-500 text-white'
-                                                            : 'bg-slate-100 text-slate-700'
-                                                        }`}
-                                                      >
-                                                        {getDisplayName(c)}
-                                                      </button>
-                                                    )
-                                                  })}
+                                                {filteredGroupChildren.map((c) => {
+                                                  const active = selectedGroupChildIds.includes(c.id)
+                                                  return (
+                                                    <button
+                                                      key={c.id}
+                                                      type="button"
+                                                      onClick={() => toggleGroupChild(c.id)}
+                                                      className={`rounded px-2 py-1 text-left text-[11px] ${
+                                                        active
+                                                          ? 'bg-rose-500 text-white'
+                                                          : 'bg-slate-100 text-slate-700'
+                                                      }`}
+                                                    >
+                                                      {getDisplayName(c)}
+                                                    </button>
+                                                  )
+                                                })}
                                               </div>
                                             </div>
                                           </>
@@ -1701,13 +1662,11 @@ export default function AdminPage() {
                                               className="w-full rounded border bg-white px-2 py-1 text-xs"
                                             >
                                               <option value="">학생 선택</option>
-                                              {children
-                                                .filter((c) => c.is_active)
-                                                .map((c) => (
-                                                  <option key={c.id} value={c.id}>
-                                                    {getDisplayName(c)}
-                                                  </option>
-                                                ))}
+                                              {children.filter((c) => c.is_active).map((c) => (
+                                                <option key={c.id} value={c.id}>
+                                                  {getDisplayName(c)}
+                                                </option>
+                                              ))}
                                             </select>
 
                                             <select
@@ -1772,15 +1731,14 @@ export default function AdminPage() {
                                             setIsGroupLesson(false)
                                             setGroupName('')
                                             setSelectedGroupChildIds([])
+                                            setGroupSearch('')
                                           }}
                                           className="min-h-[28px] w-full rounded border border-dashed border-slate-300 px-2 py-1 text-left text-xs text-slate-500 hover:bg-slate-100"
                                         >
                                           + 추가
                                         </button>
 
-                                        {items.map((item) =>
-                                          renderScheduleCard(item, dateStr, Number(selectedStaff.id))
-                                        )}
+                                        {items.map((item) => renderScheduleCard(item, dateStr, Number(selectedStaff.id)))}
                                       </div>
                                     )}
                                   </td>
@@ -1824,31 +1782,34 @@ export default function AdminPage() {
                                                 placeholder="그룹명"
                                                 className="w-full rounded border bg-white px-2 py-1 text-xs"
                                               />
-
+                                              <input
+                                                value={groupSearch}
+                                                onChange={(e) => setGroupSearch(e.target.value)}
+                                                placeholder="학생 이름 검색"
+                                                className="w-full rounded border bg-white px-2 py-1 text-xs"
+                                              />
                                               <div className="rounded border p-2">
                                                 <div className="mb-2 text-[11px] text-slate-500">
                                                   학생 선택 ({selectedGroupChildIds.length}/8)
                                                 </div>
                                                 <div className="grid max-h-40 grid-cols-1 gap-1 overflow-y-auto">
-                                                  {children
-                                                    .filter((c) => c.is_active)
-                                                    .map((c) => {
-                                                      const active = selectedGroupChildIds.includes(c.id)
-                                                      return (
-                                                        <button
-                                                          key={c.id}
-                                                          type="button"
-                                                          onClick={() => toggleGroupChild(c.id)}
-                                                          className={`rounded px-2 py-1 text-left text-[11px] ${
-                                                            active
-                                                              ? 'bg-rose-500 text-white'
-                                                              : 'bg-slate-100 text-slate-700'
-                                                          }`}
-                                                        >
-                                                          {getDisplayName(c)}
-                                                        </button>
-                                                      )
-                                                    })}
+                                                  {filteredGroupChildren.map((c) => {
+                                                    const active = selectedGroupChildIds.includes(c.id)
+                                                    return (
+                                                      <button
+                                                        key={c.id}
+                                                        type="button"
+                                                        onClick={() => toggleGroupChild(c.id)}
+                                                        className={`rounded px-2 py-1 text-left text-[11px] ${
+                                                          active
+                                                            ? 'bg-rose-500 text-white'
+                                                            : 'bg-slate-100 text-slate-700'
+                                                        }`}
+                                                      >
+                                                        {getDisplayName(c)}
+                                                      </button>
+                                                    )
+                                                  })}
                                                 </div>
                                               </div>
                                             </>
@@ -1862,13 +1823,11 @@ export default function AdminPage() {
                                                 className="w-full rounded border bg-white px-2 py-1 text-xs"
                                               >
                                                 <option value="">학생 선택</option>
-                                                {children
-                                                  .filter((c) => c.is_active)
-                                                  .map((c) => (
-                                                    <option key={c.id} value={c.id}>
-                                                      {getDisplayName(c)}
-                                                    </option>
-                                                  ))}
+                                                {children.filter((c) => c.is_active).map((c) => (
+                                                  <option key={c.id} value={c.id}>
+                                                    {getDisplayName(c)}
+                                                  </option>
+                                                ))}
                                               </select>
 
                                               <select
@@ -1933,15 +1892,14 @@ export default function AdminPage() {
                                               setIsGroupLesson(false)
                                               setGroupName('')
                                               setSelectedGroupChildIds([])
+                                              setGroupSearch('')
                                             }}
                                             className="min-h-[28px] w-full rounded border border-dashed border-slate-300 px-2 py-1 text-left text-xs text-slate-500 hover:bg-slate-100"
                                           >
                                             + 추가
                                           </button>
 
-                                          {items.map((item) =>
-                                            renderScheduleCard(item, dateStr, Number(staff.id))
-                                          )}
+                                          {items.map((item) => renderScheduleCard(item, dateStr, Number(staff.id)))}
                                         </div>
                                       )}
                                     </td>
@@ -2017,43 +1975,46 @@ export default function AdminPage() {
                   </div>
                 </div>
 
-                <input
-                  value={childForm.basePrice}
-                  onChange={(e) => setChildForm((p) => ({ ...p, basePrice: e.target.value }))}
-                  placeholder="일반 단가"
-                  className="w-full rounded-xl border px-3 py-3 md:py-2"
-                />
-                <input
-                  value={childForm.didimPrice}
-                  onChange={(e) => setChildForm((p) => ({ ...p, didimPrice: e.target.value }))}
-                  placeholder="디딤 단가"
-                  className="w-full rounded-xl border px-3 py-3 md:py-2"
-                />
-                <input
-                  value={childForm.achungsimPrice}
-                  onChange={(e) => setChildForm((p) => ({ ...p, achungsimPrice: e.target.value }))}
-                  placeholder="아청심 단가"
-                  className="w-full rounded-xl border px-3 py-3 md:py-2"
-                />
-                <input
-                  value={childForm.dreamStartPrice}
-                  onChange={(e) => setChildForm((p) => ({ ...p, dreamStartPrice: e.target.value }))}
-                  placeholder="드림스타트 단가"
-                  className="w-full rounded-xl border px-3 py-3 md:py-2"
-                />
-                <input
-                  value={childForm.baeumPrice}
-                  onChange={(e) => setChildForm((p) => ({ ...p, baeumPrice: e.target.value }))}
-                  placeholder="배움 단가"
-                  className="w-full rounded-xl border px-3 py-3 md:py-2"
-                />
+                <div className="space-y-2 rounded-xl border p-3">
+                  <div className="font-medium">단가 입력</div>
+                  <label className="block text-sm">일반</label>
+                  <input
+                    value={childForm.basePrice}
+                    onChange={(e) => setChildForm((p) => ({ ...p, basePrice: e.target.value }))}
+                    className="w-full rounded-xl border px-3 py-2"
+                  />
+                  <label className="block text-sm">디딤</label>
+                  <input
+                    value={childForm.didimPrice}
+                    onChange={(e) => setChildForm((p) => ({ ...p, didimPrice: e.target.value }))}
+                    className="w-full rounded-xl border px-3 py-2"
+                  />
+                  <label className="block text-sm">아청심</label>
+                  <input
+                    value={childForm.achungsimPrice}
+                    onChange={(e) => setChildForm((p) => ({ ...p, achungsimPrice: e.target.value }))}
+                    className="w-full rounded-xl border px-3 py-2"
+                  />
+                  <label className="block text-sm">드림스타트</label>
+                  <input
+                    value={childForm.dreamStartPrice}
+                    onChange={(e) => setChildForm((p) => ({ ...p, dreamStartPrice: e.target.value }))}
+                    className="w-full rounded-xl border px-3 py-2"
+                  />
+                  <label className="block text-sm">배움</label>
+                  <input
+                    value={childForm.baeumPrice}
+                    onChange={(e) => setChildForm((p) => ({ ...p, baeumPrice: e.target.value }))}
+                    className="w-full rounded-xl border px-3 py-2"
+                  />
+                  <label className="block text-sm">메모</label>
+                  <input
+                    value={childForm.notes}
+                    onChange={(e) => setChildForm((p) => ({ ...p, notes: e.target.value }))}
+                    className="w-full rounded-xl border px-3 py-2"
+                  />
+                </div>
 
-                <input
-                  value={childForm.notes}
-                  onChange={(e) => setChildForm((p) => ({ ...p, notes: e.target.value }))}
-                  placeholder="메모"
-                  className="w-full rounded-xl border px-3 py-3 md:py-2"
-                />
                 <label className="flex items-center gap-2">
                   <input
                     type="checkbox"
@@ -2062,6 +2023,7 @@ export default function AdminPage() {
                   />
                   사용중
                 </label>
+
                 <button
                   onClick={handleSaveChild}
                   className="w-full rounded-xl bg-black py-3 text-white md:py-2"
@@ -2072,14 +2034,22 @@ export default function AdminPage() {
             </div>
 
             <div className="rounded-2xl border p-4">
-              <h2 className="mb-3 text-xl font-bold">아이 목록</h2>
+              <div className="mb-3 flex items-center justify-between gap-2">
+                <h2 className="text-xl font-bold">아이 목록</h2>
+                <input
+                  value={childSearch}
+                  onChange={(e) => setChildSearch(e.target.value)}
+                  placeholder="이름 검색"
+                  className="rounded-xl border px-3 py-2 text-sm"
+                />
+              </div>
+
               <div className="space-y-2">
-                {children.length === 0 ? (
+                {filteredChildren.length === 0 ? (
                   <div className="rounded-xl border p-3 text-slate-500">등록된 아이가 없습니다.</div>
                 ) : (
-                  children.map((child) => {
+                  filteredChildren.map((child) => {
                     const voucherPrices = getVoucherPrices(child)
-
                     return (
                       <button
                         key={child.id}
@@ -2091,11 +2061,11 @@ export default function AdminPage() {
                             birthDate: child.birth_date ?? '',
                             phone: child.phone ?? '',
                             voucherTypes: child.vouchers ?? [],
-                            basePrice: String(child.base_price ?? 0),
-                            didimPrice: String(voucherPrices['디딤'] ?? 0),
-                            achungsimPrice: String(voucherPrices['아청심'] ?? 0),
-                            dreamStartPrice: String(voucherPrices['드림스타트'] ?? 0),
-                            baeumPrice: String(voucherPrices['배움'] ?? 0),
+                            basePrice: String(child.base_price ?? 60000),
+                            didimPrice: String(voucherPrices['디딤'] ?? 10000),
+                            achungsimPrice: String(voucherPrices['아청심'] ?? 54000),
+                            dreamStartPrice: String(voucherPrices['드림스타트'] ?? 40000),
+                            baeumPrice: String(voucherPrices['배움'] ?? 10000),
                             notes: child.notes ?? '',
                             isActive: child.is_active,
                           })
@@ -2111,7 +2081,7 @@ export default function AdminPage() {
                         <div className="mt-1 text-sm text-slate-500">
                           {child.chart_no ? `차트번호 ${child.chart_no}` : '차트번호 없음'}
                           {child.phone ? ` / ${child.phone}` : ''}
-                          {` / 일반단가 ${child.base_price ?? 0}`}
+                          {` / 일반단가 ${child.base_price ?? 60000}`}
                         </div>
                       </button>
                     )
@@ -2148,9 +2118,7 @@ export default function AdminPage() {
                 />
                 <select
                   value={staffForm.role}
-                  onChange={(e) =>
-                    setStaffForm((p) => ({ ...p, role: e.target.value as StaffRole }))
-                  }
+                  onChange={(e) => setStaffForm((p) => ({ ...p, role: e.target.value as StaffRole }))}
                   className="w-full rounded-xl border px-3 py-3 md:py-2"
                 >
                   <option value="employee">employee</option>
@@ -2209,133 +2177,195 @@ export default function AdminPage() {
         ) : null}
 
         {tab === 'summary' ? (
-          <div>
-            <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-              <h1 className="text-xl font-bold md:text-2xl">월별 학생 정산</h1>
-              <button
-                onClick={() => Promise.all([loadClassLogsForMonth(), loadMonthlyGroupPrices()])}
-                className="rounded-xl bg-slate-700 px-4 py-2 text-white"
-              >
-                새로고침
-              </button>
+          <div className="space-y-8">
+            <div>
+              <h2 className="mb-3 text-xl font-bold">1번 표 학생출결탭</h2>
+              <div className="overflow-x-auto">
+                <table className="min-w-full border text-sm">
+                  <thead>
+                    <tr>
+                      <th className="border bg-slate-100 px-3 py-2">학생</th>
+                      <th className="border bg-slate-100 px-3 py-2">나이</th>
+                      <th className="border bg-slate-100 px-3 py-2">출석</th>
+                      <th className="border bg-slate-100 px-3 py-2">보강</th>
+                      <th className="border bg-slate-100 px-3 py-2">결석</th>
+                      <th className="border bg-slate-100 px-3 py-2">당일결석</th>
+                      <th className="border bg-slate-100 px-3 py-2">월출결날짜</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {attendanceSummaryRows.map((row) => (
+                      <tr key={row.child_id}>
+                        <td className="border px-3 py-2">{row.child_name}</td>
+                        <td className="border px-3 py-2">{row.age_text}</td>
+                        <td className="border px-3 py-2 text-center">{row.attended_count}</td>
+                        <td className="border px-3 py-2 text-center">{row.makeup_count}</td>
+                        <td className="border px-3 py-2 text-center">{row.absent_count}</td>
+                        <td className="border px-3 py-2 text-center">{row.same_day_absent_count}</td>
+                        <td className="border px-3 py-2">{row.monthly_dates}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
 
-            {loading ? (
-              <div className="rounded-xl border bg-slate-50 p-6 text-center text-slate-500">
-                정산 불러오는 중...
-              </div>
-            ) : (
-              <>
-                <div className="hidden overflow-x-auto md:block">
-                  <table className="min-w-full border text-sm">
-                    <thead>
-                      <tr>
-                        <th className="border bg-slate-100 px-3 py-2">학생</th>
-                        <th className="border bg-slate-100 px-3 py-2">나이</th>
-                        <th className="border bg-slate-100 px-3 py-2">바우처</th>
-                        <th className="border bg-slate-100 px-3 py-2">출석</th>
-                        <th className="border bg-slate-100 px-3 py-2">결석</th>
-                        <th className="border bg-slate-100 px-3 py-2">당일결석</th>
-                        <th className="border bg-slate-100 px-3 py-2">보강</th>
-                        <th className="border bg-slate-100 px-3 py-2">사용</th>
-                        <th className="border bg-slate-100 px-3 py-2">디딤적용</th>
-                        <th className="border bg-slate-100 px-3 py-2">디딤초과</th>
-                        <th className="border bg-slate-100 px-3 py-2">그룹횟수</th>
-                        <th className="border bg-slate-100 px-3 py-2">그룹단가</th>
-                        <th className="border bg-slate-100 px-3 py-2">개별금액</th>
-                        <th className="border bg-slate-100 px-3 py-2">그룹금액</th>
-                        <th className="border bg-slate-100 px-3 py-2">총금액</th>
-                        <th className="border bg-slate-100 px-3 py-2">그룹단가저장</th>
+            <div>
+              <h2 className="mb-3 text-xl font-bold">2번 표 선생님 수업탭</h2>
+              <div className="overflow-x-auto">
+                <table className="min-w-full border text-sm">
+                  <thead>
+                    <tr>
+                      <th className="border bg-slate-100 px-3 py-2">선생님</th>
+                      <th className="border bg-slate-100 px-3 py-2">학생</th>
+                      <th className="border bg-slate-100 px-3 py-2">출석날짜</th>
+                      <th className="border bg-slate-100 px-3 py-2">보강날짜</th>
+                      <th className="border bg-slate-100 px-3 py-2">결석날짜</th>
+                      <th className="border bg-slate-100 px-3 py-2">당일결석날짜</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {teacherLessonRows.map((row) => (
+                      <tr key={row.key}>
+                        <td className="border px-3 py-2">{row.teacher_name}</td>
+                        <td className="border px-3 py-2">{row.child_name}</td>
+                        <td className="border px-3 py-2">{row.attended_dates}</td>
+                        <td className="border px-3 py-2">{row.makeup_dates}</td>
+                        <td className="border px-3 py-2">{row.absent_dates}</td>
+                        <td className="border px-3 py-2">{row.same_day_absent_dates}</td>
                       </tr>
-                    </thead>
-                    <tbody>
-                      {summaryRows.map((row) => (
-                        <tr key={row.child_id}>
-                          <td className="border px-3 py-2">{row.child_name}</td>
-                          <td className="border px-3 py-2">{row.age_text}</td>
-                          <td className="border px-3 py-2">{row.voucher_label}</td>
-                          <td className="border px-3 py-2 text-center">{row.attended_count}</td>
-                          <td className="border px-3 py-2 text-center">{row.absent_count}</td>
-                          <td className="border px-3 py-2 text-center">{row.same_day_absent_count}</td>
-                          <td className="border px-3 py-2 text-center">{row.makeup_count}</td>
-                          <td className="border px-3 py-2 text-center">{row.used_count}</td>
-                          <td className="border px-3 py-2 text-center">{row.didim_applied_count}</td>
-                          <td className="border px-3 py-2 text-center">{row.didim_over_count}</td>
-                          <td className="border px-3 py-2 text-center">{row.group_used_count}</td>
-                          <td className="border px-3 py-2 text-center">
-                            <input
-                              value={monthlyGroupPrices[row.child_id] ?? ''}
-                              onChange={(e) =>
-                                setMonthlyGroupPrices((prev) => ({
-                                  ...prev,
-                                  [row.child_id]: e.target.value,
-                                }))
-                              }
-                              className="w-20 rounded border px-2 py-1 text-sm"
-                            />
-                          </td>
-                          <td className="border px-3 py-2 text-center">{row.individual_amount}</td>
-                          <td className="border px-3 py-2 text-center">{row.group_amount}</td>
-                          <td className="border px-3 py-2 text-center font-semibold">{row.total_amount}</td>
-                          <td className="border px-3 py-2 text-center">
-                            <button
-                              onClick={() => saveGroupUnitPrice(row.child_id, monthlyGroupPrices[row.child_id] ?? '0')}
-                              className="rounded bg-slate-700 px-3 py-1 text-xs text-white"
-                            >
-                              저장
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div>
+              <h2 className="mb-3 text-xl font-bold">3번 표 월학생 정산탭</h2>
+              <div className="overflow-x-auto">
+                <table className="min-w-full border text-sm">
+                  <thead>
+                    <tr>
+                      <th className="border bg-slate-100 px-3 py-2">학생</th>
+                      <th className="border bg-slate-100 px-3 py-2">나이</th>
+                      <th className="border bg-slate-100 px-3 py-2">바우처</th>
+                      <th className="border bg-slate-100 px-3 py-2">출석+보강횟수</th>
+                      <th className="border bg-slate-100 px-3 py-2">그룹횟수</th>
+                      <th className="border bg-slate-100 px-3 py-2">결석</th>
+                      <th className="border bg-slate-100 px-3 py-2">당일결석</th>
+                      <th className="border bg-slate-100 px-3 py-2">그룹단가</th>
+                      <th className="border bg-slate-100 px-3 py-2">총금액</th>
+                      <th className="border bg-slate-100 px-3 py-2">저장</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {settlementRows.map((row) => (
+                      <tr key={row.child_id}>
+                        <td className="border px-3 py-2">{row.child_name}</td>
+                        <td className="border px-3 py-2">{row.age_text}</td>
+                        <td className="border px-3 py-2">{row.voucher_label}</td>
+                        <td className="border px-3 py-2 text-center">{row.lesson_count}</td>
+                        <td className="border px-3 py-2 text-center">{row.group_count}</td>
+                        <td className="border px-3 py-2 text-center">{row.absent_count}</td>
+                        <td className="border px-3 py-2 text-center">{row.same_day_absent_count}</td>
+                        <td className="border px-3 py-2 text-center">
+                          <input
+                            value={monthlyGroupPrices[row.child_id] ?? ''}
+                            onChange={(e) =>
+                              setMonthlyGroupPrices((prev) => ({
+                                ...prev,
+                                [row.child_id]: e.target.value,
+                              }))
+                            }
+                            className="w-20 rounded border px-2 py-1 text-sm"
+                          />
+                        </td>
+                        <td className="border px-3 py-2 text-center font-semibold">{row.total_amount}</td>
+                        <td className="border px-3 py-2 text-center">
+                          <button
+                            onClick={() => saveGroupUnitPrice(row.child_id, monthlyGroupPrices[row.child_id] ?? '0')}
+                            className="rounded bg-slate-700 px-3 py-1 text-xs text-white"
+                          >
+                            저장
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {attendanceModal.open && attendanceModal.item ? (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+            <div className="w-full max-w-lg rounded-2xl bg-white p-5 shadow-xl">
+              <div className="mb-4 flex items-start justify-between gap-3">
+                <div>
+                  <div className="text-lg font-bold">출결 작성</div>
+                  <div className="text-sm text-slate-500">
+                    {attendanceModal.item.date} {attendanceModal.item.hourSlot.slice(0, 2)}:
+                    {String(attendanceModal.item.minuteSlot).padStart(2, '0')}
+                    {attendanceModal.item.isGroup ? ` / ${attendanceModal.item.groupName || '그룹수업'}` : ''}
+                  </div>
                 </div>
+                <button
+                  onClick={() => setAttendanceModal({ open: false, item: null })}
+                  className="rounded bg-slate-100 px-3 py-1 text-sm"
+                >
+                  닫기
+                </button>
+              </div>
 
-                <div className="space-y-3 md:hidden">
-                  {summaryRows.map((row) => (
-                    <div key={row.child_id} className="rounded-2xl border bg-white p-4">
-                      <div className="font-semibold">{row.child_name}</div>
-                      <div className="text-sm text-slate-500">
-                        {row.age_text} / {row.voucher_label}
+              <div className="space-y-3">
+                {attendanceModal.item.rows.map((entry) => {
+                  const child = children.find((c) => c.id === Number(entry.child_id))
+                  const attendance = attendanceMap.get(getAttendanceKey(entry))
+                  return (
+                    <div key={entry.id} className="rounded-xl border p-3">
+                      <div className="font-medium">
+                        {child?.child_name ?? `학생(${entry.child_id})`}
+                        {child ? ` (${getAgeText(child.birth_date)})` : ''}
                       </div>
 
-                      <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
-                        <div className="rounded-xl bg-slate-50 p-2">출석 {row.attended_count}</div>
-                        <div className="rounded-xl bg-slate-50 p-2">결석 {row.absent_count}</div>
-                        <div className="rounded-xl bg-slate-50 p-2">당일결석 {row.same_day_absent_count}</div>
-                        <div className="rounded-xl bg-slate-50 p-2">보강 {row.makeup_count}</div>
-                        <div className="rounded-xl bg-slate-50 p-2">사용 {row.used_count}</div>
-                        <div className="rounded-xl bg-slate-50 p-2">디딤초과 {row.didim_over_count}</div>
-                        <div className="rounded-xl bg-slate-50 p-2">그룹횟수 {row.group_used_count}</div>
-                        <div className="rounded-xl bg-slate-50 p-2">개별금액 {row.individual_amount}</div>
-                        <div className="rounded-xl bg-slate-50 p-2">그룹금액 {row.group_amount}</div>
-                        <div className="rounded-xl bg-slate-50 p-2 font-semibold">총금액 {row.total_amount}</div>
-                      </div>
+                      {attendance?.status ? (
+                        <div className={`mt-1 inline-block rounded-full px-2 py-0.5 text-[11px] ${getStatusClass(attendance.status)}`}>
+                          {getStatusLabel(attendance.status)}
+                        </div>
+                      ) : null}
 
-                      <div className="mt-3 flex gap-2">
-                        <input
-                          value={monthlyGroupPrices[row.child_id] ?? ''}
-                          onChange={(e) =>
-                            setMonthlyGroupPrices((prev) => ({
-                              ...prev,
-                              [row.child_id]: e.target.value,
-                            }))
-                          }
-                          placeholder="그룹단가"
-                          className="flex-1 rounded border px-3 py-2 text-sm"
-                        />
+                      <div className="mt-2 grid grid-cols-2 gap-2">
                         <button
-                          onClick={() => saveGroupUnitPrice(row.child_id, monthlyGroupPrices[row.child_id] ?? '0')}
-                          className="rounded bg-slate-700 px-3 py-2 text-sm text-white"
+                          onClick={() => handleSaveAttendance(entry, 'attended')}
+                          className="rounded bg-blue-100 px-3 py-2 text-sm text-blue-700"
                         >
-                          저장
+                          출석
+                        </button>
+                        <button
+                          onClick={() => handleSaveAttendance(entry, 'absent')}
+                          className="rounded bg-rose-100 px-3 py-2 text-sm text-rose-700"
+                        >
+                          결석
+                        </button>
+                        <button
+                          onClick={() => handleSaveAttendance(entry, 'same_day_absent')}
+                          className="rounded bg-red-100 px-3 py-2 text-sm text-red-700"
+                        >
+                          당일결석
+                        </button>
+                        <button
+                          onClick={() => handleSaveAttendance(entry, 'makeup')}
+                          className="rounded bg-sky-100 px-3 py-2 text-sm text-sky-700"
+                        >
+                          보강
                         </button>
                       </div>
                     </div>
-                  ))}
-                </div>
-              </>
-            )}
+                  )
+                })}
+              </div>
+            </div>
           </div>
         ) : null}
       </div>
