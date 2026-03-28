@@ -2,15 +2,14 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '@/lib/supabase'
+import AdminDailySchedule from '@/components/AdminDailySchedule'
 
 type MainTab = 'schedule' | 'children' | 'staff' | 'summary'
 type ViewMode = 'all' | 'staff' | 'daily'
-type TodayMode = 'all' | 'missing'
-
 type StaffRole = 'admin' | 'employee'
 
 type StaffRow = {
-  id: string | number
+  id: string
   login_id: string
   password?: string | null
   name: string
@@ -38,7 +37,6 @@ type ScheduleEntryRow = {
   teacher_name: string | null
   child_id: number | null
   voucher_type: string | null
-  note: string | null
   is_active: boolean | null
   created_at?: string | null
   updated_at?: string | null
@@ -46,22 +44,11 @@ type ScheduleEntryRow = {
 
 type ClassLogRow = {
   id: number
-  staff_id: number | string
+  staff_id: string | number
   child_id: number
   class_date: string
   class_time: string
   status: 'attended' | 'absent' | 'makeup' | 'same_day_absent'
-}
-
-type AuditLogRow = {
-  id: string | number
-  action_type: string
-  actor_staff_id: string | number | null
-  target_table: string
-  target_id: string | number | null
-  before_data: any
-  after_data: any
-  created_at: string
 }
 
 type SummaryRow = {
@@ -88,7 +75,7 @@ type ChildForm = {
 }
 
 type StaffForm = {
-  id: string | number | null
+  id: string | null
   loginId: string
   password: string
   name: string
@@ -99,7 +86,7 @@ type StaffForm = {
 type EditingCell = {
   date: string
   hour: string
-  staffId: string | number
+  staffId: string
 } | null
 
 const VOUCHER_OPTIONS = ['디딤', '아청심', '드림스타트', '배움', '일반']
@@ -145,11 +132,6 @@ function getMinutesOptions() {
   return ['00', '10', '20', '30', '40', '50']
 }
 
-function getDisplayName(child: ChildRow) {
-  const ageText = getAgeText(child.birth_date)
-  return ageText ? `${child.child_name} (${ageText})` : child.child_name
-}
-
 function getAgeText(birthDate: string | null) {
   if (!birthDate) return ''
   const birth = new Date(birthDate)
@@ -160,6 +142,11 @@ function getAgeText(birthDate: string | null) {
   const dayDiff = now.getDate() - birth.getDate()
   if (monthDiff < 0 || (monthDiff === 0 && dayDiff < 0)) age--
   return String(age)
+}
+
+function getDisplayName(child: ChildRow) {
+  const ageText = getAgeText(child.birth_date)
+  return ageText ? `${child.child_name} (${ageText})` : child.child_name
 }
 
 function getVoucherLabel(vouchers: string[] | null | undefined) {
@@ -180,7 +167,11 @@ function csvEscape(value: string | number | null | undefined) {
   return `"${str.replace(/"/g, '""')}"`
 }
 
-function downloadCsvFile(filename: string, headers: string[], rows: (string | number | null | undefined)[][]) {
+function downloadCsvFile(
+  filename: string,
+  headers: string[],
+  rows: (string | number | null | undefined)[][]
+) {
   const csv = [headers, ...rows].map((row) => row.map(csvEscape).join(',')).join('\n')
   const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' })
   const url = URL.createObjectURL(blob)
@@ -194,7 +185,6 @@ function downloadCsvFile(filename: string, headers: string[], rows: (string | nu
 export default function AdminPage() {
   const [tab, setTab] = useState<MainTab>('schedule')
   const [viewMode, setViewMode] = useState<ViewMode>('all')
-  const [todayMode] = useState<TodayMode>('all')
 
   const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState('')
@@ -205,21 +195,19 @@ export default function AdminPage() {
   })
 
   const [weekBaseDate, setWeekBaseDate] = useState(new Date())
-  const [selectedStaffId, setSelectedStaffId] = useState<number | ''>('')
+  const [selectedStaffId, setSelectedStaffId] = useState<string>('')
 
   const [staffs, setStaffs] = useState<StaffRow[]>([])
   const [children, setChildren] = useState<ChildRow[]>([])
   const [allScheduleEntries, setAllScheduleEntries] = useState<ScheduleEntryRow[]>([])
   const [classLogs, setClassLogs] = useState<ClassLogRow[]>([])
-  const [auditLogs] = useState<AuditLogRow[]>([])
-  const [auditPage] = useState(1)
-  const [auditTotal] = useState(0)
 
   const [editingCell, setEditingCell] = useState<EditingCell>(null)
+  const [editingEntryId, setEditingEntryId] = useState<string | null>(null)
+
   const [scheduleChildId, setScheduleChildId] = useState<number | ''>('')
   const [selectedMinute, setSelectedMinute] = useState('00')
   const [selectedVoucher, setSelectedVoucher] = useState('')
-  const [scheduleMemo, setScheduleMemo] = useState('')
 
   const [childForm, setChildForm] = useState<ChildForm>({
     id: null,
@@ -249,7 +237,7 @@ export default function AdminPage() {
   )
 
   const selectedStaff = useMemo(
-    () => employeeStaffs.find((s) => Number(s.id) === Number(selectedStaffId)),
+    () => employeeStaffs.find((s) => String(s.id) === String(selectedStaffId)),
     [employeeStaffs, selectedStaffId]
   )
 
@@ -333,7 +321,7 @@ export default function AdminPage() {
     loadClassLogsForMonth().catch((err: any) => setMessage(err?.message ?? '월정산 불러오기 실패'))
   }, [csvMonth])
 
-  function getScheduleEntries(dateStr: string, hourSlot: string, staffId: string | number) {
+  function getScheduleEntries(dateStr: string, hourSlot: string, staffId: string) {
     return allScheduleEntries.filter(
       (entry) =>
         entry.date === dateStr &&
@@ -459,7 +447,7 @@ export default function AdminPage() {
     }
   }
 
-  async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: string | number) {
+  async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: string) {
     try {
       if (!scheduleChildId) {
         setMessage('학생을 선택하세요.')
@@ -477,21 +465,20 @@ export default function AdminPage() {
         date: dateStr,
         time_slot: hourSlot,
         minute_slot: Number(selectedMinute),
-        teacher_id: String(staffId),
+        teacher_id: staffId,
         teacher_name: staff?.name ?? '',
         child_id: Number(scheduleChildId),
         voucher_type: selectedVoucher,
-        note: scheduleMemo || null,
         is_active: true,
       })
 
       if (error) throw error
 
       setEditingCell(null)
+      setEditingEntryId(null)
       setScheduleChildId('')
       setSelectedMinute('00')
       setSelectedVoucher('')
-      setScheduleMemo('')
       await loadSchedules()
       setMessage('시간표가 저장되었습니다.')
     } catch (err: any) {
@@ -522,12 +509,12 @@ export default function AdminPage() {
     setEditingCell({
       date: entry.date,
       hour: entry.time_slot,
-      staffId: entry.teacher_id,
+      staffId: String(entry.teacher_id),
     })
+    setEditingEntryId(entry.id)
     setScheduleChildId(entry.child_id ? Number(entry.child_id) : '')
     setSelectedMinute(String(entry.minute_slot ?? 0).padStart(2, '0'))
     setSelectedVoucher(entry.voucher_type ?? '')
-    setScheduleMemo(entry.note ?? '')
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
@@ -548,17 +535,16 @@ export default function AdminPage() {
           child_id: Number(scheduleChildId),
           minute_slot: Number(selectedMinute),
           voucher_type: selectedVoucher,
-          note: scheduleMemo || null,
         })
         .eq('id', entry.id)
 
       if (error) throw error
 
       setEditingCell(null)
+      setEditingEntryId(null)
       setScheduleChildId('')
       setSelectedMinute('00')
       setSelectedVoucher('')
-      setScheduleMemo('')
       await loadSchedules()
       setMessage('시간표가 수정되었습니다.')
     } catch (err: any) {
@@ -566,14 +552,13 @@ export default function AdminPage() {
     }
   }
 
-  function renderScheduleCard(entry: ScheduleEntryRow, dateStr: string, staffId: string | number) {
+  function renderScheduleCard(entry: ScheduleEntryRow, dateStr: string, staffId: string) {
     const child = children.find((c) => c.id === Number(entry.child_id))
     const isEditing =
+      editingEntryId === entry.id &&
       editingCell?.date === dateStr &&
       editingCell?.hour === entry.time_slot &&
-      String(editingCell?.staffId) === String(staffId) &&
-      Number(scheduleChildId || 0) === Number(entry.child_id) &&
-      String(selectedMinute) === String(entry.minute_slot ?? 0).padStart(2, '0')
+      String(editingCell?.staffId) === String(staffId)
 
     return (
       <div key={entry.id} className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs shadow-sm">
@@ -617,13 +602,6 @@ export default function AdminPage() {
               ))}
             </select>
 
-            <input
-              value={scheduleMemo}
-              onChange={(e) => setScheduleMemo(e.target.value)}
-              placeholder="메모 입력"
-              className="w-full rounded border bg-white px-2 py-1 text-xs"
-            />
-
             <div className="flex gap-1">
               <button
                 onClick={() => handleUpdateEditingSchedule(entry)}
@@ -634,10 +612,10 @@ export default function AdminPage() {
               <button
                 onClick={() => {
                   setEditingCell(null)
+                  setEditingEntryId(null)
                   setScheduleChildId('')
                   setSelectedMinute('00')
                   setSelectedVoucher('')
-                  setScheduleMemo('')
                 }}
                 className="flex-1 rounded bg-slate-300 px-2 py-1 text-xs"
               >
@@ -651,7 +629,6 @@ export default function AdminPage() {
               [{String(entry.minute_slot ?? 0).padStart(2, '0')}] {child?.child_name ?? `학생(${entry.child_id})`}
             </div>
             <div className="mt-0.5 text-[11px] text-slate-500">{entry.voucher_type ?? '-'}</div>
-            {entry.note ? <div className="mt-0.5 text-[11px] text-slate-400">{entry.note}</div> : null}
             <div className="mt-1 flex gap-1">
               <button
                 onClick={() => handleEditSchedule(entry)}
@@ -671,7 +648,8 @@ export default function AdminPage() {
       </div>
     )
   }
-function renderMobileDayCard(date: Date, staffId: string | number) {
+
+  function renderMobileDayCard(date: Date, staffId: string) {
     const dateStr = toDateString(date)
     const staff = employeeStaffs.find((s) => String(s.id) === String(staffId))
 
@@ -736,13 +714,6 @@ function renderMobileDayCard(date: Date, staffId: string | number) {
                       ))}
                     </select>
 
-                    <input
-                      value={scheduleMemo}
-                      onChange={(e) => setScheduleMemo(e.target.value)}
-                      placeholder="메모 입력"
-                      className="w-full rounded border bg-white px-2 py-2 text-sm"
-                    />
-
                     <div className="flex gap-2">
                       <button
                         onClick={() => handleSaveSchedule(dateStr, hourSlot, staffId)}
@@ -753,10 +724,10 @@ function renderMobileDayCard(date: Date, staffId: string | number) {
                       <button
                         onClick={() => {
                           setEditingCell(null)
+                          setEditingEntryId(null)
                           setScheduleChildId('')
                           setSelectedMinute('00')
                           setSelectedVoucher('')
-                          setScheduleMemo('')
                         }}
                         className="flex-1 rounded bg-slate-300 px-3 py-2 text-sm"
                       >
@@ -770,10 +741,10 @@ function renderMobileDayCard(date: Date, staffId: string | number) {
                       type="button"
                       onClick={() => {
                         setEditingCell({ date: dateStr, hour: hourSlot, staffId })
+                        setEditingEntryId(null)
                         setScheduleChildId('')
                         setSelectedMinute('00')
                         setSelectedVoucher('')
-                        setScheduleMemo('')
                       }}
                       className="w-full rounded border border-dashed border-slate-300 px-2 py-2 text-left text-sm text-slate-500"
                     >
@@ -789,22 +760,6 @@ function renderMobileDayCard(date: Date, staffId: string | number) {
       </div>
     )
   }
-
-  const todayDate = toDateString(new Date())
-
-  const todayRows = useMemo(() => {
-    const todaySchedules = allScheduleEntries.filter((row) => row.date === todayDate && row.is_active)
-    if (todayMode === 'all') return todaySchedules
-    return todaySchedules.filter((row) => {
-      const matched = classLogs.find(
-        (log) =>
-          log.class_date === row.date &&
-          String(log.staff_id) === String(row.teacher_id) &&
-          Number(log.child_id) === Number(row.child_id)
-      )
-      return !matched
-    })
-  }, [allScheduleEntries, classLogs, todayMode])
 
   const summaryRows = useMemo<SummaryRow[]>(() => {
     return children
@@ -831,8 +786,6 @@ function renderMobileDayCard(date: Date, staffId: string | number) {
       })
       .sort((a, b) => a.child_name.localeCompare(b.child_name, 'ko'))
   }, [children, classLogs])
-
-  const filteredSummaryRows = useMemo(() => summaryRows, [summaryRows])
 
   function downloadStudentCsv() {
     const monthRows = classLogs
@@ -985,15 +938,15 @@ function renderMobileDayCard(date: Date, staffId: string | number) {
                 </div>
 
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                  {viewMode !== 'all' ? (
+                  {viewMode === 'staff' ? (
                     <select
                       value={selectedStaffId}
-                      onChange={(e) => setSelectedStaffId(e.target.value ? Number(e.target.value) : '')}
+                      onChange={(e) => setSelectedStaffId(e.target.value)}
                       className="rounded-xl border px-3 py-3 md:py-2"
                     >
                       <option value="">선생님 선택</option>
                       {employeeStaffs.map((staff) => (
-                        <option key={String(staff.id)} value={Number(staff.id)}>
+                        <option key={String(staff.id)} value={String(staff.id)}>
                           {staff.name} ({staff.login_id})
                         </option>
                       ))}
@@ -1031,79 +984,11 @@ function renderMobileDayCard(date: Date, staffId: string | number) {
               <div className="rounded-xl border bg-slate-50 p-6 text-center text-slate-500">
                 시간표 불러오는 중...
               </div>
-            ) : viewMode !== 'all' && !selectedStaff ? (
+            ) : viewMode === 'daily' ? (
+              <AdminDailySchedule />
+            ) : viewMode === 'staff' && !selectedStaff ? (
               <div className="rounded-xl border bg-slate-50 p-6 text-center text-slate-500">
                 선생님을 선택하세요.
-              </div>
-            ) : viewMode === 'daily' ? (
-              <div className="space-y-3">
-                {weekDates.map((date, idx) => {
-                  const dateStr = toDateString(date)
-                  const dayEntries = allScheduleEntries.filter(
-                    (entry) =>
-                      entry.date === dateStr &&
-                      entry.is_active &&
-                      (viewMode === 'all' || String(entry.teacher_id) === String(selectedStaffId))
-                  )
-
-                  return (
-                    <div key={dateStr} className="rounded-2xl border bg-white p-4">
-                      <div className="mb-3 text-lg font-bold">
-                        {['월', '화', '수', '목', '금', '토'][idx]} {toShortMonthDay(date)}
-                      </div>
-
-                      {dayEntries.length === 0 ? (
-                        <div className="text-sm text-slate-500">일정 없음</div>
-                      ) : (
-                        <div className="space-y-2">
-                          {dayEntries
-                            .sort((a, b) => {
-                              const t = a.time_slot.localeCompare(b.time_slot)
-                              if (t !== 0) return t
-                              return Number(a.minute_slot ?? 0) - Number(b.minute_slot ?? 0)
-                            })
-                            .map((entry) => {
-                              const child = children.find((c) => c.id === Number(entry.child_id))
-                              return (
-                                <div
-                                  key={entry.id}
-                                  className="flex flex-col gap-2 rounded-xl border p-3 md:flex-row md:items-center md:justify-between"
-                                >
-                                  <div>
-                                    <div className="font-medium text-slate-900">
-                                      {entry.time_slot} [{String(entry.minute_slot ?? 0).padStart(2, '0')}]
-                                      {' / '}
-                                      {entry.teacher_name}
-                                      {' / '}
-                                      {child?.child_name ?? entry.child_id}
-                                    </div>
-                                    <div className="mt-1 text-xs text-slate-500">
-                                      {entry.voucher_type ?? '-'}
-                                    </div>
-                                  </div>
-
-                                  <div className="flex gap-2">
-                                    <button
-                                      onClick={() => handleEditSchedule(entry)}
-                                      className="rounded-lg bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-700"
-                                    >
-                                      수정
-                                    </button>
-                                    <button
-                                      onClick={() => handleDeleteSchedule(entry.id)}
-                                      className="rounded-lg bg-rose-50 px-3 py-1.5 text-xs font-semibold text-rose-700"
-                                    >
-                                      삭제
-                                    </button>
-                                  </div>
-                                </div>
-                              )
-                            })}
-                        </div>
-                      )}
-                    </div>
-                  )
-                })}
               </div>
             ) : (
               <>
@@ -1151,7 +1036,7 @@ function renderMobileDayCard(date: Date, staffId: string | number) {
                           {viewMode === 'staff' && selectedStaff
                             ? weekDates.map((date) => {
                                 const dateStr = toDateString(date)
-                                const entries = getScheduleEntries(dateStr, hourSlot, selectedStaff.id)
+                                const entries = getScheduleEntries(dateStr, hourSlot, String(selectedStaff.id))
                                 const isEditing =
                                   editingCell?.date === dateStr &&
                                   editingCell?.hour === hourSlot &&
@@ -1206,17 +1091,10 @@ function renderMobileDayCard(date: Date, staffId: string | number) {
                                           ))}
                                         </select>
 
-                                        <input
-                                          value={scheduleMemo}
-                                          onChange={(e) => setScheduleMemo(e.target.value)}
-                                          placeholder="메모 입력"
-                                          className="w-full rounded border bg-white px-2 py-1 text-xs"
-                                        />
-
                                         <div className="flex gap-1">
                                           <button
                                             onClick={() =>
-                                              handleSaveSchedule(dateStr, hourSlot, selectedStaff.id)
+                                              handleSaveSchedule(dateStr, hourSlot, String(selectedStaff.id))
                                             }
                                             className="flex-1 rounded bg-indigo-600 px-2 py-1 text-xs text-white"
                                           >
@@ -1225,10 +1103,10 @@ function renderMobileDayCard(date: Date, staffId: string | number) {
                                           <button
                                             onClick={() => {
                                               setEditingCell(null)
+                                              setEditingEntryId(null)
                                               setScheduleChildId('')
                                               setSelectedMinute('00')
                                               setSelectedVoucher('')
-                                              setScheduleMemo('')
                                             }}
                                             className="flex-1 rounded bg-slate-300 px-2 py-1 text-xs"
                                           >
@@ -1244,12 +1122,12 @@ function renderMobileDayCard(date: Date, staffId: string | number) {
                                             setEditingCell({
                                               date: dateStr,
                                               hour: hourSlot,
-                                              staffId: selectedStaff.id,
+                                              staffId: String(selectedStaff.id),
                                             })
+                                            setEditingEntryId(null)
                                             setScheduleChildId('')
                                             setSelectedMinute('00')
                                             setSelectedVoucher('')
-                                            setScheduleMemo('')
                                           }}
                                           className="min-h-[28px] w-full rounded border border-dashed border-slate-300 px-2 py-1 text-left text-xs text-slate-500 hover:bg-slate-100"
                                         >
@@ -1257,7 +1135,7 @@ function renderMobileDayCard(date: Date, staffId: string | number) {
                                         </button>
 
                                         {entries.map((entry) =>
-                                          renderScheduleCard(entry, dateStr, selectedStaff.id)
+                                          renderScheduleCard(entry, dateStr, String(selectedStaff.id))
                                         )}
                                       </div>
                                     )}
@@ -1267,7 +1145,7 @@ function renderMobileDayCard(date: Date, staffId: string | number) {
                             : weekDates.flatMap((date) =>
                                 employeeStaffs.map((staff) => {
                                   const dateStr = toDateString(date)
-                                  const entries = getScheduleEntries(dateStr, hourSlot, staff.id)
+                                  const entries = getScheduleEntries(dateStr, hourSlot, String(staff.id))
                                   const isEditing =
                                     editingCell?.date === dateStr &&
                                     editingCell?.hour === hourSlot &&
@@ -1322,17 +1200,10 @@ function renderMobileDayCard(date: Date, staffId: string | number) {
                                             ))}
                                           </select>
 
-                                          <input
-                                            value={scheduleMemo}
-                                            onChange={(e) => setScheduleMemo(e.target.value)}
-                                            placeholder="메모 입력"
-                                            className="w-full rounded border bg-white px-2 py-1 text-xs"
-                                          />
-
                                           <div className="flex gap-1">
                                             <button
                                               onClick={() =>
-                                                handleSaveSchedule(dateStr, hourSlot, staff.id)
+                                                handleSaveSchedule(dateStr, hourSlot, String(staff.id))
                                               }
                                               className="flex-1 rounded bg-indigo-600 px-2 py-1 text-xs text-white"
                                             >
@@ -1341,10 +1212,10 @@ function renderMobileDayCard(date: Date, staffId: string | number) {
                                             <button
                                               onClick={() => {
                                                 setEditingCell(null)
+                                                setEditingEntryId(null)
                                                 setScheduleChildId('')
                                                 setSelectedMinute('00')
                                                 setSelectedVoucher('')
-                                                setScheduleMemo('')
                                               }}
                                               className="flex-1 rounded bg-slate-300 px-2 py-1 text-xs"
                                             >
@@ -1360,12 +1231,12 @@ function renderMobileDayCard(date: Date, staffId: string | number) {
                                               setEditingCell({
                                                 date: dateStr,
                                                 hour: hourSlot,
-                                                staffId: staff.id,
+                                                staffId: String(staff.id),
                                               })
+                                              setEditingEntryId(null)
                                               setScheduleChildId('')
                                               setSelectedMinute('00')
                                               setSelectedVoucher('')
-                                              setScheduleMemo('')
                                             }}
                                             className="min-h-[28px] w-full rounded border border-dashed border-slate-300 px-2 py-1 text-left text-xs text-slate-500 hover:bg-slate-100"
                                           >
@@ -1373,7 +1244,7 @@ function renderMobileDayCard(date: Date, staffId: string | number) {
                                           </button>
 
                                           {entries.map((entry) =>
-                                            renderScheduleCard(entry, dateStr, staff.id)
+                                            renderScheduleCard(entry, dateStr, String(staff.id))
                                           )}
                                         </div>
                                       )}
@@ -1389,9 +1260,9 @@ function renderMobileDayCard(date: Date, staffId: string | number) {
 
                 <div className="space-y-4 md:hidden">
                   {viewMode === 'staff' && selectedStaff
-                    ? weekDates.map((date) => renderMobileDayCard(date, selectedStaff.id))
+                    ? weekDates.map((date) => renderMobileDayCard(date, String(selectedStaff.id)))
                     : weekDates.flatMap((date) =>
-                        employeeStaffs.map((staff) => renderMobileDayCard(date, staff.id))
+                        employeeStaffs.map((staff) => renderMobileDayCard(date, String(staff.id)))
                       )}
                 </div>
               </>
@@ -1498,7 +1369,11 @@ function renderMobileDayCard(date: Date, staffId: string | number) {
                     >
                       <div className="flex flex-wrap items-center gap-2">
                         <div className="font-medium">{getDisplayName(child)}</div>
-                        <span className={`rounded-full px-2 py-0.5 text-xs ${getVoucherChipClass(getVoucherLabel(child.vouchers))}`}>
+                        <span
+                          className={`rounded-full px-2 py-0.5 text-xs ${getVoucherChipClass(
+                            getVoucherLabel(child.vouchers)
+                          )}`}
+                        >
                           {getVoucherLabel(child.vouchers)}
                         </span>
                       </div>
@@ -1576,7 +1451,7 @@ function renderMobileDayCard(date: Date, staffId: string | number) {
                       key={String(staff.id)}
                       onClick={() =>
                         setStaffForm({
-                          id: staff.id,
+                          id: String(staff.id),
                           loginId: staff.login_id,
                           password: '',
                           name: staff.name,
@@ -1633,7 +1508,7 @@ function renderMobileDayCard(date: Date, staffId: string | number) {
                       </tr>
                     </thead>
                     <tbody>
-                      {filteredSummaryRows.map((row) => (
+                      {summaryRows.map((row) => (
                         <tr key={row.child_id}>
                           <td className="border px-3 py-2">{row.child_name}</td>
                           <td className="border px-3 py-2">{row.age_text}</td>
@@ -1650,7 +1525,7 @@ function renderMobileDayCard(date: Date, staffId: string | number) {
                 </div>
 
                 <div className="space-y-3 md:hidden">
-                  {filteredSummaryRows.map((row) => (
+                  {summaryRows.map((row) => (
                     <div key={row.child_id} className="rounded-2xl border bg-white p-4">
                       <div className="flex items-center justify-between gap-3">
                         <div>
