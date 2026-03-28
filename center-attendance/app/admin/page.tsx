@@ -124,9 +124,10 @@ type DisplayScheduleItem = {
   rows: ScheduleEntryRow[]
 }
 
-type AttendanceModalState = {
+type RecordModalState = {
   open: boolean
-  item: DisplayScheduleItem | null
+  entry: ScheduleEntryRow | null
+  status: AttendanceStatus
 }
 
 type AttendanceSummaryRow = {
@@ -292,18 +293,29 @@ function getVoucherPrices(child: ChildRow) {
   return value
 }
 
+function getScheduleCardBgClass(item: DisplayScheduleItem, attendanceMap: Map<string, ClassLogRow>) {
+  const first = item.rows[0]
+  if (!first) return 'bg-white'
+  const key = `${first.date}|${buildClassTimestamp(first.date, first.time_slot, first.minute_slot)}|${first.teacher_id}|${first.child_id}`
+  const attendance = attendanceMap.get(key)
+  if (!attendance?.status) return 'bg-white'
+  if (attendance.status === 'attended' || attendance.status === 'makeup') return 'bg-sky-50'
+  if (attendance.status === 'absent' || attendance.status === 'same_day_absent') return 'bg-rose-50'
+  return 'bg-white'
+}
+
 function AdminDailySchedule({
   selectedDate,
   staffs,
   children,
   entries,
-  onOpenAttendance,
+  onOpenRecord,
 }: {
   selectedDate: string
   staffs: StaffRow[]
   children: ChildRow[]
   entries: ScheduleEntryRow[]
-  onOpenAttendance: (item: DisplayScheduleItem) => void
+  onOpenRecord: (entry: ScheduleEntryRow) => void
 }) {
   const teacherList = staffs.filter((s) => s.role === 'employee' && s.is_active)
   const slots = getHourSlots()
@@ -400,7 +412,10 @@ function AdminDailySchedule({
                                 <button
                                   key={item.key}
                                   type="button"
-                                  onClick={() => onOpenAttendance(item)}
+                                  onClick={() => {
+                                    const firstEntry = item.rows[0]
+                                    if (firstEntry) onOpenRecord(firstEntry)
+                                  }}
                                   className="block w-full rounded-lg border bg-white px-2 py-2 text-left shadow-sm"
                                 >
                                   <div className="font-medium text-slate-800">{title}</div>
@@ -471,9 +486,18 @@ export default function AdminPage() {
   const [groupSearch, setGroupSearch] = useState('')
   const [childSearch, setChildSearch] = useState('')
 
-  const [attendanceModal, setAttendanceModal] = useState<AttendanceModalState>({
+  const [recordModal, setRecordModal] = useState<RecordModalState>({
     open: false,
-    item: null,
+    entry: null,
+    status: 'attended',
+  })
+
+  const [childInfoModal, setChildInfoModal] = useState<{
+    open: boolean
+    child: ChildRow | null
+  }>({
+    open: false,
+    child: null,
   })
 
   const [childForm, setChildForm] = useState<ChildForm>({
@@ -547,7 +571,6 @@ export default function AdminPage() {
   async function loadSchedules() {
     const weekStart = toDateString(weekDates[0])
     const weekEnd = toDateString(weekDates[weekDates.length - 1])
-
     const start = weekStart < dailyDate ? weekStart : dailyDate
     const end = weekEnd > dailyDate ? weekEnd : dailyDate
 
@@ -662,7 +685,6 @@ export default function AdminPage() {
 
     rows.forEach((row) => {
       const itemKey = row.is_group && row.group_id ? `group-${row.group_id}` : `single-${row.id}`
-
       if (!groupMap.has(itemKey)) {
         groupMap.set(itemKey, {
           key: itemKey,
@@ -679,7 +701,6 @@ export default function AdminPage() {
           rows: [],
         })
       }
-
       groupMap.get(itemKey)!.rows.push(row)
     })
 
@@ -724,7 +745,6 @@ export default function AdminPage() {
         setMessage('아이 이름을 입력하세요.')
         return
       }
-
       if (childForm.voucherTypes.length === 0) {
         setMessage('바우처를 1개 이상 선택하세요.')
         return
@@ -803,9 +823,7 @@ export default function AdminPage() {
         is_active: staffForm.isActive,
       }
 
-      if (staffForm.password.trim()) {
-        payload.password = staffForm.password
-      }
+      if (staffForm.password.trim()) payload.password = staffForm.password
 
       if (staffForm.id) {
         const { error } = await supabase.from('staff_accounts').update(payload).eq('id', staffForm.id)
@@ -829,7 +847,8 @@ export default function AdminPage() {
       setMessage(err?.message ?? '선생님 저장 실패')
     }
   }
-async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: number) {
+
+  async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: number) {
     try {
       const staff = employeeStaffs.find((s) => Number(s.id) === Number(staffId))
       const minute = Number(selectedMinute)
@@ -946,6 +965,7 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
       }
 
       await loadSchedules()
+      await loadClassLogsForMonth()
       setMessage('시간표가 삭제되었습니다.')
     } catch (err: any) {
       setMessage(err?.message ?? '삭제 실패')
@@ -997,8 +1017,21 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
     return map
   }, [classLogs])
 
-  async function handleSaveAttendance(entry: ScheduleEntryRow, status: AttendanceStatus) {
+  function openRecordModal(entry: ScheduleEntryRow) {
+    const existing = attendanceMap.get(getAttendanceKey(entry))
+    setRecordModal({
+      open: true,
+      entry,
+      status: existing?.status ?? 'attended',
+    })
+  }
+
+  async function handleSaveAttendanceFromModal() {
     try {
+      if (!recordModal.entry) return
+
+      const entry = recordModal.entry
+      const status = recordModal.status
       const classTime = buildClassTimestamp(entry.date, entry.time_slot, entry.minute_slot)
       const existing = attendanceMap.get(getAttendanceKey(entry))
 
@@ -1013,7 +1046,6 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
             group_name: entry.group_name ?? null,
           })
           .eq('id', existing.id)
-
         if (error) throw error
       } else {
         const { error } = await supabase.from('class_logs').insert({
@@ -1027,11 +1059,15 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
           group_id: entry.group_id ?? null,
           group_name: entry.group_name ?? null,
         })
-
         if (error) throw error
       }
 
       await loadClassLogsForMonth()
+      setRecordModal({
+        open: false,
+        entry: null,
+        status: 'attended',
+      })
       setMessage('출결이 저장되었습니다.')
     } catch (err: any) {
       setMessage(err?.message ?? '출결 저장 실패')
@@ -1053,13 +1089,37 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
         )
 
       if (error) throw error
-
       await loadMonthlyGroupPrices()
       setMessage('그룹 단가가 저장되었습니다.')
     } catch (err: any) {
       setMessage(err?.message ?? '그룹 단가 저장 실패')
     }
   }
+
+  const activeScheduleKeySet = useMemo(() => {
+    const start = `${csvMonth}-01`
+    const endDate = new Date(start)
+    endDate.setMonth(endDate.getMonth() + 1)
+    endDate.setDate(0)
+    const end = toDateString(endDate)
+
+    const set = new Set<string>()
+    allScheduleEntries
+      .filter((row) => row.date >= start && row.date <= end && row.is_active)
+      .forEach((row) => {
+        const key = `${row.date}|${buildClassTimestamp(row.date, row.time_slot, row.minute_slot)}|${row.teacher_id}|${row.child_id}`
+        set.add(key)
+      })
+
+    return set
+  }, [allScheduleEntries, csvMonth])
+
+  const validClassLogs = useMemo(() => {
+    return classLogs.filter((log) => {
+      const key = `${log.class_date}|${log.class_time}|${log.staff_id}|${log.child_id}`
+      return activeScheduleKeySet.has(key)
+    })
+  }, [classLogs, activeScheduleKeySet])
 
   function getIndividualRowAmount(row: ScheduleEntryRow, child: ChildRow, didimIndex: number) {
     const voucherPrices = getVoucherPrices(child)
@@ -1077,7 +1137,7 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
     return children
       .filter((child) => child.is_active)
       .map((child) => {
-        const rows = classLogs.filter((log) => Number(log.child_id) === Number(child.id))
+        const rows = validClassLogs.filter((log) => Number(log.child_id) === Number(child.id))
         return {
           child_id: child.id,
           child_name: child.child_name,
@@ -1096,14 +1156,14 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
         }
       })
       .sort((a, b) => a.child_name.localeCompare(b.child_name, 'ko'))
-  }, [children, classLogs])
+  }, [children, validClassLogs])
 
   const teacherLessonRows = useMemo<TeacherLessonRow[]>(() => {
     const teacherMap = new Map<number, string>(staffs.map((s) => [Number(s.id), s.name]))
     const childMap = new Map<number, string>(children.map((c) => [Number(c.id), c.child_name]))
     const grouped = new Map<string, ClassLogRow[]>()
 
-    classLogs.forEach((log) => {
+    validClassLogs.forEach((log) => {
       const key = `${log.staff_id}-${log.child_id}`
       if (!grouped.has(key)) grouped.set(key, [])
       grouped.get(key)!.push(log)
@@ -1126,7 +1186,7 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
         }
       })
       .sort((a, b) => a.teacher_name.localeCompare(b.teacher_name, 'ko'))
-  }, [staffs, children, classLogs])
+  }, [staffs, children, validClassLogs])
 
   const settlementRows = useMemo<SettlementRow[]>(() => {
     const start = `${csvMonth}-01`
@@ -1143,7 +1203,7 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
       .filter((child) => child.is_active)
       .map((child) => {
         const scheduleRows = monthlyScheduleRows.filter((r) => Number(r.child_id) === Number(child.id))
-        const attendanceRows = classLogs.filter((r) => Number(r.child_id) === Number(child.id))
+        const attendanceRows = validClassLogs.filter((r) => Number(r.child_id) === Number(child.id))
 
         const groupRows = scheduleRows.filter((r) => Boolean(r.is_group))
         const individualRows = scheduleRows.filter((r) => !r.is_group)
@@ -1177,7 +1237,36 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
         }
       })
       .sort((a, b) => a.child_name.localeCompare(b.child_name, 'ko'))
-  }, [csvMonth, allScheduleEntries, children, classLogs, monthlyGroupPrices])
+  }, [csvMonth, allScheduleEntries, children, validClassLogs, monthlyGroupPrices])
+
+  const selectedChildMonthlyLogs = useMemo(() => {
+    if (!childInfoModal.child) return []
+    return validClassLogs.filter(
+      (log) =>
+        Number(log.child_id) === Number(childInfoModal.child?.id) &&
+        log.class_date.startsWith(csvMonth)
+    )
+  }, [childInfoModal.child, validClassLogs, csvMonth])
+
+  const childInfoDates = useMemo(() => {
+    return {
+      attended: uniqueDateList(
+        selectedChildMonthlyLogs.filter((r) => r.status === 'attended').map((r) => r.class_date)
+      ),
+      makeup: uniqueDateList(
+        selectedChildMonthlyLogs.filter((r) => r.status === 'makeup').map((r) => r.class_date)
+      ),
+      group: uniqueDateList(
+        selectedChildMonthlyLogs.filter((r) => Boolean(r.is_group)).map((r) => r.class_date)
+      ),
+      absent: uniqueDateList(
+        selectedChildMonthlyLogs.filter((r) => r.status === 'absent').map((r) => r.class_date)
+      ),
+      sameDayAbsent: uniqueDateList(
+        selectedChildMonthlyLogs.filter((r) => r.status === 'same_day_absent').map((r) => r.class_date)
+      ),
+    }
+  }, [selectedChildMonthlyLogs])
 
   function downloadStudentCsv() {
     const monthRows = settlementRows.map((row) => [
@@ -1243,7 +1332,10 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
       (editingEntryId === item.rows[0]?.id || editingGroupId === item.groupId)
 
     return (
-      <div key={item.key} className="rounded-lg border border-slate-200 bg-white px-2 py-2 text-xs shadow-sm">
+      <div
+        key={item.key}
+        className={`rounded-lg border border-slate-200 px-2 py-2 text-xs shadow-sm ${getScheduleCardBgClass(item, attendanceMap)}`}
+      >
         {isEditing ? (
           <div className="space-y-2">
             <label className="flex items-center gap-2 text-xs">
@@ -1274,7 +1366,7 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
                   placeholder="학생 이름 검색"
                   className="w-full rounded border bg-white px-2 py-1 text-xs"
                 />
-                <div className="rounded border p-2">
+                <div className="rounded border bg-white p-2">
                   <div className="mb-2 text-[11px] text-slate-500">
                     학생 선택 ({selectedGroupChildIds.length}/8)
                   </div>
@@ -1358,7 +1450,10 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
           <>
             <button
               type="button"
-              onClick={() => setAttendanceModal({ open: true, item })}
+              onClick={() => {
+                const firstEntry = item.rows[0]
+                if (firstEntry) openRecordModal(firstEntry)
+              }}
               className="w-full text-left"
             >
               <div className="font-medium text-slate-800">{title}</div>
@@ -1376,26 +1471,44 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
             </div>
 
             {item.isGroup ? (
-              <div className="mt-1 text-[11px] text-slate-500">
-                {item.rows
-                  .map((r) => children.find((c) => c.id === Number(r.child_id))?.child_name ?? '')
-                  .filter(Boolean)
-                  .join(', ')}
+              <div className="mt-1 space-y-1 text-[11px] text-slate-600">
+                {item.rows.map((r) => {
+                  const child = children.find((c) => c.id === Number(r.child_id))
+                  return (
+                    <button
+                      key={r.id}
+                      type="button"
+                      onClick={() => openRecordModal(r)}
+                      className="block w-full rounded bg-white/70 px-2 py-1 text-left hover:bg-white"
+                    >
+                      {child?.child_name ?? `학생(${r.child_id})`}
+                    </button>
+                  )
+                })}
               </div>
             ) : null}
 
-            <div className="mt-2 flex gap-1">
+            <div className="mt-2 flex flex-wrap gap-1">
+              {!item.isGroup && firstChild ? (
+                <button
+                  onClick={() => setChildInfoModal({ open: true, child: firstChild })}
+                  className="rounded bg-slate-100 px-2 py-0.5 text-[11px] text-slate-700"
+                >
+                  아이정보
+                </button>
+              ) : null}
+
               <button
                 onClick={() => handleEditSchedule(item)}
                 className="rounded bg-blue-50 px-2 py-0.5 text-[11px] text-blue-700"
               >
-                수정
+                메모수정
               </button>
               <button
                 onClick={() => handleDeleteSchedule(item)}
                 className="rounded bg-rose-50 px-2 py-0.5 text-[11px] text-rose-700"
               >
-                삭제
+                관리자만 삭제 가능
               </button>
             </div>
           </>
@@ -1725,7 +1838,7 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
                 staffs={staffs}
                 children={children}
                 entries={allScheduleEntries}
-                onOpenAttendance={(item) => setAttendanceModal({ open: true, item })}
+                onOpenRecord={(entry) => openRecordModal(entry)}
               />
             ) : viewMode === 'staff' && !selectedStaff ? (
               <div className="rounded-xl border bg-slate-50 p-6 text-center text-slate-500">
@@ -2378,7 +2491,7 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
                   summarySubTab === 'attendance' ? 'bg-emerald-500 text-white' : 'bg-slate-200'
                 }`}
               >
-                1번표 학생출결탭
+                학생출결
               </button>
               <button
                 onClick={() => setSummarySubTab('teacher')}
@@ -2386,7 +2499,7 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
                   summarySubTab === 'teacher' ? 'bg-indigo-500 text-white' : 'bg-slate-200'
                 }`}
               >
-                2번표 선생님 수업탭
+                선생님 수업
               </button>
               <button
                 onClick={() => setSummarySubTab('settlement')}
@@ -2394,7 +2507,7 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
                   summarySubTab === 'settlement' ? 'bg-orange-500 text-white' : 'bg-slate-200'
                 }`}
               >
-                3번표 월학생 정산탭
+                월학생정산
               </button>
             </div>
 
@@ -2525,74 +2638,85 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
           </div>
         ) : null}
 
-        {attendanceModal.open && attendanceModal.item ? (
+        {recordModal.open && recordModal.entry ? (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-            <div className="w-full max-w-lg rounded-2xl bg-white p-5 shadow-xl">
-              <div className="mb-4 flex items-start justify-between gap-3">
-                <div>
-                  <div className="text-lg font-bold">출결 작성</div>
-                  <div className="text-sm text-slate-500">
-                    {attendanceModal.item.date} {attendanceModal.item.hourSlot.slice(0, 2)}:
-                    {String(attendanceModal.item.minuteSlot).padStart(2, '0')}
-                    {attendanceModal.item.isGroup ? ` / ${attendanceModal.item.groupName || '그룹수업'}` : ''}
-                  </div>
-                </div>
+            <div className="w-full max-w-lg rounded-[28px] bg-white p-6 shadow-xl">
+              <h3 className="mb-4 text-2xl font-bold">수업 상태 선택</h3>
+
+              <div className="mb-4 text-lg text-slate-600">
+                {recordModal.entry.date} / {recordModal.entry.time_slot.slice(0, 2)}:
+                {String(recordModal.entry.minute_slot ?? 0).padStart(2, '0')}
+              </div>
+
+              <select
+                value={recordModal.status}
+                onChange={(e) =>
+                  setRecordModal((prev) => ({
+                    ...prev,
+                    status: e.target.value as AttendanceStatus,
+                  }))
+                }
+                className="mb-5 w-full rounded-full border px-5 py-4 text-2xl"
+              >
+                <option value="attended">출석</option>
+                <option value="absent">결석</option>
+                <option value="makeup">보강</option>
+                <option value="same_day_absent">당일결석</option>
+              </select>
+
+              <div className="flex gap-3">
                 <button
-                  onClick={() => setAttendanceModal({ open: false, item: null })}
-                  className="rounded bg-slate-100 px-3 py-1 text-sm"
+                  onClick={handleSaveAttendanceFromModal}
+                  className="flex-1 rounded-2xl bg-blue-700 px-4 py-4 text-2xl font-bold text-white"
                 >
-                  닫기
+                  저장
+                </button>
+                <button
+                  onClick={() =>
+                    setRecordModal({
+                      open: false,
+                      entry: null,
+                      status: 'attended',
+                    })
+                  }
+                  className="flex-1 rounded-2xl bg-slate-100 px-4 py-4 text-2xl font-bold text-slate-700"
+                >
+                  취소
                 </button>
               </div>
+            </div>
+          </div>
+        ) : null}
 
-              <div className="space-y-3">
-                {attendanceModal.item.rows.map((entry) => {
-                  const child = children.find((c) => c.id === Number(entry.child_id))
-                  const attendance = attendanceMap.get(getAttendanceKey(entry))
+        {childInfoModal.open && childInfoModal.child ? (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+            <div className="w-full max-w-xl rounded-[28px] bg-white p-6 shadow-xl">
+              <h3 className="mb-4 text-2xl font-bold">아이 정보</h3>
 
-                  return (
-                    <div key={entry.id} className="rounded-xl border p-3">
-                      <div className="font-medium">
-                        {child?.child_name ?? `학생(${entry.child_id})`}
-                        {child ? ` (${getAgeText(child.birth_date)})` : ''}
-                      </div>
-
-                      {attendance?.status ? (
-                        <div className={`mt-1 inline-block rounded-full px-2 py-0.5 text-[11px] ${getStatusClass(attendance.status)}`}>
-                          {getStatusLabel(attendance.status)}
-                        </div>
-                      ) : null}
-
-                      <div className="mt-2 grid grid-cols-2 gap-2">
-                        <button
-                          onClick={() => handleSaveAttendance(entry, 'attended')}
-                          className="rounded bg-blue-100 px-3 py-2 text-sm text-blue-700"
-                        >
-                          출석
-                        </button>
-                        <button
-                          onClick={() => handleSaveAttendance(entry, 'absent')}
-                          className="rounded bg-rose-100 px-3 py-2 text-sm text-rose-700"
-                        >
-                          결석
-                        </button>
-                        <button
-                          onClick={() => handleSaveAttendance(entry, 'same_day_absent')}
-                          className="rounded bg-red-100 px-3 py-2 text-sm text-red-700"
-                        >
-                          당일결석
-                        </button>
-                        <button
-                          onClick={() => handleSaveAttendance(entry, 'makeup')}
-                          className="rounded bg-sky-100 px-3 py-2 text-sm text-sky-700"
-                        >
-                          보강
-                        </button>
-                      </div>
-                    </div>
-                  )
-                })}
+              <div className="space-y-2 text-lg">
+                <div>이름: {childInfoModal.child.child_name}</div>
+                <div>나이: {getAgeText(childInfoModal.child.birth_date)}세</div>
+                <div>차트번호: {childInfoModal.child.chart_no ?? '-'}</div>
+                <div>생년월일: {childInfoModal.child.birth_date ?? '-'}</div>
+                <div>핸드폰: {childInfoModal.child.phone ?? '-'}</div>
+                <div>바우처: {getVoucherLabel(childInfoModal.child.vouchers)}</div>
+                <div>메모: {childInfoModal.child.notes ?? '-'}</div>
               </div>
+
+              <div className="mt-5 space-y-2 rounded-2xl bg-slate-50 p-4 text-sm">
+                <div><span className="font-semibold">출석날짜:</span> {childInfoDates.attended || '-'}</div>
+                <div><span className="font-semibold">보강날짜:</span> {childInfoDates.makeup || '-'}</div>
+                <div><span className="font-semibold">그룹수업날짜:</span> {childInfoDates.group || '-'}</div>
+                <div><span className="font-semibold">결석날짜:</span> {childInfoDates.absent || '-'}</div>
+                <div><span className="font-semibold">당일결석날짜:</span> {childInfoDates.sameDayAbsent || '-'}</div>
+              </div>
+
+              <button
+                onClick={() => setChildInfoModal({ open: false, child: null })}
+                className="mt-5 w-full rounded-2xl bg-slate-100 px-4 py-4 text-xl font-bold text-slate-700"
+              >
+                닫기
+              </button>
             </div>
           </div>
         ) : null}
