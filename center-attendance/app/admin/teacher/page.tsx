@@ -16,44 +16,38 @@ type ClassLogRow = {
 type StaffRow = {
   id: number
   name: string
-  role: string | null
-  is_active: boolean | null
 }
 
 type ChildRow = {
   id: number
   child_name: string
-  is_active: boolean | null
 }
 
-type TeacherGroupedItem = {
+type CellItem = {
   logId: number
   childId: number
   childName: string
-  classTime: string
   status: string
   note: string
+  classTime: string
 }
 
-type TeacherGrouped = {
+type TeacherColumn = {
   staffId: number
   staffName: string
-  items: TeacherGroupedItem[]
 }
 
-function formatDateToKSTInput(date: Date) {
-  const year = date.getFullYear()
-  const month = String(date.getMonth() + 1).padStart(2, '0')
-  const day = String(date.getDate()).padStart(2, '0')
-  return `${year}-${month}-${day}`
+function formatDateInput(date: Date) {
+  const y = date.getFullYear()
+  const m = String(date.getMonth() + 1).padStart(2, '0')
+  const d = String(date.getDate()).padStart(2, '0')
+  return `${y}-${m}-${d}`
 }
 
-function formatClassTime(value: string) {
+function getTimeKey(value: string) {
   if (!value) return ''
-
   const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return value
-
+  if (Number.isNaN(date.getTime())) return value.slice(11, 16) || value
   return date.toLocaleTimeString('ko-KR', {
     hour: '2-digit',
     minute: '2-digit',
@@ -61,145 +55,154 @@ function formatClassTime(value: string) {
   })
 }
 
-function formatStatus(status: string) {
+function getStatusLabel(status: string) {
   if (status === 'attended') return '출석'
   if (status === 'absent') return '결석'
   if (status === 'makeup') return '보강'
-  return status || '-'
+  return status || ''
 }
 
-export default function TeacherStudentAssignmentPage() {
-  const [selectedDate, setSelectedDate] = useState(formatDateToKSTInput(new Date()))
+function getStatusClass(status: string) {
+  if (status === 'attended' || status === 'makeup') {
+    return 'bg-blue-50 text-blue-700 border-blue-200'
+  }
+  if (status === 'absent') {
+    return 'bg-red-50 text-red-700 border-red-200'
+  }
+  return 'bg-gray-50 text-gray-700 border-gray-200'
+}
+
+export default function TeacherPage() {
+  const [selectedDate, setSelectedDate] = useState(formatDateInput(new Date()))
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
-  const [groupedData, setGroupedData] = useState<TeacherGrouped[]>([])
+  const [teachers, setTeachers] = useState<TeacherColumn[]>([])
+  const [timeSlots, setTimeSlots] = useState<string[]>([])
+  const [cellMap, setCellMap] = useState<Record<string, CellItem[]>>({})
 
-  async function loadTeacherAssignments(date: string) {
+  async function loadData(date: string) {
     try {
       setLoading(true)
       setError('')
 
-      // 1) 해당 날짜 수업 로그 조회
-      const { data: logs, error: logsError } = await supabase
+      const { data: logsData, error: logsError } = await supabase
         .from('class_logs')
         .select('id, staff_id, child_id, class_date, class_time, status, note')
         .eq('class_date', date)
         .order('class_time', { ascending: true })
 
-      if (logsError) {
-        throw logsError
-      }
+      if (logsError) throw logsError
 
-      const classLogs = (logs ?? []) as ClassLogRow[]
+      const logs = (logsData ?? []) as ClassLogRow[]
 
-      if (classLogs.length === 0) {
-        setGroupedData([])
+      if (logs.length === 0) {
+        setTeachers([])
+        setTimeSlots([])
+        setCellMap({})
         return
       }
 
-      // 2) staff_id / child_id 추출
-      const uniqueStaffIds = [...new Set(classLogs.map((row) => row.staff_id).filter(Boolean))]
-      const uniqueChildIds = [...new Set(classLogs.map((row) => row.child_id).filter(Boolean))]
+      const staffIds = [...new Set(logs.map((v) => Number(v.staff_id)).filter(Boolean))]
+      const childIds = [...new Set(logs.map((v) => Number(v.child_id)).filter(Boolean))]
 
-      // 3) 선생님 정보 조회
-      const { data: staffs, error: staffsError } = await supabase
+      const { data: staffData, error: staffError } = await supabase
         .from('staff_accounts')
-        .select('id, name, role, is_active')
-        .in('id', uniqueStaffIds)
+        .select('id, name')
+        .in('id', staffIds)
 
-      if (staffsError) {
-        throw staffsError
-      }
+      if (staffError) throw staffError
 
-      // 4) 학생 정보 조회
-      const { data: children, error: childrenError } = await supabase
+      const { data: childData, error: childError } = await supabase
         .from('children')
-        .select('id, child_name, is_active')
-        .in('id', uniqueChildIds)
+        .select('id, child_name')
+        .in('id', childIds)
 
-      if (childrenError) {
-        throw childrenError
-      }
+      if (childError) throw childError
 
       const staffMap = new Map<number, StaffRow>()
-      ;((staffs ?? []) as StaffRow[]).forEach((staff) => {
-        staffMap.set(Number(staff.id), staff)
+      ;((staffData ?? []) as StaffRow[]).forEach((row) => {
+        staffMap.set(Number(row.id), row)
       })
 
       const childMap = new Map<number, ChildRow>()
-      ;((children ?? []) as ChildRow[]).forEach((child) => {
-        childMap.set(Number(child.id), child)
+      ;((childData ?? []) as ChildRow[]).forEach((row) => {
+        childMap.set(Number(row.id), row)
       })
 
-      // 5) 선생님별 그룹핑
-      const groupedMap = new Map<number, TeacherGrouped>()
-
-      classLogs.forEach((log) => {
-        const staffId = Number(log.staff_id)
-        const childId = Number(log.child_id)
-
-        if (!groupedMap.has(staffId)) {
-          groupedMap.set(staffId, {
-            staffId,
-            staffName: staffMap.get(staffId)?.name ?? `선생님(${staffId})`,
-            items: [],
-          })
-        }
-
-        groupedMap.get(staffId)!.items.push({
-          logId: log.id,
-          childId,
-          childName: childMap.get(childId)?.child_name ?? `학생(${childId})`,
-          classTime: log.class_time,
-          status: log.status ?? '',
-          note: log.note ?? '',
-        })
-      })
-
-      // 6) 시간순 정렬 + 선생님명 정렬
-      const result = Array.from(groupedMap.values())
-        .map((teacher) => ({
-          ...teacher,
-          items: teacher.items.sort((a, b) => {
-            const at = new Date(a.classTime).getTime()
-            const bt = new Date(b.classTime).getTime()
-            return at - bt
-          }),
+      const teacherList: TeacherColumn[] = staffIds
+        .map((id) => ({
+          staffId: id,
+          staffName: staffMap.get(id)?.name ?? `선생님(${id})`,
         }))
         .sort((a, b) => a.staffName.localeCompare(b.staffName, 'ko'))
 
-      setGroupedData(result)
+      const slotSet = new Set<string>()
+      const nextCellMap: Record<string, CellItem[]> = {}
+
+      logs.forEach((log) => {
+        const timeKey = getTimeKey(log.class_time)
+        const staffId = Number(log.staff_id)
+        const childId = Number(log.child_id)
+        const mapKey = `${timeKey}__${staffId}`
+
+        slotSet.add(timeKey)
+
+        if (!nextCellMap[mapKey]) {
+          nextCellMap[mapKey] = []
+        }
+
+        nextCellMap[mapKey].push({
+          logId: Number(log.id),
+          childId,
+          childName: childMap.get(childId)?.child_name ?? `학생(${childId})`,
+          status: log.status ?? '',
+          note: log.note ?? '',
+          classTime: log.class_time,
+        })
+      })
+
+      Object.keys(nextCellMap).forEach((key) => {
+        nextCellMap[key].sort((a, b) => a.childName.localeCompare(b.childName, 'ko'))
+      })
+
+      const sortedSlots = Array.from(slotSet).sort((a, b) => a.localeCompare(b))
+
+      setTeachers(teacherList)
+      setTimeSlots(sortedSlots)
+      setCellMap(nextCellMap)
     } catch (err: any) {
       console.error(err)
       setError(err?.message ?? '데이터를 불러오지 못했습니다.')
-      setGroupedData([])
+      setTeachers([])
+      setTimeSlots([])
+      setCellMap({})
     } finally {
       setLoading(false)
     }
   }
 
   useEffect(() => {
-    loadTeacherAssignments(selectedDate)
+    loadData(selectedDate)
   }, [selectedDate])
 
-  const totalStudents = useMemo(() => {
-    return groupedData.reduce((sum, teacher) => sum + teacher.items.length, 0)
-  }, [groupedData])
+  const totalCount = useMemo(() => {
+    return Object.values(cellMap).reduce((sum, arr) => sum + arr.length, 0)
+  }, [cellMap])
 
   return (
-    <div className="min-h-screen bg-[#f7f8fb] p-4 md:p-6">
-      <div className="mx-auto max-w-6xl">
+    <div className="min-h-screen bg-[#f6f8fb] p-4 md:p-6">
+      <div className="mx-auto max-w-[1600px]">
         <div className="mb-4 rounded-2xl bg-white p-4 shadow-sm">
-          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <div>
-              <h1 className="text-xl font-bold text-gray-900">선생님별 학생 배정</h1>
+              <h1 className="text-xl font-bold text-gray-900">선생님별 전체시간표</h1>
               <p className="mt-1 text-sm text-gray-500">
-                해당 날짜에 수업이 있는 선생님만 표시됩니다.
+                가로는 선생님, 세로는 시간입니다. 각 칸에 학생이 표시됩니다.
               </p>
             </div>
 
             <div className="flex items-center gap-2">
-              <label className="text-sm font-medium text-gray-700">날짜</label>
+              <span className="text-sm font-medium text-gray-700">날짜</span>
               <input
                 type="date"
                 value={selectedDate}
@@ -209,12 +212,15 @@ export default function TeacherStudentAssignmentPage() {
             </div>
           </div>
 
-          <div className="mt-4 flex flex-wrap gap-3 text-sm text-gray-600">
-            <div className="rounded-full bg-gray-100 px-3 py-1">
-              선생님 수: <span className="font-semibold">{groupedData.length}</span>
+          <div className="mt-4 flex flex-wrap gap-2 text-sm">
+            <div className="rounded-full bg-gray-100 px-3 py-1 text-gray-700">
+              선생님 수 <span className="font-semibold">{teachers.length}</span>
             </div>
-            <div className="rounded-full bg-gray-100 px-3 py-1">
-              학생 배정 수: <span className="font-semibold">{totalStudents}</span>
+            <div className="rounded-full bg-gray-100 px-3 py-1 text-gray-700">
+              시간 수 <span className="font-semibold">{timeSlots.length}</span>
+            </div>
+            <div className="rounded-full bg-gray-100 px-3 py-1 text-gray-700">
+              학생 배정 수 <span className="font-semibold">{totalCount}</span>
             </div>
           </div>
         </div>
@@ -231,58 +237,87 @@ export default function TeacherStudentAssignmentPage() {
           </div>
         )}
 
-        {!loading && !error && groupedData.length === 0 && (
+        {!loading && !error && teachers.length === 0 && (
           <div className="rounded-2xl bg-white p-8 text-center text-gray-500 shadow-sm">
             선택한 날짜에 수업 데이터가 없습니다.
           </div>
         )}
 
-        {!loading && !error && groupedData.length > 0 && (
-          <div className="grid gap-4">
-            {groupedData.map((teacher) => (
-              <div
-                key={teacher.staffId}
-                className="overflow-hidden rounded-2xl bg-white shadow-sm"
-              >
-                <div className="border-b bg-gray-50 px-4 py-3">
-                  <div className="flex items-center justify-between">
-                    <h2 className="text-lg font-bold text-gray-900">{teacher.staffName}</h2>
-                    <span className="rounded-full bg-blue-50 px-3 py-1 text-sm font-medium text-blue-700">
-                      {teacher.items.length}명
-                    </span>
-                  </div>
-                </div>
+        {!loading && !error && teachers.length > 0 && (
+          <div className="overflow-x-auto rounded-2xl bg-white shadow-sm">
+            <table className="min-w-[900px] border-separate border-spacing-0">
+              <thead>
+                <tr>
+                  <th className="sticky left-0 top-0 z-20 min-w-[90px] border-b border-r bg-gray-50 px-3 py-3 text-center text-sm font-bold text-gray-700">
+                    시간
+                  </th>
 
-                <div className="divide-y">
-                  {teacher.items.map((item) => (
-                    <div
-                      key={item.logId}
-                      className="flex flex-col gap-2 px-4 py-3 md:flex-row md:items-center md:justify-between"
+                  {teachers.map((teacher) => (
+                    <th
+                      key={teacher.staffId}
+                      className="top-0 z-10 min-w-[220px] border-b border-r bg-gray-50 px-3 py-3 text-center text-sm font-bold text-gray-900"
                     >
-                      <div className="flex items-center gap-3">
-                        <div className="min-w-[72px] rounded-lg bg-gray-100 px-2 py-1 text-center text-sm font-semibold text-gray-700">
-                          {formatClassTime(item.classTime)}
-                        </div>
-                        <div className="text-base font-medium text-gray-900">
-                          {item.childName}
-                        </div>
-                      </div>
-
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="rounded-full bg-gray-100 px-3 py-1 text-sm text-gray-700">
-                          {formatStatus(item.status)}
-                        </span>
-                        {item.note ? (
-                          <span className="rounded-full bg-yellow-50 px-3 py-1 text-sm text-yellow-700">
-                            메모: {item.note}
-                          </span>
-                        ) : null}
-                      </div>
-                    </div>
+                      {teacher.staffName}
+                    </th>
                   ))}
-                </div>
-              </div>
-            ))}
+                </tr>
+              </thead>
+
+              <tbody>
+                {timeSlots.map((time) => (
+                  <tr key={time}>
+                    <td className="sticky left-0 z-10 border-b border-r bg-white px-3 py-3 text-center text-sm font-semibold text-gray-700">
+                      {time}
+                    </td>
+
+                    {teachers.map((teacher) => {
+                      const key = `${time}__${teacher.staffId}`
+                      const items = cellMap[key] ?? []
+
+                      return (
+                        <td
+                          key={key}
+                          className="align-top border-b border-r px-2 py-2"
+                        >
+                          {items.length === 0 ? (
+                            <div className="min-h-[56px]" />
+                          ) : (
+                            <div className="flex min-h-[56px] flex-col gap-2">
+                              {items.map((item) => (
+                                <div
+                                  key={item.logId}
+                                  className="rounded-xl border bg-white px-2 py-2 shadow-sm"
+                                >
+                                  <div className="text-sm font-semibold text-gray-900">
+                                    {item.childName}
+                                  </div>
+
+                                  <div className="mt-1 flex flex-wrap gap-1">
+                                    {item.status ? (
+                                      <span
+                                        className={`rounded-full border px-2 py-0.5 text-[11px] ${getStatusClass(item.status)}`}
+                                      >
+                                        {getStatusLabel(item.status)}
+                                      </span>
+                                    ) : null}
+
+                                    {item.note ? (
+                                      <span className="rounded-full border border-yellow-200 bg-yellow-50 px-2 py-0.5 text-[11px] text-yellow-700">
+                                        메모
+                                      </span>
+                                    ) : null}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </td>
+                      )
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         )}
       </div>
