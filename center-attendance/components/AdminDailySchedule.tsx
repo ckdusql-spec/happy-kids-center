@@ -14,6 +14,9 @@ type ScheduleEntryRow = {
   voucher_type: string | null
   note: string | null
   is_active: boolean | null
+  is_group: boolean | null
+  group_id: string | null
+  group_name: string | null
 }
 
 type StaffRow = {
@@ -35,6 +38,9 @@ type CellItem = {
   voucherType: string
   note: string
   minuteSlot: number
+  isGroup: boolean
+  groupId: string | null
+  groupName: string | null
 }
 
 type TeacherColumn = {
@@ -59,10 +65,7 @@ function getAgeText(birthDate?: string | null) {
   const monthDiff = now.getMonth() - birth.getMonth()
   const dayDiff = now.getDate() - birth.getDate()
 
-  if (monthDiff < 0 || (monthDiff === 0 && dayDiff < 0)) {
-    age--
-  }
-
+  if (monthDiff < 0 || (monthDiff === 0 && dayDiff < 0)) age--
   return String(age)
 }
 
@@ -77,13 +80,37 @@ function minuteLabel(minute: number | null | undefined) {
   return String(Number(minute ?? 0)).padStart(2, '0')
 }
 
+function getVoucherClass(voucher: string | null | undefined) {
+  if (voucher === '디딤') return 'border-blue-200 bg-blue-50 text-blue-700'
+  if (voucher === '아청심') return 'border-violet-200 bg-violet-50 text-violet-700'
+  if (voucher === '드림스타트') return 'border-emerald-200 bg-emerald-50 text-emerald-700'
+  if (voucher === '배움') return 'border-amber-200 bg-amber-50 text-amber-700'
+  if (voucher === '그룹수업') return 'border-rose-200 bg-rose-50 text-rose-700'
+  return 'border-slate-200 bg-slate-50 text-slate-700'
+}
+
+type DisplayGroup = {
+  key: string
+  teacherId: number
+  minuteSlot: number
+  isGroup: boolean
+  groupName: string | null
+  voucherType: string
+  note: string
+  children: {
+    entryId: string
+    childName: string
+    ageText: string
+  }[]
+}
+
 export default function AdminDailySchedule() {
   const [selectedDate, setSelectedDate] = useState(formatDateInput(new Date()))
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [teachers, setTeachers] = useState<TeacherColumn[]>([])
   const [timeSlots, setTimeSlots] = useState<string[]>([])
-  const [cellMap, setCellMap] = useState<Record<string, CellItem[]>>({})
+  const [cellMap, setCellMap] = useState<Record<string, DisplayGroup[]>>({})
 
   async function loadData(date: string) {
     try {
@@ -102,7 +129,10 @@ export default function AdminDailySchedule() {
           child_id,
           voucher_type,
           note,
-          is_active
+          is_active,
+          is_group,
+          group_id,
+          group_name
         `)
         .eq('date', date)
         .eq('is_active', true)
@@ -162,37 +192,58 @@ export default function AdminDailySchedule() {
         .sort((a, b) => a.teacherName.localeCompare(b.teacherName, 'ko'))
 
       const slotSet = new Set<string>()
-      const nextCellMap: Record<string, CellItem[]> = {}
+      const rawCellMap: Record<string, ScheduleEntryRow[]> = {}
 
       rows.forEach((row) => {
         const timeKey = hourKeyFromTimeSlot(row.time_slot)
         const teacherId = Number(row.teacher_id)
-        const childId = Number(row.child_id ?? 0)
-        const child = childMap.get(childId)
         const mapKey = `${timeKey}__${teacherId}`
 
         slotSet.add(timeKey)
 
-        if (!nextCellMap[mapKey]) {
-          nextCellMap[mapKey] = []
-        }
-
-        nextCellMap[mapKey].push({
-          entryId: row.id,
-          childId,
-          childName: child?.child_name ?? `학생(${childId})`,
-          ageText: getAgeText(child?.birth_date),
-          voucherType: row.voucher_type ?? '',
-          note: row.note ?? '',
-          minuteSlot: Number(row.minute_slot ?? 0),
-        })
+        if (!rawCellMap[mapKey]) rawCellMap[mapKey] = []
+        rawCellMap[mapKey].push(row)
       })
 
-      Object.keys(nextCellMap).forEach((key) => {
-        nextCellMap[key].sort((a, b) => {
-          if (a.minuteSlot !== b.minuteSlot) return a.minuteSlot - b.minuteSlot
-          return a.childName.localeCompare(b.childName, 'ko')
+      const nextCellMap: Record<string, DisplayGroup[]> = {}
+
+      Object.entries(rawCellMap).forEach(([cellKey, cellRows]) => {
+        const groupMap = new Map<string, DisplayGroup>()
+
+        cellRows.forEach((row) => {
+          const childId = Number(row.child_id ?? 0)
+          const child = childMap.get(childId)
+          const itemKey =
+            row.is_group && row.group_id
+              ? `group-${row.group_id}`
+              : `single-${row.id}`
+
+          if (!groupMap.has(itemKey)) {
+            groupMap.set(itemKey, {
+              key: itemKey,
+              teacherId: Number(row.teacher_id),
+              minuteSlot: Number(row.minute_slot ?? 0),
+              isGroup: Boolean(row.is_group),
+              groupName: row.group_name ?? null,
+              voucherType: row.voucher_type ?? '',
+              note: row.note ?? '',
+              children: [],
+            })
+          }
+
+          groupMap.get(itemKey)!.children.push({
+            entryId: row.id,
+            childName: child?.child_name ?? `학생(${childId})`,
+            ageText: getAgeText(child?.birth_date),
+          })
         })
+
+        const grouped = Array.from(groupMap.values()).sort((a, b) => {
+          if (a.minuteSlot !== b.minuteSlot) return a.minuteSlot - b.minuteSlot
+          return (a.groupName ?? '').localeCompare(b.groupName ?? '', 'ko')
+        })
+
+        nextCellMap[cellKey] = grouped
       })
 
       const sortedSlots = Array.from(slotSet).sort((a, b) => a.localeCompare(b))
@@ -216,7 +267,9 @@ export default function AdminDailySchedule() {
   }, [selectedDate])
 
   const totalCount = useMemo(() => {
-    return Object.values(cellMap).reduce((sum, arr) => sum + arr.length, 0)
+    return Object.values(cellMap).reduce((sum, groups) => {
+      return sum + groups.reduce((groupSum, group) => groupSum + group.children.length, 0)
+    }, 0)
   }, [cellMap])
 
   return (
@@ -301,36 +354,50 @@ export default function AdminDailySchedule() {
 
                   {teachers.map((teacher) => {
                     const key = `${time}__${teacher.teacherId}`
-                    const items = cellMap[key] ?? []
+                    const groups = cellMap[key] ?? []
 
                     return (
                       <td key={key} className="align-top border-b border-r px-2 py-2">
-                        {items.length === 0 ? (
+                        {groups.length === 0 ? (
                           <div className="min-h-[56px]" />
                         ) : (
                           <div className="flex min-h-[56px] flex-col gap-2">
-                            {items.map((item) => (
+                            {groups.map((group) => (
                               <div
-                                key={item.entryId}
+                                key={group.key}
                                 className="rounded-xl border bg-white px-2 py-2 shadow-sm"
                               >
-                                <div className="text-sm font-semibold text-gray-900">
-                                  [{minuteLabel(item.minuteSlot)}] {item.childName}
-                                  {item.ageText ? ` (${item.ageText})` : ''}
-                                </div>
+                                <div className="mb-1 flex flex-wrap gap-1">
+                                  <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] text-slate-700">
+                                    [{minuteLabel(group.minuteSlot)}]
+                                  </span>
 
-                                <div className="mt-1 flex flex-wrap gap-1">
-                                  {item.voucherType ? (
-                                    <span className="rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-[11px] text-blue-700">
-                                      {item.voucherType}
+                                  <span
+                                    className={`rounded-full border px-2 py-0.5 text-[11px] ${getVoucherClass(group.voucherType)}`}
+                                  >
+                                    {group.voucherType || '일반'}
+                                  </span>
+
+                                  {group.isGroup ? (
+                                    <span className="rounded-full border border-rose-200 bg-rose-50 px-2 py-0.5 text-[11px] text-rose-700">
+                                      {group.groupName || '그룹수업'}
                                     </span>
                                   ) : null}
 
-                                  {item.note ? (
+                                  {group.note ? (
                                     <span className="rounded-full border border-yellow-200 bg-yellow-50 px-2 py-0.5 text-[11px] text-yellow-700">
                                       메모
                                     </span>
                                   ) : null}
+                                </div>
+
+                                <div className="space-y-1">
+                                  {group.children.map((child) => (
+                                    <div key={child.entryId} className="text-sm font-semibold text-gray-900">
+                                      {child.childName}
+                                      {child.ageText ? ` (${child.ageText})` : ''}
+                                    </div>
+                                  ))}
                                 </div>
                               </div>
                             ))}
