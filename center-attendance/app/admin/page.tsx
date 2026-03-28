@@ -5,9 +5,11 @@ import { supabase } from '@/lib/supabase'
 
 const DEFAULT_VOUCHERS = ['디딤', '아청심', '드림스타트', '배움', '일반']
 const HOUR_OPTIONS = Array.from({ length: 12 }, (_, i) =>
-  String(i + 9).padStart(2, '0') + ':00'
+  `${String(i + 9).padStart(2, '0')}:00`
 )
 const MINUTE_OPTIONS = [0, 10, 20, 30, 40, 50]
+
+type ViewMode = 'grid' | 'teacher' | 'daily'
 
 type StaffRow = {
   id: string
@@ -18,18 +20,13 @@ type StaffRow = {
 
 type ChildRow = {
   id: number
-  child_name?: string | null
-  name?: string | null
-  age?: number | null
-  child_age?: number | null
-  birthdate?: string | null
-  birthday?: string | null
-  vouchers?: string[] | null
-  voucher_types?: string[] | null
-  voucher_type?: string | null
+  child_name: string
+  age: number | null
+  vouchers: string[] | null
   voucher_yn?: boolean | null
+  monthly_limit?: number | null
   is_active?: boolean | null
-  [key: string]: any
+  notes?: string | null
 }
 
 type ScheduleEntryRow = {
@@ -46,7 +43,17 @@ type ScheduleEntryRow = {
   updated_at?: string | null
 }
 
-type FormState = {
+type ChildForm = {
+  id: number | null
+  child_name: string
+  age: string
+  vouchers: string[]
+  monthly_limit: string
+  notes: string
+  is_active: boolean
+}
+
+type ScheduleForm = {
   id: string | null
   date: string
   time_slot: string
@@ -64,54 +71,64 @@ function formatDateInput(date: Date) {
   return `${y}-${m}-${d}`
 }
 
-function getChildName(child: ChildRow) {
-  return child.child_name || child.name || `학생(${child.id})`
+function displayMinute(minute: number | null | undefined) {
+  return String(Number(minute ?? 0)).padStart(2, '0')
 }
 
-function getAgeFromBirthdate(value?: string | null) {
-  if (!value) return null
-  const birth = new Date(value)
-  if (Number.isNaN(birth.getTime())) return null
-  const now = new Date()
-  let age = now.getFullYear() - birth.getFullYear()
-  const m = now.getMonth() - birth.getMonth()
-  if (m < 0 || (m === 0 && now.getDate() < birth.getDate())) age--
-  return age
+function buildDisplayTime(timeSlot: string, minuteSlot: number) {
+  const hour = timeSlot.slice(0, 2)
+  return `${hour}:${String(minuteSlot).padStart(2, '0')}`
 }
 
-function getChildAge(child: ChildRow) {
-  if (typeof child.age === 'number') return child.age
-  if (typeof child.child_age === 'number') return child.child_age
-  return getAgeFromBirthdate(child.birthdate || child.birthday)
+function getChildName(child?: ChildRow | null, childId?: number | null) {
+  if (!child) return childId ? `학생(${childId})` : '학생'
+  return child.child_name
 }
 
-function getChildVoucherOptions(child: ChildRow | undefined) {
+function getChildAge(child?: ChildRow | null) {
+  if (!child) return null
+  return typeof child.age === 'number' ? child.age : null
+}
+
+function getChildVoucherOptions(child?: ChildRow | null) {
   if (!child) return DEFAULT_VOUCHERS
   if (Array.isArray(child.vouchers) && child.vouchers.length > 0) return child.vouchers
-  if (Array.isArray(child.voucher_types) && child.voucher_types.length > 0) return child.voucher_types
-  if (typeof child.voucher_type === 'string' && child.voucher_type.trim()) return [child.voucher_type.trim()]
-  if (child.voucher_yn === true) return DEFAULT_VOUCHERS.filter((v) => v !== '일반')
+  if (child.voucher_yn) return DEFAULT_VOUCHERS.filter((v) => v !== '일반')
   return DEFAULT_VOUCHERS
 }
 
-function buildDisplayTime(hourSlot: string, minuteSlot: number) {
-  const hour = hourSlot.slice(0, 2)
-  const minute = String(minuteSlot).padStart(2, '0')
-  return `${hour}:${minute}`
+function groupByTeacher(entries: ScheduleEntryRow[]) {
+  const map = new Map<string, ScheduleEntryRow[]>()
+
+  entries.forEach((entry) => {
+    if (!entry.is_active) return
+    const key = entry.teacher_id
+    if (!map.has(key)) map.set(key, [])
+    map.get(key)!.push(entry)
+  })
+
+  return Array.from(map.entries())
+    .map(([teacherId, items]) => ({
+      teacherId,
+      teacherName: items[0]?.teacher_name || '선생님',
+      items: items.sort((a, b) => {
+        const t = a.time_slot.localeCompare(b.time_slot)
+        if (t !== 0) return t
+        return Number(a.minute_slot ?? 0) - Number(b.minute_slot ?? 0)
+      }),
+    }))
+    .sort((a, b) => a.teacherName.localeCompare(b.teacherName, 'ko'))
 }
 
-function buildTeacherGrid(entries: ScheduleEntryRow[], children: ChildRow[]) {
-  const childMap = new Map<number, ChildRow>()
-  children.forEach((child) => childMap.set(Number(child.id), child))
-
+function buildTeacherGrid(entries: ScheduleEntryRow[]) {
   const teacherMap = new Map<string, string>()
-  const hourSet = new Set<string>()
+  const timeSet = new Set<string>()
   const cellMap: Record<string, ScheduleEntryRow[]> = {}
 
   entries.forEach((row) => {
     if (!row.is_active) return
     teacherMap.set(row.teacher_id, row.teacher_name || '선생님')
-    hourSet.add(row.time_slot)
+    timeSet.add(row.time_slot)
 
     const key = `${row.time_slot}__${row.teacher_id}`
     if (!cellMap[key]) cellMap[key] = []
@@ -120,15 +137,7 @@ function buildTeacherGrid(entries: ScheduleEntryRow[], children: ChildRow[]) {
 
   Object.keys(cellMap).forEach((key) => {
     cellMap[key].sort((a, b) => {
-      const am = Number(a.minute_slot ?? 0)
-      const bm = Number(b.minute_slot ?? 0)
-      if (am !== bm) return am - bm
-      const ac = childMap.get(Number(a.child_id ?? 0))
-      const bc = childMap.get(Number(b.child_id ?? 0))
-      return getChildName(ac || ({ id: 0 } as ChildRow)).localeCompare(
-        getChildName(bc || ({ id: 0 } as ChildRow)),
-        'ko'
-      )
+      return Number(a.minute_slot ?? 0) - Number(b.minute_slot ?? 0)
     })
   })
 
@@ -136,9 +145,9 @@ function buildTeacherGrid(entries: ScheduleEntryRow[], children: ChildRow[]) {
     .map(([teacherId, teacherName]) => ({ teacherId, teacherName }))
     .sort((a, b) => a.teacherName.localeCompare(b.teacherName, 'ko'))
 
-  const hours = Array.from(hourSet).sort((a, b) => a.localeCompare(b))
+  const hours = Array.from(timeSet).sort((a, b) => a.localeCompare(b))
 
-  return { teachers, hours, cellMap, childMap }
+  return { teachers, hours, cellMap }
 }
 
 export default function AdminPage() {
@@ -148,6 +157,7 @@ export default function AdminPage() {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
+  const [viewMode, setViewMode] = useState<ViewMode>('grid')
 
   const [staffs, setStaffs] = useState<StaffRow[]>([])
   const [children, setChildren] = useState<ChildRow[]>([])
@@ -155,7 +165,17 @@ export default function AdminPage() {
 
   const [selectedDate, setSelectedDate] = useState(today)
 
-  const [form, setForm] = useState<FormState>({
+  const [childForm, setChildForm] = useState<ChildForm>({
+    id: null,
+    child_name: '',
+    age: '',
+    vouchers: [],
+    monthly_limit: '',
+    notes: '',
+    is_active: true,
+  })
+
+  const [scheduleForm, setScheduleForm] = useState<ScheduleForm>({
     id: null,
     date: today,
     time_slot: '09:00',
@@ -173,20 +193,19 @@ export default function AdminPage() {
   }, [children])
 
   const selectedChild = useMemo(() => {
-    if (form.child_id === '') return undefined
-    return childMap.get(Number(form.child_id))
-  }, [form.child_id, childMap])
+    if (scheduleForm.child_id === '') return null
+    return childMap.get(Number(scheduleForm.child_id)) ?? null
+  }, [scheduleForm.child_id, childMap])
 
   const voucherOptions = useMemo(() => {
     return getChildVoucherOptions(selectedChild)
   }, [selectedChild])
 
   async function loadBaseData() {
-    setError('')
-    setMessage('')
-    setLoading(true)
-
     try {
+      setLoading(true)
+      setError('')
+
       const { data: staffData, error: staffError } = await supabase
         .from('staff_accounts')
         .select('id, name, role, is_active')
@@ -197,7 +216,7 @@ export default function AdminPage() {
 
       const { data: childData, error: childError } = await supabase
         .from('children')
-        .select('*')
+        .select('id, child_name, age, vouchers, voucher_yn, monthly_limit, is_active, notes')
         .eq('is_active', true)
         .order('child_name', { ascending: true })
 
@@ -213,10 +232,8 @@ export default function AdminPage() {
   }
 
   async function loadEntries(date: string) {
-    setError('')
-    setMessage('')
-
     try {
+      setError('')
       const { data, error } = await supabase
         .from('schedule_entries')
         .select(`
@@ -238,7 +255,6 @@ export default function AdminPage() {
         .order('minute_slot', { ascending: true })
 
       if (error) throw error
-
       setEntries((data ?? []) as ScheduleEntryRow[])
     } catch (err: any) {
       setError(err?.message ?? '시간표를 불러오지 못했습니다.')
@@ -255,22 +271,33 @@ export default function AdminPage() {
   }, [selectedDate])
 
   useEffect(() => {
-    setForm((prev) => ({ ...prev, date: selectedDate }))
+    setScheduleForm((prev) => ({ ...prev, date: selectedDate }))
   }, [selectedDate])
 
   useEffect(() => {
-    if (!form.child_id) return
-    const options = getChildVoucherOptions(selectedChild)
-    if (!options.includes(form.voucher_type)) {
-      setForm((prev) => ({
+    const nextOptions = getChildVoucherOptions(selectedChild)
+    if (!nextOptions.includes(scheduleForm.voucher_type)) {
+      setScheduleForm((prev) => ({
         ...prev,
-        voucher_type: options[0] ?? '',
+        voucher_type: nextOptions[0] ?? '',
       }))
     }
-  }, [form.child_id])
+  }, [scheduleForm.child_id])
 
-  function resetForm() {
-    setForm({
+  function resetChildForm() {
+    setChildForm({
+      id: null,
+      child_name: '',
+      age: '',
+      vouchers: [],
+      monthly_limit: '',
+      notes: '',
+      is_active: true,
+    })
+  }
+
+  function resetScheduleForm() {
+    setScheduleForm({
       id: null,
       date: selectedDate,
       time_slot: '09:00',
@@ -282,97 +309,152 @@ export default function AdminPage() {
     })
   }
 
+  function toggleVoucher(voucher: string) {
+    setChildForm((prev) => {
+      const exists = prev.vouchers.includes(voucher)
+      return {
+        ...prev,
+        vouchers: exists
+          ? prev.vouchers.filter((v) => v !== voucher)
+          : [...prev.vouchers, voucher],
+      }
+    })
+  }
+
   function handleTeacherChange(teacherId: string) {
-    const selectedTeacher = staffs.find((staff) => staff.id === teacherId)
-    setForm((prev) => ({
+    const teacher = staffs.find((v) => v.id === teacherId)
+    setScheduleForm((prev) => ({
       ...prev,
       teacher_id: teacherId,
-      teacher_name: selectedTeacher?.name ?? '',
+      teacher_name: teacher?.name ?? '',
     }))
   }
 
   function handleChildChange(value: string) {
     const childId = value ? Number(value) : ''
-    const child = value ? childMap.get(Number(value)) : undefined
+    const child = value ? childMap.get(Number(value)) ?? null : null
     const options = getChildVoucherOptions(child)
 
-    setForm((prev) => ({
+    setScheduleForm((prev) => ({
       ...prev,
       child_id: childId,
       voucher_type: options[0] ?? '',
     }))
   }
 
-  async function saveEntry() {
-    setSaving(true)
-    setError('')
-    setMessage('')
-
+  async function saveChild() {
     try {
-      if (!form.date) throw new Error('날짜를 선택하세요.')
-      if (!form.teacher_id) throw new Error('선생님을 선택하세요.')
-      if (!form.teacher_name) throw new Error('선생님명이 없습니다.')
-      if (form.child_id === '') throw new Error('학생을 선택하세요.')
-      if (!form.voucher_type) throw new Error('바우처를 선택하세요.')
+      setSaving(true)
+      setError('')
+      setMessage('')
 
-      const duplicateQuery = supabase
-        .from('schedule_entries')
-        .select('id')
-        .eq('date', form.date)
-        .eq('time_slot', form.time_slot)
-        .eq('minute_slot', form.minute_slot)
-        .eq('teacher_id', form.teacher_id)
-        .eq('child_id', Number(form.child_id))
-        .eq('is_active', true)
-
-      const { data: duplicateData, error: duplicateError } = form.id
-        ? await duplicateQuery.neq('id', form.id)
-        : await duplicateQuery
-
-      if (duplicateError) throw duplicateError
-      if ((duplicateData ?? []).length > 0) {
-        throw new Error('같은 시간에 같은 선생님-학생 배정이 이미 있습니다.')
-      }
+      if (!childForm.child_name.trim()) throw new Error('아이 이름을 입력하세요.')
+      if (childForm.vouchers.length === 0) throw new Error('바우처를 1개 이상 선택하세요.')
 
       const payload = {
-        date: form.date,
-        time_slot: form.time_slot,
-        minute_slot: form.minute_slot,
-        teacher_id: form.teacher_id,
-        teacher_name: form.teacher_name,
-        child_id: Number(form.child_id),
-        voucher_type: form.voucher_type,
+        child_name: childForm.child_name.trim(),
+        age: childForm.age ? Number(childForm.age) : null,
+        vouchers: childForm.vouchers,
+        monthly_limit: childForm.monthly_limit ? Number(childForm.monthly_limit) : null,
+        notes: childForm.notes.trim() || null,
         is_active: true,
       }
 
-      if (form.id) {
+      if (childForm.id) {
+        const { error } = await supabase
+          .from('children')
+          .update(payload)
+          .eq('id', childForm.id)
+
+        if (error) throw error
+        setMessage('아이 정보가 수정되었습니다.')
+      } else {
+        const { error } = await supabase
+          .from('children')
+          .insert(payload)
+
+        if (error) throw error
+        setMessage('아이 정보가 등록되었습니다.')
+      }
+
+      await loadBaseData()
+      resetChildForm()
+    } catch (err: any) {
+      setError(err?.message ?? '아이 저장 중 오류가 발생했습니다.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function saveSchedule() {
+    try {
+      setSaving(true)
+      setError('')
+      setMessage('')
+
+      if (!scheduleForm.date) throw new Error('날짜를 선택하세요.')
+      if (!scheduleForm.teacher_id) throw new Error('선생님을 선택하세요.')
+      if (scheduleForm.child_id === '') throw new Error('학생을 선택하세요.')
+      if (!scheduleForm.voucher_type) throw new Error('바우처를 선택하세요.')
+
+      const duplicateBase = supabase
+        .from('schedule_entries')
+        .select('id')
+        .eq('date', scheduleForm.date)
+        .eq('time_slot', scheduleForm.time_slot)
+        .eq('minute_slot', scheduleForm.minute_slot)
+        .eq('teacher_id', scheduleForm.teacher_id)
+        .eq('child_id', Number(scheduleForm.child_id))
+        .eq('is_active', true)
+
+      const { data: dupData, error: dupError } = scheduleForm.id
+        ? await duplicateBase.neq('id', scheduleForm.id)
+        : await duplicateBase
+
+      if (dupError) throw dupError
+      if ((dupData ?? []).length > 0) {
+        throw new Error('같은 시간에 같은 선생님/학생 배정이 이미 있습니다.')
+      }
+
+      const payload = {
+        date: scheduleForm.date,
+        time_slot: scheduleForm.time_slot,
+        minute_slot: scheduleForm.minute_slot,
+        teacher_id: scheduleForm.teacher_id,
+        teacher_name: scheduleForm.teacher_name,
+        child_id: Number(scheduleForm.child_id),
+        voucher_type: scheduleForm.voucher_type,
+        is_active: true,
+      }
+
+      if (scheduleForm.id) {
         const { error } = await supabase
           .from('schedule_entries')
           .update(payload)
-          .eq('id', form.id)
+          .eq('id', scheduleForm.id)
 
         if (error) throw error
-        setMessage('수정되었습니다.')
+        setMessage('시간표가 수정되었습니다.')
       } else {
         const { error } = await supabase
           .from('schedule_entries')
           .insert(payload)
 
         if (error) throw error
-        setMessage('저장되었습니다.')
+        setMessage('시간표가 저장되었습니다.')
       }
 
       await loadEntries(selectedDate)
-      resetForm()
+      resetScheduleForm()
     } catch (err: any) {
-      setError(err?.message ?? '저장 중 오류가 발생했습니다.')
+      setError(err?.message ?? '시간표 저장 중 오류가 발생했습니다.')
     } finally {
       setSaving(false)
     }
   }
 
-  function editEntry(entry: ScheduleEntryRow) {
-    setForm({
+  function editSchedule(entry: ScheduleEntryRow) {
+    setScheduleForm({
       id: entry.id,
       date: entry.date,
       time_slot: entry.time_slot,
@@ -384,60 +466,218 @@ export default function AdminPage() {
     })
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
-
-  async function deleteEntry(entryId: string) {
+async function deleteSchedule(id: string) {
     const ok = window.confirm('이 시간표를 삭제할까요?')
     if (!ok) return
 
-    setError('')
-    setMessage('')
-
     try {
+      setError('')
+      setMessage('')
+
       const { error } = await supabase
         .from('schedule_entries')
         .update({ is_active: false })
-        .eq('id', entryId)
+        .eq('id', id)
 
       if (error) throw error
 
-      setMessage('삭제되었습니다.')
+      setMessage('시간표가 삭제되었습니다.')
       await loadEntries(selectedDate)
 
-      if (form.id === entryId) {
-        resetForm()
-      }
+      if (scheduleForm.id === id) resetScheduleForm()
     } catch (err: any) {
       setError(err?.message ?? '삭제 중 오류가 발생했습니다.')
     }
   }
 
-  const { teachers, hours, cellMap } = useMemo(() => {
-    return buildTeacherGrid(entries, children)
-  }, [entries, children])
+  const teacherGroups = useMemo(() => groupByTeacher(entries), [entries])
+  const { teachers, hours, cellMap } = useMemo(() => buildTeacherGrid(entries), [entries])
 
   return (
     <div className="min-h-screen bg-[#f6f8fb] p-4 md:p-6">
-      <div className="mx-auto max-w-[1700px]">
-        <div className="grid gap-4 xl:grid-cols-[380px_1fr]">
-          <div className="rounded-2xl bg-white p-4 shadow-sm">
-            <div className="mb-4">
-              <h1 className="text-xl font-bold text-gray-900">
-                {form.id ? '시간표 수정' : '시간표 입력'}
-              </h1>
+      <div className="mx-auto max-w-[1800px] space-y-4">
+        <div className="rounded-2xl bg-white p-4 shadow-sm">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <h1 className="text-xl font-bold text-gray-900">관리자 시간표</h1>
               <p className="mt-1 text-sm text-gray-500">
-                저장/수정/삭제는 모두 시간표 원본 기준입니다.
+                아이 등록, 바우처 선택, 시간표 저장/수정/삭제, 전체/선생님별/일별 보기까지 한 화면에서 처리합니다.
               </p>
             </div>
+
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-medium text-gray-700">날짜</span>
+              <input
+                type="date"
+                value={selectedDate}
+                onChange={(e) => setSelectedDate(e.target.value)}
+                className="rounded-xl border border-gray-300 px-3 py-2 text-sm outline-none focus:border-blue-500"
+              />
+            </div>
+          </div>
+
+          <div className="mt-4 flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => setViewMode('grid')}
+              className={`rounded-xl px-3 py-2 text-sm font-semibold ${
+                viewMode === 'grid'
+                  ? 'bg-blue-600 text-white'
+                  : 'border border-gray-300 bg-white text-gray-700'
+              }`}
+            >
+              전체보기
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setViewMode('teacher')}
+              className={`rounded-xl px-3 py-2 text-sm font-semibold ${
+                viewMode === 'teacher'
+                  ? 'bg-blue-600 text-white'
+                  : 'border border-gray-300 bg-white text-gray-700'
+              }`}
+            >
+              선생님별보기
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setViewMode('daily')}
+              className={`rounded-xl px-3 py-2 text-sm font-semibold ${
+                viewMode === 'daily'
+                  ? 'bg-blue-600 text-white'
+                  : 'border border-gray-300 bg-white text-gray-700'
+              }`}
+            >
+              일별 보기
+            </button>
+          </div>
+
+          {error ? (
+            <div className="mt-4 rounded-xl bg-red-50 px-3 py-2 text-sm text-red-600">
+              {error}
+            </div>
+          ) : null}
+
+          {message ? (
+            <div className="mt-4 rounded-xl bg-green-50 px-3 py-2 text-sm text-green-600">
+              {message}
+            </div>
+          ) : null}
+        </div>
+
+        <div className="grid gap-4 xl:grid-cols-[420px_420px_1fr]">
+          <div className="rounded-2xl bg-white p-4 shadow-sm">
+            <h2 className="mb-3 text-lg font-bold text-gray-900">아이 등록 / 수정</h2>
+
+            <div className="space-y-3">
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">아이 이름</label>
+                <input
+                  value={childForm.child_name}
+                  onChange={(e) =>
+                    setChildForm((prev) => ({ ...prev, child_name: e.target.value }))
+                  }
+                  className="w-full rounded-xl border border-gray-300 px-3 py-2 text-sm outline-none focus:border-blue-500"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">나이</label>
+                <input
+                  type="number"
+                  value={childForm.age}
+                  onChange={(e) =>
+                    setChildForm((prev) => ({ ...prev, age: e.target.value }))
+                  }
+                  className="w-full rounded-xl border border-gray-300 px-3 py-2 text-sm outline-none focus:border-blue-500"
+                />
+              </div>
+
+              <div>
+                <label className="mb-2 block text-sm font-medium text-gray-700">
+                  바우처(여러 개 선택)
+                </label>
+                <div className="flex flex-wrap gap-2">
+                  {DEFAULT_VOUCHERS.map((voucher) => {
+                    const active = childForm.vouchers.includes(voucher)
+                    return (
+                      <button
+                        key={voucher}
+                        type="button"
+                        onClick={() => toggleVoucher(voucher)}
+                        className={`rounded-full px-3 py-1.5 text-sm font-medium ${
+                          active
+                            ? 'bg-blue-600 text-white'
+                            : 'border border-gray-300 bg-white text-gray-700'
+                        }`}
+                      >
+                        {voucher}
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">월 제한</label>
+                <input
+                  type="number"
+                  value={childForm.monthly_limit}
+                  onChange={(e) =>
+                    setChildForm((prev) => ({ ...prev, monthly_limit: e.target.value }))
+                  }
+                  className="w-full rounded-xl border border-gray-300 px-3 py-2 text-sm outline-none focus:border-blue-500"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">메모</label>
+                <textarea
+                  value={childForm.notes}
+                  onChange={(e) =>
+                    setChildForm((prev) => ({ ...prev, notes: e.target.value }))
+                  }
+                  rows={3}
+                  className="w-full rounded-xl border border-gray-300 px-3 py-2 text-sm outline-none focus:border-blue-500"
+                />
+              </div>
+
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  disabled={saving}
+                  onClick={saveChild}
+                  className="flex-1 rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
+                >
+                  아이 저장
+                </button>
+                <button
+                  type="button"
+                  onClick={resetChildForm}
+                  className="rounded-xl border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-700"
+                >
+                  초기화
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-2xl bg-white p-4 shadow-sm">
+            <h2 className="mb-3 text-lg font-bold text-gray-900">
+              {scheduleForm.id ? '시간표 수정' : '시간표 작성'}
+            </h2>
 
             <div className="space-y-3">
               <div>
                 <label className="mb-1 block text-sm font-medium text-gray-700">날짜</label>
                 <input
                   type="date"
-                  value={form.date}
+                  value={scheduleForm.date}
                   onChange={(e) => {
                     setSelectedDate(e.target.value)
-                    setForm((prev) => ({ ...prev, date: e.target.value }))
+                    setScheduleForm((prev) => ({ ...prev, date: e.target.value }))
                   }}
                   className="w-full rounded-xl border border-gray-300 px-3 py-2 text-sm outline-none focus:border-blue-500"
                 />
@@ -445,10 +685,12 @@ export default function AdminPage() {
 
               <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <label className="mb-1 block text-sm font-medium text-gray-700">시간(정시)</label>
+                  <label className="mb-1 block text-sm font-medium text-gray-700">시간</label>
                   <select
-                    value={form.time_slot}
-                    onChange={(e) => setForm((prev) => ({ ...prev, time_slot: e.target.value }))}
+                    value={scheduleForm.time_slot}
+                    onChange={(e) =>
+                      setScheduleForm((prev) => ({ ...prev, time_slot: e.target.value }))
+                    }
                     className="w-full rounded-xl border border-gray-300 px-3 py-2 text-sm outline-none focus:border-blue-500"
                   >
                     {HOUR_OPTIONS.map((hour) => (
@@ -462,15 +704,18 @@ export default function AdminPage() {
                 <div>
                   <label className="mb-1 block text-sm font-medium text-gray-700">10분 단위</label>
                   <select
-                    value={form.minute_slot}
+                    value={scheduleForm.minute_slot}
                     onChange={(e) =>
-                      setForm((prev) => ({ ...prev, minute_slot: Number(e.target.value) }))
+                      setScheduleForm((prev) => ({
+                        ...prev,
+                        minute_slot: Number(e.target.value),
+                      }))
                     }
                     className="w-full rounded-xl border border-gray-300 px-3 py-2 text-sm outline-none focus:border-blue-500"
                   >
                     {MINUTE_OPTIONS.map((minute) => (
                       <option key={minute} value={minute}>
-                        {String(minute).padStart(2, '0')}분
+                        {displayMinute(minute)}분
                       </option>
                     ))}
                   </select>
@@ -478,9 +723,26 @@ export default function AdminPage() {
               </div>
 
               <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">학생</label>
+                <select
+                  value={scheduleForm.child_id === '' ? '' : String(scheduleForm.child_id)}
+                  onChange={(e) => handleChildChange(e.target.value)}
+                  className="w-full rounded-xl border border-gray-300 px-3 py-2 text-sm outline-none focus:border-blue-500"
+                >
+                  <option value="">선택하세요</option>
+                  {children.map((child) => (
+                    <option key={child.id} value={child.id}>
+                      {child.child_name}
+                      {typeof child.age === 'number' ? ` (${child.age})` : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
                 <label className="mb-1 block text-sm font-medium text-gray-700">선생님</label>
                 <select
-                  value={form.teacher_id}
+                  value={scheduleForm.teacher_id}
                   onChange={(e) => handleTeacherChange(e.target.value)}
                   className="w-full rounded-xl border border-gray-300 px-3 py-2 text-sm outline-none focus:border-blue-500"
                 >
@@ -496,29 +758,15 @@ export default function AdminPage() {
               </div>
 
               <div>
-                <label className="mb-1 block text-sm font-medium text-gray-700">학생</label>
-                <select
-                  value={form.child_id === '' ? '' : String(form.child_id)}
-                  onChange={(e) => handleChildChange(e.target.value)}
-                  className="w-full rounded-xl border border-gray-300 px-3 py-2 text-sm outline-none focus:border-blue-500"
-                >
-                  <option value="">선택하세요</option>
-                  {children.map((child) => {
-                    const age = getChildAge(child)
-                    return (
-                      <option key={child.id} value={child.id}>
-                        {getChildName(child)}{typeof age === 'number' ? ` (${age})` : ''}
-                      </option>
-                    )
-                  })}
-                </select>
-              </div>
-
-              <div>
                 <label className="mb-1 block text-sm font-medium text-gray-700">바우처</label>
                 <select
-                  value={form.voucher_type}
-                  onChange={(e) => setForm((prev) => ({ ...prev, voucher_type: e.target.value }))}
+                  value={scheduleForm.voucher_type}
+                  onChange={(e) =>
+                    setScheduleForm((prev) => ({
+                      ...prev,
+                      voucher_type: e.target.value,
+                    }))
+                  }
                   className="w-full rounded-xl border border-gray-300 px-3 py-2 text-sm outline-none focus:border-blue-500"
                 >
                   <option value="">선택하세요</option>
@@ -532,39 +780,34 @@ export default function AdminPage() {
 
               <div className="rounded-xl bg-gray-50 p-3 text-sm text-gray-700">
                 <div>
-                  입력시간: <span className="font-semibold">{buildDisplayTime(form.time_slot, form.minute_slot)}</span>
+                  수업시간:{' '}
+                  <span className="font-semibold">
+                    {buildDisplayTime(scheduleForm.time_slot, scheduleForm.minute_slot)}
+                  </span>
                 </div>
-                {selectedChild ? (
-                  <div className="mt-1">
-                    학생: <span className="font-semibold">{getChildName(selectedChild)}</span>
+                <div className="mt-1">
+                  학생:{' '}
+                  <span className="font-semibold">
+                    {getChildName(selectedChild, Number(scheduleForm.child_id || 0))}
                     {typeof getChildAge(selectedChild) === 'number'
                       ? ` (${getChildAge(selectedChild)})`
                       : ''}
-                  </div>
-                ) : null}
+                  </span>
+                </div>
               </div>
-
-              {error ? (
-                <div className="rounded-xl bg-red-50 px-3 py-2 text-sm text-red-600">{error}</div>
-              ) : null}
-
-              {message ? (
-                <div className="rounded-xl bg-green-50 px-3 py-2 text-sm text-green-600">{message}</div>
-              ) : null}
 
               <div className="flex gap-2">
                 <button
                   type="button"
-                  onClick={saveEntry}
                   disabled={saving}
+                  onClick={saveSchedule}
                   className="flex-1 rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
                 >
-                  {saving ? '저장 중...' : form.id ? '수정 저장' : '새로 저장'}
+                  {scheduleForm.id ? '수정 저장' : '시간표 저장'}
                 </button>
-
                 <button
                   type="button"
-                  onClick={resetForm}
+                  onClick={resetScheduleForm}
                   className="rounded-xl border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-700"
                 >
                   초기화
@@ -574,30 +817,13 @@ export default function AdminPage() {
           </div>
 
           <div className="space-y-4">
-            <div className="rounded-2xl bg-white p-4 shadow-sm">
-              <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-                <div>
-                  <h2 className="text-lg font-bold text-gray-900">선생님 전체시간표</h2>
-                  <p className="mt-1 text-sm text-gray-500">
-                    시간은 정시 기준, 10분 단위는 학생명 앞에 표시됩니다.
-                  </p>
-                </div>
-
-                <div className="text-sm text-gray-600">
-                  선택 날짜: <span className="font-semibold">{selectedDate}</span>
-                </div>
-              </div>
-            </div>
-
             {loading ? (
               <div className="rounded-2xl bg-white p-8 text-center text-gray-500 shadow-sm">
                 불러오는 중...
               </div>
-            ) : teachers.length === 0 ? (
-              <div className="rounded-2xl bg-white p-8 text-center text-gray-500 shadow-sm">
-                선택한 날짜에 시간표가 없습니다.
-              </div>
-            ) : (
+            ) : null}
+
+            {!loading && viewMode === 'grid' && (
               <div className="overflow-x-auto rounded-2xl bg-white shadow-sm">
                 <table className="min-w-[1100px] border-separate border-spacing-0">
                   <thead>
@@ -608,14 +834,13 @@ export default function AdminPage() {
                       {teachers.map((teacher) => (
                         <th
                           key={teacher.teacherId}
-                          className="top-0 z-10 min-w-[240px] border-b border-r bg-gray-50 px-3 py-3 text-center text-sm font-bold text-gray-900"
+                          className="top-0 z-10 min-w-[230px] border-b border-r bg-gray-50 px-3 py-3 text-center text-sm font-bold text-gray-900"
                         >
                           {teacher.teacherName}
                         </th>
                       ))}
                     </tr>
                   </thead>
-
                   <tbody>
                     {hours.map((hour) => (
                       <tr key={hour}>
@@ -635,35 +860,31 @@ export default function AdminPage() {
                                 <div className="flex min-h-[56px] flex-col gap-2">
                                   {items.map((item) => {
                                     const child = childMap.get(Number(item.child_id ?? 0))
-                                    const age = child ? getChildAge(child) : null
-
                                     return (
                                       <div
                                         key={item.id}
                                         className="rounded-xl border border-gray-200 bg-white px-2 py-2 shadow-sm"
                                       >
                                         <div className="text-sm font-semibold text-gray-900">
-                                          [{String(Number(item.minute_slot ?? 0)).padStart(2, '0')}]
-                                          {' '}
-                                          {child ? getChildName(child) : `학생(${item.child_id})`}
-                                          {typeof age === 'number' ? ` (${age})` : ''}
+                                          [{displayMinute(item.minute_slot)}] {getChildName(child, item.child_id)}
+                                          {typeof getChildAge(child) === 'number'
+                                            ? ` (${getChildAge(child)})`
+                                            : ''}
                                         </div>
-
                                         <div className="mt-1 text-xs text-gray-600">
                                           {item.voucher_type || '-'}
                                         </div>
-
                                         <div className="mt-2 flex gap-2">
                                           <button
                                             type="button"
-                                            onClick={() => editEntry(item)}
+                                            onClick={() => editSchedule(item)}
                                             className="rounded-lg border border-blue-200 bg-blue-50 px-2 py-1 text-xs font-semibold text-blue-700"
                                           >
                                             수정
                                           </button>
                                           <button
                                             type="button"
-                                            onClick={() => deleteEntry(item.id)}
+                                            onClick={() => deleteSchedule(item.id)}
                                             className="rounded-lg border border-red-200 bg-red-50 px-2 py-1 text-xs font-semibold text-red-700"
                                           >
                                             삭제
@@ -684,57 +905,117 @@ export default function AdminPage() {
               </div>
             )}
 
-            <div className="rounded-2xl bg-white p-4 shadow-sm">
-              <h3 className="mb-3 text-base font-bold text-gray-900">해당 날짜 입력 목록</h3>
-
-              {entries.length === 0 ? (
-                <div className="text-sm text-gray-500">입력된 시간표가 없습니다.</div>
-              ) : (
-                <div className="space-y-2">
-                  {entries.map((entry) => {
-                    const child = childMap.get(Number(entry.child_id ?? 0))
-                    const age = child ? getChildAge(child) : null
-                    return (
-                      <div
-                        key={entry.id}
-                        className="flex flex-col gap-2 rounded-xl border border-gray-200 p-3 md:flex-row md:items-center md:justify-between"
-                      >
-                        <div>
-                          <div className="text-sm font-semibold text-gray-900">
-                            {entry.time_slot} [{String(Number(entry.minute_slot ?? 0)).padStart(2, '0')}]
-                            {' / '}
-                            {entry.teacher_name}
-                            {' / '}
-                            {child ? getChildName(child) : `학생(${entry.child_id})`}
-                            {typeof age === 'number' ? ` (${age})` : ''}
-                          </div>
-                          <div className="mt-1 text-xs text-gray-600">
-                            바우처: {entry.voucher_type || '-'}
-                          </div>
-                        </div>
-
-                        <div className="flex gap-2">
-                          <button
-                            type="button"
-                            onClick={() => editEntry(entry)}
-                            className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-700"
-                          >
-                            수정
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => deleteEntry(entry.id)}
-                            className="rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-700"
-                          >
-                            삭제
-                          </button>
-                        </div>
+            {!loading && viewMode === 'teacher' && (
+              <div className="space-y-4">
+                {teacherGroups.length === 0 ? (
+                  <div className="rounded-2xl bg-white p-8 text-center text-gray-500 shadow-sm">
+                    선택한 날짜에 시간표가 없습니다.
+                  </div>
+                ) : (
+                  teacherGroups.map((group) => (
+                    <div key={group.teacherId} className="rounded-2xl bg-white shadow-sm">
+                      <div className="border-b bg-gray-50 px-4 py-3">
+                        <div className="text-lg font-bold text-gray-900">{group.teacherName}</div>
                       </div>
-                    )
-                  })}
-                </div>
-              )}
-            </div>
+                      <div className="divide-y">
+                        {group.items.map((item) => {
+                          const child = childMap.get(Number(item.child_id ?? 0))
+                          return (
+                            <div
+                              key={item.id}
+                              className="flex flex-col gap-2 px-4 py-3 md:flex-row md:items-center md:justify-between"
+                            >
+                              <div className="text-sm font-semibold text-gray-900">
+                                {item.time_slot} [{displayMinute(item.minute_slot)}]
+                                {' / '}
+                                {getChildName(child, item.child_id)}
+                                {typeof getChildAge(child) === 'number'
+                                  ? ` (${getChildAge(child)})`
+                                  : ''}
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <span className="rounded-full bg-gray-100 px-3 py-1 text-xs text-gray-700">
+                                  {item.voucher_type || '-'}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => editSchedule(item)}
+                                  className="rounded-lg border border-blue-200 bg-blue-50 px-2 py-1 text-xs font-semibold text-blue-700"
+                                >
+                                  수정
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => deleteSchedule(item.id)}
+                                  className="rounded-lg border border-red-200 bg-red-50 px-2 py-1 text-xs font-semibold text-red-700"
+                                >
+                                  삭제
+                                </button>
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
+
+            {!loading && viewMode === 'daily' && (
+              <div className="rounded-2xl bg-white p-4 shadow-sm">
+                <h3 className="mb-3 text-base font-bold text-gray-900">일별 보기</h3>
+
+                {entries.length === 0 ? (
+                  <div className="text-sm text-gray-500">선택한 날짜에 시간표가 없습니다.</div>
+                ) : (
+                  <div className="space-y-2">
+                    {entries.map((entry) => {
+                      const child = childMap.get(Number(entry.child_id ?? 0))
+                      return (
+                        <div
+                          key={entry.id}
+                          className="flex flex-col gap-2 rounded-xl border border-gray-200 p-3 md:flex-row md:items-center md:justify-between"
+                        >
+                          <div>
+                            <div className="text-sm font-semibold text-gray-900">
+                              {entry.time_slot} [{displayMinute(entry.minute_slot)}]
+                              {' / '}
+                              {entry.teacher_name}
+                              {' / '}
+                              {getChildName(child, entry.child_id)}
+                              {typeof getChildAge(child) === 'number'
+                                ? ` (${getChildAge(child)})`
+                                : ''}
+                            </div>
+                            <div className="mt-1 text-xs text-gray-600">
+                              바우처: {entry.voucher_type || '-'}
+                            </div>
+                          </div>
+
+                          <div className="flex gap-2">
+                            <button
+                              type="button"
+                              onClick={() => editSchedule(entry)}
+                              className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-700"
+                            >
+                              수정
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => deleteSchedule(entry.id)}
+                              className="rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-700"
+                            >
+                              삭제
+                            </button>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
       </div>
