@@ -293,14 +293,59 @@ function getVoucherPrices(child: ChildRow) {
   return value
 }
 
-function getScheduleCardBgClass(item: DisplayScheduleItem, attendanceMap: Map<string, ClassLogRow>) {
-  const first = item.rows[0]
-  if (!first) return 'bg-white'
-  const key = `${first.date}|${buildClassTimestamp(first.date, first.time_slot, first.minute_slot)}|${first.teacher_id}|${first.child_id}`
-  const attendance = attendanceMap.get(key)
-  if (!attendance?.status) return 'bg-white'
-  if (attendance.status === 'attended' || attendance.status === 'makeup') return 'bg-sky-50'
-  if (attendance.status === 'absent' || attendance.status === 'same_day_absent') return 'bg-rose-50'
+function toMinuteNumberFromTimestamp(value?: string | null) {
+  if (!value) return null
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return null
+  return date.getHours() * 60 + date.getMinutes()
+}
+
+function getScheduleCardBgClass(
+  item: DisplayScheduleItem,
+  classLogs: ClassLogRow[]
+) {
+  const relatedLogs = classLogs.filter((log) => {
+    const sameDate = log.class_date === item.date
+    const sameStaff = Number(log.staff_id) === Number(item.staffId)
+
+    const logMinute = toMinuteNumberFromTimestamp(log.class_time)
+    const itemMinute =
+      Number(item.hourSlot.slice(0, 2)) * 60 + Number(item.minuteSlot)
+
+    const sameMinute = logMinute === itemMinute
+
+    if (item.isGroup) {
+      return (
+        sameDate &&
+        sameStaff &&
+        sameMinute &&
+        Boolean(log.is_group) &&
+        (log.group_id ?? '') === (item.groupId ?? '')
+      )
+    }
+
+    const firstRow = item.rows[0]
+
+    return (
+      sameDate &&
+      sameStaff &&
+      sameMinute &&
+      Number(log.child_id) === Number(firstRow?.child_id)
+    )
+  })
+
+  if (relatedLogs.length === 0) return 'bg-white'
+
+  const hasBlue = relatedLogs.some(
+    (log) => log.status === 'attended' || log.status === 'makeup'
+  )
+
+  const hasRed = relatedLogs.some(
+    (log) => log.status === 'absent' || log.status === 'same_day_absent'
+  )
+
+  if (hasBlue) return 'bg-sky-50'
+  if (hasRed) return 'bg-rose-50'
   return 'bg-white'
 }
 
@@ -309,12 +354,14 @@ function AdminDailySchedule({
   staffs,
   children,
   entries,
+  classLogs,
   onOpenRecord,
 }: {
   selectedDate: string
   staffs: StaffRow[]
   children: ChildRow[]
   entries: ScheduleEntryRow[]
+  classLogs: ClassLogRow[]
   onOpenRecord: (entry: ScheduleEntryRow) => void
 }) {
   const teacherList = staffs.filter((s) => s.role === 'employee' && s.is_active)
@@ -416,7 +463,10 @@ function AdminDailySchedule({
                                     const firstEntry = item.rows[0]
                                     if (firstEntry) onOpenRecord(firstEntry)
                                   }}
-                                  className="block w-full rounded-lg border bg-white px-2 py-2 text-left shadow-sm"
+                                  className={`block w-full rounded-lg border px-2 py-2 text-left shadow-sm ${getScheduleCardBgClass(
+                                    item,
+                                    classLogs
+                                  )}`}
                                 >
                                   <div className="font-medium text-slate-800">{title}</div>
                                   <div className="mt-1 flex flex-wrap gap-1">
@@ -1096,30 +1146,44 @@ export default function AdminPage() {
     }
   }
 
-  const activeScheduleKeySet = useMemo(() => {
+  const validClassLogs = useMemo(() => {
     const start = `${csvMonth}-01`
     const endDate = new Date(start)
     endDate.setMonth(endDate.getMonth() + 1)
     endDate.setDate(0)
     const end = toDateString(endDate)
 
-    const set = new Set<string>()
-    allScheduleEntries
-      .filter((row) => row.date >= start && row.date <= end && row.is_active)
-      .forEach((row) => {
-        const key = `${row.date}|${buildClassTimestamp(row.date, row.time_slot, row.minute_slot)}|${row.teacher_id}|${row.child_id}`
-        set.add(key)
-      })
+    const monthlySchedules = allScheduleEntries.filter(
+      (row) => row.date >= start && row.date <= end && row.is_active
+    )
 
-    return set
-  }, [allScheduleEntries, csvMonth])
-
-  const validClassLogs = useMemo(() => {
     return classLogs.filter((log) => {
-      const key = `${log.class_date}|${log.class_time}|${log.staff_id}|${log.child_id}`
-      return activeScheduleKeySet.has(key)
+      const logMinute = toMinuteNumberFromTimestamp(log.class_time)
+      if (logMinute == null) return false
+
+      return monthlySchedules.some((row) => {
+        const rowMinute =
+          Number(row.time_slot.slice(0, 2)) * 60 + Number(row.minute_slot ?? 0)
+
+        if (row.is_group) {
+          return (
+            row.date === log.class_date &&
+            Number(row.teacher_id) === Number(log.staff_id) &&
+            Number(row.child_id) === Number(log.child_id) &&
+            rowMinute === logMinute &&
+            Boolean(log.is_group)
+          )
+        }
+
+        return (
+          row.date === log.class_date &&
+          Number(row.teacher_id) === Number(log.staff_id) &&
+          Number(row.child_id) === Number(log.child_id) &&
+          rowMinute === logMinute
+        )
+      })
     })
-  }, [classLogs, activeScheduleKeySet])
+  }, [allScheduleEntries, classLogs, csvMonth])
 
   function getIndividualRowAmount(row: ScheduleEntryRow, child: ChildRow, didimIndex: number) {
     const voucherPrices = getVoucherPrices(child)
@@ -1334,7 +1398,7 @@ export default function AdminPage() {
     return (
       <div
         key={item.key}
-        className={`rounded-lg border border-slate-200 px-2 py-2 text-xs shadow-sm ${getScheduleCardBgClass(item, attendanceMap)}`}
+        className={`rounded-lg border border-slate-200 px-2 py-2 text-xs shadow-sm ${getScheduleCardBgClass(item, classLogs)}`}
       >
         {isEditing ? (
           <div className="space-y-2">
@@ -1502,13 +1566,13 @@ export default function AdminPage() {
                 onClick={() => handleEditSchedule(item)}
                 className="rounded bg-blue-50 px-2 py-0.5 text-[11px] text-blue-700"
               >
-                메모수정
+                수정
               </button>
               <button
                 onClick={() => handleDeleteSchedule(item)}
                 className="rounded bg-rose-50 px-2 py-0.5 text-[11px] text-rose-700"
               >
-                관리자만 삭제 가능
+                삭제
               </button>
             </div>
           </>
@@ -1838,6 +1902,7 @@ export default function AdminPage() {
                 staffs={staffs}
                 children={children}
                 entries={allScheduleEntries}
+                classLogs={classLogs}
                 onOpenRecord={(entry) => openRecordModal(entry)}
               />
             ) : viewMode === 'staff' && !selectedStaff ? (
