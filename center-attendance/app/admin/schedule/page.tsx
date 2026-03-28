@@ -6,33 +6,45 @@ export const revalidate = 0
 type VoucherType = '일반' | '디딤' | '아청심' | '드림스타트' | '배움' | '그룹'
 type ScheduleStatus = '출석' | '보강' | '결석' | '당일결석'
 
-type ChildRow = {
-  id: string
-  name: string
+type ChildDbRow = {
+  id: number | string
+  child_name?: string | null
+  voucher_yn?: boolean | string | null
+  monthly_limit?: number | null
+  is_active?: boolean | null
+  notes?: string | null
+  [key: string]: unknown
 }
 
-type StaffRow = {
-  id: string
-  name: string
+type StaffDbRow = {
+  id: number | string
+  name?: string | null
+  staff_name?: string | null
+  username?: string | null
+  user_name?: string | null
+  display_name?: string | null
+  [key: string]: unknown
 }
 
-type WeeklyScheduleRow = {
-  id: string
-  staff_id: string
-  child_id: string
+type WeeklyScheduleDbRow = {
+  id: number | string
+  staff_id: number | string
+  child_id: number | string
   schedule_date: string
   time_slot: string
   memo?: string | null
+  [key: string]: unknown
 }
 
-type ClassLogRow = {
-  id: string
-  staff_id: string
-  child_id: string
+type ClassLogDbRow = {
+  id: number | string
+  staff_id: number | string
+  child_id: number | string
   class_date: string
-  class_time: string
-  status: string
+  class_time?: string | null
+  status?: string | null
   note?: string | null
+  [key: string]: unknown
 }
 
 type ScheduleItem = {
@@ -106,6 +118,7 @@ function normalizeStatus(value: unknown): ScheduleStatus {
 
 function normalizeVoucherType(value: unknown): VoucherType {
   const raw = String(value ?? '').trim()
+
   if (raw === '교육청' || raw === '교육청 바우처' || raw === '디딤') return '디딤'
   if (raw === '아청심' || raw === '아청심 바우처') return '아청심'
   if (raw === '방과후' || raw === '방과후 바우처' || raw === '드림스타트') return '드림스타트'
@@ -120,7 +133,8 @@ function formatTimeSlot(value: string) {
   return value
 }
 
-function formatClassTimeToSlot(value: string) {
+function formatClassTimeToSlot(value?: string | null) {
+  if (!value) return ''
   const d = new Date(value)
   if (Number.isNaN(d.getTime())) return ''
   const hh = String(d.getHours()).padStart(2, '0')
@@ -128,12 +142,61 @@ function formatClassTimeToSlot(value: string) {
   return `${hh}:${mm}`
 }
 
-function buildMap<T extends { id: string; name: string }>(rows: T[]) {
-  return new Map<string, string>(rows.map((row) => [String(row.id), row.name]))
+function getChildName(row: ChildDbRow) {
+  return String(row.child_name ?? '이름없음')
 }
 
-function joinOrDash(values: string[]) {
-  return values.length ? values.join(', ') : '-'
+function getStaffName(row: StaffDbRow) {
+  return String(
+    row.name ??
+      row.staff_name ??
+      row.username ??
+      row.user_name ??
+      row.display_name ??
+      '선생님',
+  )
+}
+
+function getVoucherFromChild(row: ChildDbRow): VoucherType {
+  const raw = row['voucher_type'] ?? row['voucher_name'] ?? row['voucher']
+
+  if (raw) {
+    return normalizeVoucherType(raw)
+  }
+
+  const voucherYn = row.voucher_yn
+  if (voucherYn === true || voucherYn === 'true' || voucherYn === 'Y' || voucherYn === 'y') {
+    return '디딤'
+  }
+
+  return '일반'
+}
+
+function buildMap<T>(rows: T[], getId: (row: T) => string, getLabel: (row: T) => string) {
+  return new Map<string, string>(rows.map((row) => [getId(row), getLabel(row)]))
+}
+
+function buildVoucherMap(rows: ChildDbRow[]) {
+  return new Map<string, VoucherType>(
+    rows.map((row) => [String(row.id), getVoucherFromChild(row)]),
+  )
+}
+
+function renderStatusBadge(status: ScheduleStatus) {
+  const className =
+    status === '출석'
+      ? 'bg-blue-50 text-blue-700 border-blue-200'
+      : status === '보강'
+        ? 'bg-sky-50 text-sky-700 border-sky-200'
+        : status === '결석'
+          ? 'bg-rose-50 text-rose-700 border-rose-200'
+          : 'bg-red-50 text-red-700 border-red-200'
+
+  return (
+    <span className={`inline-block rounded border px-1.5 py-0.5 text-[11px] ${className}`}>
+      {status}
+    </span>
+  )
 }
 
 export default async function AdminSchedulePage({
@@ -155,8 +218,8 @@ export default async function AdminSchedulePage({
     { data: weeklyRaw, error: weeklyError },
     { data: classLogsRaw, error: classLogsError },
   ] = await Promise.all([
-    supabase.from(TABLES.children).select('id, name, vouchers'),
-    supabase.from(TABLES.staff).select('id, name'),
+    supabase.from(TABLES.children).select('*'),
+    supabase.from(TABLES.staff).select('*'),
     supabase
       .from(TABLES.weekly)
       .select('*')
@@ -171,54 +234,66 @@ export default async function AdminSchedulePage({
   if (childrenError) {
     return <div className="p-6 text-red-600">children 조회 오류: {childrenError.message}</div>
   }
+
   if (staffError) {
     return <div className="p-6 text-red-600">staff_accounts 조회 오류: {staffError.message}</div>
   }
+
   if (weeklyError) {
     return <div className="p-6 text-red-600">weekly_schedules 조회 오류: {weeklyError.message}</div>
   }
+
   if (classLogsError) {
     return <div className="p-6 text-red-600">class_logs 조회 오류: {classLogsError.message}</div>
   }
 
-  const children = (childrenRaw ?? []) as ChildRow[]
-  const staff = (staffRaw ?? []) as StaffRow[]
-  const weeklyRows = (weeklyRaw ?? []) as WeeklyScheduleRow[]
-  const classLogs = (classLogsRaw ?? []) as ClassLogRow[]
+  const children = (childrenRaw ?? []) as ChildDbRow[]
+  const staff = (staffRaw ?? []) as StaffDbRow[]
+  const weeklyRows = (weeklyRaw ?? []) as WeeklyScheduleDbRow[]
+  const classLogs = (classLogsRaw ?? []) as ClassLogDbRow[]
 
-  const childNameMap = buildMap(children)
-  const staffNameMap = buildMap(staff)
+  const childNameMap = buildMap(
+    children,
+    (row) => String(row.id),
+    (row) => getChildName(row),
+  )
 
-  // class_logs를 staff_id + child_id + date 기준으로 상태 매핑
-  const classLogMap = new Map<string, ClassLogRow>()
+  const staffNameMap = buildMap(
+    staff,
+    (row) => String(row.id),
+    (row) => getStaffName(row),
+  )
+
+  const voucherMap = buildVoucherMap(children)
+
+  // class_logs를 같은 선생님/학생/날짜 기준으로 상태 매핑
+  // 시간까지 있으면 시간도 맞춰보고, 없으면 날짜 기준으로 사용
+  const classLogMap = new Map<string, ClassLogDbRow>()
   for (const row of classLogs) {
-    const key = `${row.staff_id}-${row.child_id}-${row.class_date}`
-    classLogMap.set(key, row)
-  }
-
-  // children 테이블에 vouchers가 있으면 첫 번째 바우처를 우선 표시
-  const voucherMap = new Map<string, VoucherType>()
-  for (const row of (childrenRaw ?? []) as any[]) {
-    const vouchers = Array.isArray(row.vouchers) ? row.vouchers : []
-    const firstVoucher = vouchers.length ? normalizeVoucherType(vouchers[0]) : '일반'
-    voucherMap.set(String(row.id), firstVoucher)
+    const timeSlot = formatClassTimeToSlot(row.class_time)
+    const keyWithTime = `${row.staff_id}-${row.child_id}-${row.class_date}-${timeSlot}`
+    const keyWithoutTime = `${row.staff_id}-${row.child_id}-${row.class_date}`
+    if (timeSlot) classLogMap.set(keyWithTime, row)
+    classLogMap.set(keyWithoutTime, row)
   }
 
   const items: ScheduleItem[] = weeklyRows.map((row) => {
-    const key = `${row.staff_id}-${row.child_id}-${row.schedule_date}`
-    const matchedLog = classLogMap.get(key)
+    const timeSlot = formatTimeSlot(row.time_slot)
+    const keyWithTime = `${row.staff_id}-${row.child_id}-${row.schedule_date}-${timeSlot}`
+    const keyWithoutTime = `${row.staff_id}-${row.child_id}-${row.schedule_date}`
+    const matchedLog = classLogMap.get(keyWithTime) ?? classLogMap.get(keyWithoutTime)
 
     return {
       id: String(row.id),
-      date: row.schedule_date,
-      timeSlot: formatTimeSlot(row.time_slot),
+      date: String(row.schedule_date),
+      timeSlot,
       staffId: String(row.staff_id),
       staffName: staffNameMap.get(String(row.staff_id)) ?? String(row.staff_id),
       childId: String(row.child_id),
       childName: childNameMap.get(String(row.child_id)) ?? String(row.child_id),
       status: matchedLog ? normalizeStatus(matchedLog.status) : '출석',
       voucherType: voucherMap.get(String(row.child_id)) ?? '일반',
-      memo: row.memo ?? undefined,
+      memo: row.memo ? String(row.memo) : undefined,
     }
   })
 
@@ -226,7 +301,7 @@ export default async function AdminSchedulePage({
     items.filter((item) => item.timeSlot === timeSlot)
 
   return (
-    <div className="space-y-6 p-6">
+    <div className="space-y-5 p-4 md:p-6">
       <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
         <div>
           <h1 className="text-2xl font-bold">관리자 시간표</h1>
@@ -238,12 +313,12 @@ export default async function AdminSchedulePage({
 
         <form className="flex items-center gap-2" method="get">
           <input
-            className="rounded border px-3 py-2"
+            className="rounded border px-3 py-2 text-sm"
             type="date"
             name="date"
             defaultValue={selectedDate}
           />
-          <button className="rounded bg-black px-4 py-2 text-white" type="submit">
+          <button className="rounded bg-black px-4 py-2 text-sm text-white" type="submit">
             날짜보기
           </button>
         </form>
@@ -253,7 +328,9 @@ export default async function AdminSchedulePage({
         <table className="w-full border-collapse border bg-white">
           <thead>
             <tr>
-              <th className="border px-2 py-1 bg-gray-50 w-16 text-sm whitespace-nowrap">시간</th>
+              <th className="w-16 whitespace-nowrap border px-2 py-1 bg-gray-50 text-sm">
+                시간
+              </th>
               <th className="border px-2 py-1 bg-gray-50 text-sm">선생님 배정</th>
             </tr>
           </thead>
@@ -263,7 +340,7 @@ export default async function AdminSchedulePage({
 
               return (
                 <tr key={timeSlot}>
-                  <td className="border px-2 py-1 text-xs font-medium bg-gray-50 w-16 whitespace-nowrap align-top">
+                  <td className="w-16 whitespace-nowrap border px-2 py-1 align-top bg-gray-50 text-xs font-medium">
                     {timeSlot}
                   </td>
                   <td className="border px-2 py-1 align-top text-xs">
@@ -274,13 +351,15 @@ export default async function AdminSchedulePage({
                         {slotItems.map((item) => (
                           <div
                             key={item.id}
-                            className="rounded border bg-gray-50 px-2 py-1 space-y-0.5"
+                            className="space-y-0.5 rounded border bg-gray-50 px-2 py-1"
                           >
                             <div className="font-semibold">{item.staffName}</div>
                             <div>{item.childName}</div>
                             <div>{item.voucherType}</div>
-                            <div>{item.status}</div>
-                            {item.memo ? <div className="text-gray-500">{item.memo}</div> : null}
+                            <div>{renderStatusBadge(item.status)}</div>
+                            {item.memo ? (
+                              <div className="text-[11px] text-gray-500">{item.memo}</div>
+                            ) : null}
                           </div>
                         ))}
                       </div>
