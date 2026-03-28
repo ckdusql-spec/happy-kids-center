@@ -9,7 +9,7 @@ type ViewMode = 'all' | 'staff' | 'daily'
 type StaffRole = 'admin' | 'employee'
 
 type StaffRow = {
-  id: string
+  id: number
   login_id: string
   password?: string | null
   name: string
@@ -33,10 +33,11 @@ type ScheduleEntryRow = {
   date: string
   time_slot: string
   minute_slot: number | null
-  teacher_id: string
+  teacher_id: number
   teacher_name: string | null
   child_id: number | null
   voucher_type: string | null
+  note: string | null
   is_active: boolean | null
   created_at?: string | null
   updated_at?: string | null
@@ -44,7 +45,7 @@ type ScheduleEntryRow = {
 
 type ClassLogRow = {
   id: number
-  staff_id: string | number
+  staff_id: number
   child_id: number
   class_date: string
   class_time: string
@@ -75,7 +76,7 @@ type ChildForm = {
 }
 
 type StaffForm = {
-  id: string | null
+  id: number | null
   loginId: string
   password: string
   name: string
@@ -86,7 +87,7 @@ type StaffForm = {
 type EditingCell = {
   date: string
   hour: string
-  staffId: string
+  staffId: number
 } | null
 
 const VOUCHER_OPTIONS = ['디딤', '아청심', '드림스타트', '배움', '일반']
@@ -195,7 +196,7 @@ export default function AdminPage() {
   })
 
   const [weekBaseDate, setWeekBaseDate] = useState(new Date())
-  const [selectedStaffId, setSelectedStaffId] = useState<string>('')
+  const [selectedStaffId, setSelectedStaffId] = useState<number | ''>('')
 
   const [staffs, setStaffs] = useState<StaffRow[]>([])
   const [children, setChildren] = useState<ChildRow[]>([])
@@ -237,7 +238,7 @@ export default function AdminPage() {
   )
 
   const selectedStaff = useMemo(
-    () => employeeStaffs.find((s) => String(s.id) === String(selectedStaffId)),
+    () => employeeStaffs.find((s) => Number(s.id) === Number(selectedStaffId)),
     [employeeStaffs, selectedStaffId]
   )
 
@@ -321,12 +322,12 @@ export default function AdminPage() {
     loadClassLogsForMonth().catch((err: any) => setMessage(err?.message ?? '월정산 불러오기 실패'))
   }, [csvMonth])
 
-  function getScheduleEntries(dateStr: string, hourSlot: string, staffId: string) {
+  function getScheduleEntries(dateStr: string, hourSlot: string, staffId: number) {
     return allScheduleEntries.filter(
       (entry) =>
         entry.date === dateStr &&
         entry.time_slot === hourSlot &&
-        String(entry.teacher_id) === String(staffId) &&
+        Number(entry.teacher_id) === Number(staffId) &&
         entry.is_active
     )
   }
@@ -447,7 +448,7 @@ export default function AdminPage() {
     }
   }
 
-  async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: string) {
+  async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: number) {
     try {
       if (!scheduleChildId) {
         setMessage('학생을 선택하세요.')
@@ -459,13 +460,13 @@ export default function AdminPage() {
         return
       }
 
-      const staff = employeeStaffs.find((s) => String(s.id) === String(staffId))
+      const staff = employeeStaffs.find((s) => Number(s.id) === Number(staffId))
 
       const { error } = await supabase.from('schedule_entries').insert({
         date: dateStr,
         time_slot: hourSlot,
         minute_slot: Number(selectedMinute),
-        teacher_id: staffId,
+        teacher_id: Number(staffId),
         teacher_name: staff?.name ?? '',
         child_id: Number(scheduleChildId),
         voucher_type: selectedVoucher,
@@ -509,7 +510,7 @@ export default function AdminPage() {
     setEditingCell({
       date: entry.date,
       hour: entry.time_slot,
-      staffId: String(entry.teacher_id),
+      staffId: Number(entry.teacher_id),
     })
     setEditingEntryId(entry.id)
     setScheduleChildId(entry.child_id ? Number(entry.child_id) : '')
@@ -552,13 +553,13 @@ export default function AdminPage() {
     }
   }
 
-  function renderScheduleCard(entry: ScheduleEntryRow, dateStr: string, staffId: string) {
+  function renderScheduleCard(entry: ScheduleEntryRow, dateStr: string, staffId: number) {
     const child = children.find((c) => c.id === Number(entry.child_id))
     const isEditing =
       editingEntryId === entry.id &&
       editingCell?.date === dateStr &&
       editingCell?.hour === entry.time_slot &&
-      String(editingCell?.staffId) === String(staffId)
+      Number(editingCell?.staffId) === Number(staffId)
 
     return (
       <div key={entry.id} className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs shadow-sm">
@@ -649,9 +650,9 @@ export default function AdminPage() {
     )
   }
 
-  function renderMobileDayCard(date: Date, staffId: string) {
+  function renderMobileDayCard(date: Date, staffId: number) {
     const dateStr = toDateString(date)
-    const staff = employeeStaffs.find((s) => String(s.id) === String(staffId))
+    const staff = employeeStaffs.find((s) => Number(s.id) === Number(staffId))
 
     return (
       <div key={`${dateStr}-${staffId}`} className="rounded-2xl border bg-white p-4">
@@ -668,7 +669,7 @@ export default function AdminPage() {
             const isEditing =
               editingCell?.date === dateStr &&
               editingCell?.hour === hourSlot &&
-              String(editingCell?.staffId) === String(staffId)
+              Number(editingCell?.staffId) === Number(staffId)
 
             return (
               <div key={`${dateStr}-${staffId}-${hourSlot}`} className="rounded-xl border p-3">
@@ -792,7 +793,7 @@ export default function AdminPage() {
       .filter((row) => row.class_date.startsWith(csvMonth))
       .map((row) => {
         const child = children.find((c) => c.id === row.child_id)
-        const staff = staffs.find((s) => String(s.id) === String(row.staff_id))
+        const staff = staffs.find((s) => Number(s.id) === Number(row.staff_id))
         return [
           row.class_date,
           child?.child_name ?? row.child_id,
@@ -941,12 +942,12 @@ export default function AdminPage() {
                   {viewMode === 'staff' ? (
                     <select
                       value={selectedStaffId}
-                      onChange={(e) => setSelectedStaffId(e.target.value)}
+                      onChange={(e) => setSelectedStaffId(e.target.value ? Number(e.target.value) : '')}
                       className="rounded-xl border px-3 py-3 md:py-2"
                     >
                       <option value="">선생님 선택</option>
                       {employeeStaffs.map((staff) => (
-                        <option key={String(staff.id)} value={String(staff.id)}>
+                        <option key={staff.id} value={staff.id}>
                           {staff.name} ({staff.login_id})
                         </option>
                       ))}
@@ -1036,11 +1037,11 @@ export default function AdminPage() {
                           {viewMode === 'staff' && selectedStaff
                             ? weekDates.map((date) => {
                                 const dateStr = toDateString(date)
-                                const entries = getScheduleEntries(dateStr, hourSlot, String(selectedStaff.id))
+                                const entries = getScheduleEntries(dateStr, hourSlot, Number(selectedStaff.id))
                                 const isEditing =
                                   editingCell?.date === dateStr &&
                                   editingCell?.hour === hourSlot &&
-                                  String(editingCell?.staffId) === String(selectedStaff.id)
+                                  Number(editingCell?.staffId) === Number(selectedStaff.id)
 
                                 return (
                                   <td
@@ -1094,7 +1095,7 @@ export default function AdminPage() {
                                         <div className="flex gap-1">
                                           <button
                                             onClick={() =>
-                                              handleSaveSchedule(dateStr, hourSlot, String(selectedStaff.id))
+                                              handleSaveSchedule(dateStr, hourSlot, Number(selectedStaff.id))
                                             }
                                             className="flex-1 rounded bg-indigo-600 px-2 py-1 text-xs text-white"
                                           >
@@ -1122,7 +1123,7 @@ export default function AdminPage() {
                                             setEditingCell({
                                               date: dateStr,
                                               hour: hourSlot,
-                                              staffId: String(selectedStaff.id),
+                                              staffId: Number(selectedStaff.id),
                                             })
                                             setEditingEntryId(null)
                                             setScheduleChildId('')
@@ -1135,7 +1136,7 @@ export default function AdminPage() {
                                         </button>
 
                                         {entries.map((entry) =>
-                                          renderScheduleCard(entry, dateStr, String(selectedStaff.id))
+                                          renderScheduleCard(entry, dateStr, Number(selectedStaff.id))
                                         )}
                                       </div>
                                     )}
@@ -1145,11 +1146,11 @@ export default function AdminPage() {
                             : weekDates.flatMap((date) =>
                                 employeeStaffs.map((staff) => {
                                   const dateStr = toDateString(date)
-                                  const entries = getScheduleEntries(dateStr, hourSlot, String(staff.id))
+                                  const entries = getScheduleEntries(dateStr, hourSlot, Number(staff.id))
                                   const isEditing =
                                     editingCell?.date === dateStr &&
                                     editingCell?.hour === hourSlot &&
-                                    String(editingCell?.staffId) === String(staff.id)
+                                    Number(editingCell?.staffId) === Number(staff.id)
 
                                   return (
                                     <td
@@ -1203,7 +1204,7 @@ export default function AdminPage() {
                                           <div className="flex gap-1">
                                             <button
                                               onClick={() =>
-                                                handleSaveSchedule(dateStr, hourSlot, String(staff.id))
+                                                handleSaveSchedule(dateStr, hourSlot, Number(staff.id))
                                               }
                                               className="flex-1 rounded bg-indigo-600 px-2 py-1 text-xs text-white"
                                             >
@@ -1231,7 +1232,7 @@ export default function AdminPage() {
                                               setEditingCell({
                                                 date: dateStr,
                                                 hour: hourSlot,
-                                                staffId: String(staff.id),
+                                                staffId: Number(staff.id),
                                               })
                                               setEditingEntryId(null)
                                               setScheduleChildId('')
@@ -1244,7 +1245,7 @@ export default function AdminPage() {
                                           </button>
 
                                           {entries.map((entry) =>
-                                            renderScheduleCard(entry, dateStr, String(staff.id))
+                                            renderScheduleCard(entry, dateStr, Number(staff.id))
                                           )}
                                         </div>
                                       )}
@@ -1260,9 +1261,9 @@ export default function AdminPage() {
 
                 <div className="space-y-4 md:hidden">
                   {viewMode === 'staff' && selectedStaff
-                    ? weekDates.map((date) => renderMobileDayCard(date, String(selectedStaff.id)))
+                    ? weekDates.map((date) => renderMobileDayCard(date, Number(selectedStaff.id)))
                     : weekDates.flatMap((date) =>
-                        employeeStaffs.map((staff) => renderMobileDayCard(date, String(staff.id)))
+                        employeeStaffs.map((staff) => renderMobileDayCard(date, Number(staff.id)))
                       )}
                 </div>
               </>
@@ -1448,10 +1449,10 @@ export default function AdminPage() {
                 ) : (
                   staffs.map((staff) => (
                     <button
-                      key={String(staff.id)}
+                      key={staff.id}
                       onClick={() =>
                         setStaffForm({
-                          id: String(staff.id),
+                          id: staff.id,
                           loginId: staff.login_id,
                           password: '',
                           name: staff.name,
