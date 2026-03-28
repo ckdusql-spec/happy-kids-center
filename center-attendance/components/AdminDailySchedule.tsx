@@ -8,7 +8,7 @@ type ScheduleEntryRow = {
   date: string
   time_slot: string
   minute_slot: number | null
-  teacher_id: string
+  teacher_id: number
   teacher_name: string | null
   child_id: number | null
   voucher_type: string | null
@@ -17,7 +17,7 @@ type ScheduleEntryRow = {
 }
 
 type StaffRow = {
-  id: string
+  id: number
   name: string
 }
 
@@ -38,7 +38,7 @@ type CellItem = {
 }
 
 type TeacherColumn = {
-  teacherId: string
+  teacherId: number
   teacherName: string
 }
 
@@ -120,7 +120,7 @@ export default function AdminDailySchedule() {
         return
       }
 
-      const teacherIds = [...new Set(rows.map((v) => String(v.teacher_id)).filter(Boolean))]
+      const teacherIds = [...new Set(rows.map((v) => Number(v.teacher_id)).filter(Boolean))]
       const childIds = [
         ...new Set(
           rows.map((v) => Number(v.child_id)).filter((v) => Number.isFinite(v) && v > 0)
@@ -141,9 +141,9 @@ export default function AdminDailySchedule() {
 
       if (childError) throw childError
 
-      const staffMap = new Map<string, StaffRow>()
+      const staffMap = new Map<number, StaffRow>()
       ;((staffData ?? []) as StaffRow[]).forEach((row) => {
-        staffMap.set(String(row.id), row)
+        staffMap.set(Number(row.id), row)
       })
 
       const childMap = new Map<number, ChildRow>()
@@ -153,8 +153,11 @@ export default function AdminDailySchedule() {
 
       const teacherList: TeacherColumn[] = teacherIds
         .map((id) => ({
-          teacherId: String(id),
-          teacherName: staffMap.get(String(id))?.name ?? rows.find((r) => String(r.teacher_id) === String(id))?.teacher_name ?? `선생님(${id})`,
+          teacherId: id,
+          teacherName:
+            staffMap.get(id)?.name ??
+            rows.find((r) => Number(r.teacher_id) === id)?.teacher_name ??
+            `선생님(${id})`,
         }))
         .sort((a, b) => a.teacherName.localeCompare(b.teacherName, 'ko'))
 
@@ -163,7 +166,7 @@ export default function AdminDailySchedule() {
 
       rows.forEach((row) => {
         const timeKey = hourKeyFromTimeSlot(row.time_slot)
-        const teacherId = String(row.teacher_id)
+        const teacherId = Number(row.teacher_id)
         const childId = Number(row.child_id ?? 0)
         const child = childMap.get(childId)
         const mapKey = `${timeKey}__${teacherId}`
