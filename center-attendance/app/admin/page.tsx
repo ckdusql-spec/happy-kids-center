@@ -5,47 +5,54 @@ import { supabase } from '@/lib/supabase'
 
 type MainTab = 'schedule' | 'children' | 'staff' | 'summary'
 type ViewMode = 'all' | 'staff' | 'daily'
+type SummarySubTab = 'attendance' | 'teacher' | 'settlement'
 type StaffRole = 'admin' | 'employee'
 type AttendanceStatus = 'attended' | 'absent' | 'makeup' | 'same_day_absent'
 
 type StaffRow = {
   id: number
   login_id: string
-  password?: string | null
   name: string
   role: StaffRole
   is_active: boolean
+  password?: string | null
 }
 
 type ChildRow = {
   id: number
-  chart_no: string | null
   child_name: string
-  birth_date: string | null
-  phone: string | null
-  vouchers: string[] | null
+  voucher_yn?: boolean | null
+  monthly_limit?: number | null
+  is_active: boolean
+  notes?: string | null
+  chart_no?: string | null
+  birth_date?: string | null
+  phone?: string | null
+  vouchers?: string[] | null
   base_price?: number | null
   voucher_prices?: Record<string, number> | null
-  notes: string | null
-  is_active: boolean
 }
 
 type ScheduleEntryRow = {
   id: string
   date: string
   time_slot: string
-  minute_slot: number | null
+  room_number: number | null
   teacher_id: number
   teacher_name: string | null
+  class_type: string | null
   child_id: number | null
+  child_ids?: number[] | null
   voucher_type: string | null
-  note: string | null
-  is_active: boolean | null
-  is_group: boolean | null
-  group_id: string | null
-  group_name: string | null
+  status: string | null
   created_at?: string | null
+  minute_slot?: number | null
+  is_active?: boolean | null
   updated_at?: string | null
+  note?: string | null
+  is_group?: boolean | null
+  group_id?: string | null
+  group_name?: string | null
 }
 
 type ClassLogRow = {
@@ -55,6 +62,9 @@ type ClassLogRow = {
   class_date: string
   class_time: string
   status: AttendanceStatus
+  note?: string | null
+  created_at?: string | null
+  updated_at?: string | null
   voucher_type?: string | null
   is_group?: boolean | null
   group_id?: string | null
@@ -68,46 +78,12 @@ type MonthlyGroupPriceRow = {
   unit_price: number
 }
 
-type SummarySettlementRow = {
-  child_id: number
-  child_name: string
-  age_text: string
-  voucher_label: string
-  lesson_count: number
-  group_count: number
-  absent_count: number
-  same_day_absent_count: number
-  group_unit_price: number
-  total_amount: number
-}
-
-type ChildAttendanceRow = {
-  child_id: number
-  child_name: string
-  age_text: string
-  attended_count: number
-  makeup_count: number
-  absent_count: number
-  same_day_absent_count: number
-  monthly_dates: string
-}
-
-type TeacherLessonRow = {
-  key: string
-  teacher_name: string
-  child_name: string
-  attended_dates: string
-  makeup_dates: string
-  absent_dates: string
-  same_day_absent_dates: string
-}
-
 type ChildForm = {
   id: number | null
-  chartNo: string
   childName: string
   birthDate: string
   phone: string
+  chartNo: string
   voucherTypes: string[]
   basePrice: string
   didimPrice: string
@@ -153,7 +129,46 @@ type AttendanceModalState = {
   item: DisplayScheduleItem | null
 }
 
-const VOUCHER_OPTIONS = ['일반', '디딤', '아청심', '드림스타트', '배움']
+type AttendanceSummaryRow = {
+  child_id: number
+  child_name: string
+  age_text: string
+  attended_count: number
+  makeup_count: number
+  absent_count: number
+  same_day_absent_count: number
+  attended_dates: string
+  makeup_dates: string
+  group_dates: string
+  absent_dates: string
+  same_day_absent_dates: string
+}
+
+type TeacherLessonRow = {
+  key: string
+  teacher_name: string
+  child_name: string
+  attended_dates: string
+  makeup_dates: string
+  group_dates: string
+  absent_dates: string
+  same_day_absent_dates: string
+}
+
+type SettlementRow = {
+  child_id: number
+  child_name: string
+  age_text: string
+  voucher_label: string
+  lesson_count: number
+  group_count: number
+  absent_count: number
+  same_day_absent_count: number
+  group_unit_price: number
+  total_amount: number
+}
+
+const VOUCHER_OPTIONS = ['일반', '디딤', '아청심', '드림스타트', '배움'] as const
 
 function toDateString(date: Date) {
   const y = date.getFullYear()
@@ -188,7 +203,11 @@ function getHourSlots() {
   return Array.from({ length: 12 }, (_, i) => `${String(i + 9).padStart(2, '0')}:00`)
 }
 
-function getAgeText(birthDate: string | null) {
+function getMinutesOptions() {
+  return ['00', '10', '20', '30', '40', '50']
+}
+
+function getAgeText(birthDate?: string | null) {
   if (!birthDate) return ''
   const birth = new Date(birthDate)
   if (Number.isNaN(birth.getTime())) return ''
@@ -205,12 +224,12 @@ function getDisplayName(child: ChildRow) {
   return ageText ? `${child.child_name} (${ageText})` : child.child_name
 }
 
-function getVoucherLabel(vouchers: string[] | null | undefined) {
+function getVoucherLabel(vouchers?: string[] | null) {
   if (!vouchers || vouchers.length === 0) return '일반'
   return vouchers.join(', ')
 }
 
-function getVoucherClass(voucher: string | null | undefined) {
+function getVoucherClass(voucher?: string | null) {
   if (voucher === '디딤') return 'border-blue-200 bg-blue-50 text-blue-700'
   if (voucher === '아청심') return 'border-violet-200 bg-violet-50 text-violet-700'
   if (voucher === '드림스타트') return 'border-emerald-200 bg-emerald-50 text-emerald-700'
@@ -253,10 +272,18 @@ function downloadCsvFile(
   URL.revokeObjectURL(url)
 }
 
-function buildClassTime(hourSlot: string, minute: string | number | null | undefined) {
+function buildClassTimestamp(
+  date: string,
+  hourSlot: string,
+  minute: string | number | null | undefined
+) {
   const hh = hourSlot.slice(0, 2)
   const mm = String(Number(minute ?? 0)).padStart(2, '0')
-  return `${hh}:${mm}`
+  return `${date}T${hh}:${mm}:00+09:00`
+}
+
+function uniqueDateList(values: string[]) {
+  return Array.from(new Set(values.filter(Boolean))).sort().join(', ')
 }
 
 function getVoucherPrices(child: ChildRow) {
@@ -265,13 +292,153 @@ function getVoucherPrices(child: ChildRow) {
   return value
 }
 
-function uniqueDateList(values: string[]) {
-  return Array.from(new Set(values)).sort().join(', ')
+function AdminDailySchedule({
+  selectedDate,
+  staffs,
+  children,
+  entries,
+  onOpenAttendance,
+}: {
+  selectedDate: string
+  staffs: StaffRow[]
+  children: ChildRow[]
+  entries: ScheduleEntryRow[]
+  onOpenAttendance: (item: DisplayScheduleItem) => void
+}) {
+  const teacherList = staffs.filter((s) => s.role === 'employee' && s.is_active)
+  const slots = getHourSlots()
+
+  function buildItems(hourSlot: string, staffId: number) {
+    const rows = entries.filter(
+      (row) =>
+        row.date === selectedDate &&
+        row.time_slot === hourSlot &&
+        Number(row.teacher_id) === Number(staffId) &&
+        row.is_active
+    )
+
+    const groupMap = new Map<string, DisplayScheduleItem>()
+
+    rows.forEach((row) => {
+      const key = row.is_group && row.group_id ? `group-${row.group_id}` : `single-${row.id}`
+      if (!groupMap.has(key)) {
+        groupMap.set(key, {
+          key,
+          date: row.date,
+          hourSlot: row.time_slot,
+          minuteSlot: Number(row.minute_slot ?? 0),
+          staffId: Number(row.teacher_id),
+          teacherName: row.teacher_name ?? '',
+          voucherType: row.voucher_type ?? '',
+          note: row.note ?? '',
+          isGroup: Boolean(row.is_group),
+          groupId: row.group_id ?? null,
+          groupName: row.group_name ?? null,
+          rows: [],
+        })
+      }
+      groupMap.get(key)!.rows.push(row)
+    })
+
+    return Array.from(groupMap.values()).sort((a, b) => a.minuteSlot - b.minuteSlot)
+  }
+
+  const totalCount = entries.filter((v) => v.date === selectedDate && v.is_active).length
+
+  return (
+    <div className="rounded-2xl bg-white p-4 shadow-sm">
+      <div className="mb-4">
+        <h2 className="text-xl font-bold">일별 보기</h2>
+        <p className="mt-1 text-sm text-slate-500">
+          가로는 선생님, 세로는 시간이며 시간표 입력 기준으로 표시됩니다.
+        </p>
+        <div className="mt-3 flex flex-wrap gap-2 text-sm">
+          <div className="rounded-full bg-slate-100 px-3 py-1">선생님 수 {teacherList.length}</div>
+          <div className="rounded-full bg-slate-100 px-3 py-1">시간 수 {slots.length}</div>
+          <div className="rounded-full bg-slate-100 px-3 py-1">학생 배정 수 {totalCount}</div>
+        </div>
+      </div>
+
+      {teacherList.length === 0 ? (
+        <div className="rounded-xl border bg-slate-50 p-6 text-center text-slate-500">
+          선택 날짜에 표시할 선생님이 없습니다.
+        </div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="min-w-[900px] border text-sm">
+            <thead>
+              <tr>
+                <th className="border bg-slate-100 px-2 py-2">시간</th>
+                {teacherList.map((teacher) => (
+                  <th key={teacher.id} className="min-w-[220px] border bg-slate-100 px-2 py-2">
+                    {teacher.name}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {slots.map((slot) => (
+                <tr key={slot}>
+                  <td className="border bg-slate-50 px-2 py-2 font-medium">{slot}</td>
+                  {teacherList.map((teacher) => {
+                    const items = buildItems(slot, teacher.id)
+                    return (
+                      <td key={`${slot}-${teacher.id}`} className="border px-2 py-2 align-top">
+                        <div className="space-y-2">
+                          {items.length === 0 ? (
+                            <div className="min-h-[40px]" />
+                          ) : (
+                            items.map((item) => {
+                              const firstChild = children.find(
+                                (c) => c.id === Number(item.rows[0]?.child_id)
+                              )
+                              const title = item.isGroup
+                                ? `${slot.slice(0, 2)}:${String(item.minuteSlot).padStart(2, '0')}, ${item.groupName || '그룹수업'}`
+                                : `${slot.slice(0, 2)}:${String(item.minuteSlot).padStart(2, '0')}, ${firstChild?.child_name ?? ''} (${getAgeText(firstChild?.birth_date ?? null)})`
+
+                              return (
+                                <button
+                                  key={item.key}
+                                  type="button"
+                                  onClick={() => onOpenAttendance(item)}
+                                  className="block w-full rounded-lg border bg-white px-2 py-2 text-left shadow-sm"
+                                >
+                                  <div className="font-medium text-slate-800">{title}</div>
+                                  <div className="mt-1 flex flex-wrap gap-1">
+                                    <span className={`rounded-full border px-2 py-0.5 text-[11px] ${getVoucherClass(item.voucherType)}`}>
+                                      {item.voucherType || '일반'}
+                                    </span>
+                                  </div>
+                                  {item.isGroup ? (
+                                    <div className="mt-1 text-[11px] text-slate-500">
+                                      {item.rows
+                                        .map((r) => children.find((c) => c.id === Number(r.child_id))?.child_name ?? '')
+                                        .filter(Boolean)
+                                        .join(', ')}
+                                    </div>
+                                  ) : null}
+                                </button>
+                              )
+                            })
+                          )}
+                        </div>
+                      </td>
+                    )
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  )
 }
 
 export default function AdminPage() {
   const [tab, setTab] = useState<MainTab>('schedule')
   const [viewMode, setViewMode] = useState<ViewMode>('all')
+  const [summarySubTab, setSummarySubTab] = useState<SummarySubTab>('attendance')
 
   const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState('')
@@ -282,6 +449,7 @@ export default function AdminPage() {
   })
 
   const [weekBaseDate, setWeekBaseDate] = useState(new Date())
+  const [dailyDate, setDailyDate] = useState(() => toDateString(new Date()))
   const [selectedStaffId, setSelectedStaffId] = useState<number | ''>('')
 
   const [staffs, setStaffs] = useState<StaffRow[]>([])
@@ -310,10 +478,10 @@ export default function AdminPage() {
 
   const [childForm, setChildForm] = useState<ChildForm>({
     id: null,
-    chartNo: '',
     childName: '',
     birthDate: '',
     phone: '',
+    chartNo: '',
     voucherTypes: [],
     basePrice: '60000',
     didimPrice: '10000',
@@ -377,8 +545,11 @@ export default function AdminPage() {
   }
 
   async function loadSchedules() {
-    const start = toDateString(weekDates[0])
-    const end = toDateString(weekDates[weekDates.length - 1])
+    const weekStart = toDateString(weekDates[0])
+    const weekEnd = toDateString(weekDates[weekDates.length - 1])
+
+    const start = weekStart < dailyDate ? weekStart : dailyDate
+    const end = weekEnd > dailyDate ? weekEnd : dailyDate
 
     const { data, error } = await supabase
       .from('schedule_entries')
@@ -454,7 +625,7 @@ export default function AdminPage() {
 
   useEffect(() => {
     loadSchedules().catch((err: any) => setMessage(err?.message ?? '시간표 불러오기 실패'))
-  }, [weekBaseDate])
+  }, [weekBaseDate, dailyDate])
 
   useEffect(() => {
     Promise.all([loadClassLogsForMonth(), loadMonthlyGroupPrices()]).catch((err: any) =>
@@ -567,11 +738,13 @@ export default function AdminPage() {
       }
 
       const payload = {
-        chart_no: childForm.chartNo || null,
         child_name: childForm.childName,
         birth_date: childForm.birthDate || null,
         phone: childForm.phone || null,
+        chart_no: childForm.chartNo || null,
         vouchers: childForm.voucherTypes,
+        voucher_yn: childForm.voucherTypes.some((v) => v !== '일반'),
+        monthly_limit: Number(childForm.basePrice || 0),
         base_price: Number(childForm.basePrice || 0),
         voucher_prices: voucherPrices,
         notes: childForm.notes || null,
@@ -590,10 +763,10 @@ export default function AdminPage() {
       setMessage('아이 정보가 저장되었습니다.')
       setChildForm({
         id: null,
-        chartNo: '',
         childName: '',
         birthDate: '',
         phone: '',
+        chartNo: '',
         voucherTypes: [],
         basePrice: '60000',
         didimPrice: '10000',
@@ -656,8 +829,7 @@ export default function AdminPage() {
       setMessage(err?.message ?? '선생님 저장 실패')
     }
   }
-
-  async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: number) {
+async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: number) {
     try {
       const staff = employeeStaffs.find((s) => Number(s.id) === Number(staffId))
       const minute = Number(selectedMinute)
@@ -678,13 +850,17 @@ export default function AdminPage() {
         const groupRows = selectedGroupChildIds.map((childId) => ({
           date: dateStr,
           time_slot: hourSlot,
-          minute_slot: minute,
+          room_number: 1,
           teacher_id: Number(staffId),
           teacher_name: staff?.name ?? '',
+          class_type: 'group',
           child_id: Number(childId),
+          child_ids: [],
           voucher_type: '그룹수업',
-          note: null,
+          status: 'scheduled',
+          minute_slot: minute,
           is_active: true,
+          note: null,
           is_group: true,
           group_id: groupId,
           group_name: groupName || '그룹수업',
@@ -705,42 +881,37 @@ export default function AdminPage() {
           setMessage('학생을 선택하세요.')
           return
         }
-
         if (!selectedVoucher) {
           setMessage('바우처를 선택하세요.')
           return
         }
 
+        const payload = {
+          date: dateStr,
+          time_slot: hourSlot,
+          room_number: 1,
+          teacher_id: Number(staffId),
+          teacher_name: staff?.name ?? '',
+          class_type: 'individual',
+          child_id: Number(scheduleChildId),
+          voucher_type: selectedVoucher,
+          status: 'scheduled',
+          minute_slot: minute,
+          is_active: true,
+          note: null,
+          is_group: false,
+          group_id: null,
+          group_name: null,
+        }
+
         if (editingEntryId) {
           const { error } = await supabase
             .from('schedule_entries')
-            .update({
-              child_id: Number(scheduleChildId),
-              minute_slot: minute,
-              voucher_type: selectedVoucher,
-              is_group: false,
-              group_id: null,
-              group_name: null,
-            })
+            .update(payload)
             .eq('id', editingEntryId)
-
           if (error) throw error
         } else {
-          const { error } = await supabase.from('schedule_entries').insert({
-            date: dateStr,
-            time_slot: hourSlot,
-            minute_slot: minute,
-            teacher_id: Number(staffId),
-            teacher_name: staff?.name ?? '',
-            child_id: Number(scheduleChildId),
-            voucher_type: selectedVoucher,
-            note: null,
-            is_active: true,
-            is_group: false,
-            group_id: null,
-            group_name: null,
-          })
-
+          const { error } = await supabase.from('schedule_entries').insert(payload)
           if (error) throw error
         }
       }
@@ -752,7 +923,8 @@ export default function AdminPage() {
       setMessage(err?.message ?? '시간표 저장 실패')
     }
   }
-async function handleDeleteSchedule(item: DisplayScheduleItem) {
+
+  async function handleDeleteSchedule(item: DisplayScheduleItem) {
     try {
       const ok = window.confirm('이 시간표를 삭제할까요?')
       if (!ok) return
@@ -766,7 +938,6 @@ async function handleDeleteSchedule(item: DisplayScheduleItem) {
       } else {
         const targetId = item.rows[0]?.id
         if (!targetId) return
-
         const { error } = await supabase
           .from('schedule_entries')
           .update({ is_active: false })
@@ -790,7 +961,7 @@ async function handleDeleteSchedule(item: DisplayScheduleItem) {
 
     if (item.isGroup) {
       setIsGroupLesson(true)
-      setEditingGroupId(item.groupId)
+      setEditingGroupId(item.groupId ?? null)
       setEditingEntryId(null)
       setSelectedGroupChildIds(item.rows.map((row) => Number(row.child_id)))
       setGroupName(item.groupName || '')
@@ -813,7 +984,7 @@ async function handleDeleteSchedule(item: DisplayScheduleItem) {
   }
 
   function getAttendanceKey(entry: ScheduleEntryRow) {
-    const classTime = buildClassTime(entry.time_slot, entry.minute_slot)
+    const classTime = buildClassTimestamp(entry.date, entry.time_slot, entry.minute_slot)
     return `${entry.date}|${classTime}|${entry.teacher_id}|${entry.child_id}`
   }
 
@@ -828,7 +999,7 @@ async function handleDeleteSchedule(item: DisplayScheduleItem) {
 
   async function handleSaveAttendance(entry: ScheduleEntryRow, status: AttendanceStatus) {
     try {
-      const classTime = buildClassTime(entry.time_slot, entry.minute_slot)
+      const classTime = buildClassTimestamp(entry.date, entry.time_slot, entry.minute_slot)
       const existing = attendanceMap.get(getAttendanceKey(entry))
 
       if (existing?.id) {
@@ -892,17 +1063,17 @@ async function handleDeleteSchedule(item: DisplayScheduleItem) {
 
   function getIndividualRowAmount(row: ScheduleEntryRow, child: ChildRow, didimIndex: number) {
     const voucherPrices = getVoucherPrices(child)
-    const basePrice = Number(child.base_price ?? 0)
+    const basePrice = Number(child.base_price ?? child.monthly_limit ?? 60000)
 
     if (row.is_group) return 0
     if (row.voucher_type === '디딤') return didimIndex <= 3 ? 0 : basePrice
-    if (row.voucher_type === '아청심') return Number(voucherPrices['아청심'] ?? 0)
-    if (row.voucher_type === '드림스타트') return Number(voucherPrices['드림스타트'] ?? 0)
-    if (row.voucher_type === '배움') return Number(voucherPrices['배움'] ?? 0)
+    if (row.voucher_type === '아청심') return Number(voucherPrices['아청심'] ?? 54000)
+    if (row.voucher_type === '드림스타트') return Number(voucherPrices['드림스타트'] ?? 40000)
+    if (row.voucher_type === '배움') return Number(voucherPrices['배움'] ?? 10000)
     return basePrice
   }
 
-  const attendanceSummaryRows = useMemo<ChildAttendanceRow[]>(() => {
+  const attendanceSummaryRows = useMemo<AttendanceSummaryRow[]>(() => {
     return children
       .filter((child) => child.is_active)
       .map((child) => {
@@ -915,7 +1086,13 @@ async function handleDeleteSchedule(item: DisplayScheduleItem) {
           makeup_count: rows.filter((r) => r.status === 'makeup').length,
           absent_count: rows.filter((r) => r.status === 'absent').length,
           same_day_absent_count: rows.filter((r) => r.status === 'same_day_absent').length,
-          monthly_dates: uniqueDateList(rows.map((r) => r.class_date)),
+          attended_dates: uniqueDateList(rows.filter((r) => r.status === 'attended').map((r) => r.class_date)),
+          makeup_dates: uniqueDateList(rows.filter((r) => r.status === 'makeup').map((r) => r.class_date)),
+          group_dates: uniqueDateList(rows.filter((r) => Boolean(r.is_group)).map((r) => r.class_date)),
+          absent_dates: uniqueDateList(rows.filter((r) => r.status === 'absent').map((r) => r.class_date)),
+          same_day_absent_dates: uniqueDateList(
+            rows.filter((r) => r.status === 'same_day_absent').map((r) => r.class_date)
+          ),
         }
       })
       .sort((a, b) => a.child_name.localeCompare(b.child_name, 'ko'))
@@ -932,23 +1109,26 @@ async function handleDeleteSchedule(item: DisplayScheduleItem) {
       grouped.get(key)!.push(log)
     })
 
-    return Array.from(grouped.entries()).map(([key, rows]) => {
-      const first = rows[0]
-      return {
-        key,
-        teacher_name: teacherMap.get(Number(first.staff_id)) ?? `선생님(${first.staff_id})`,
-        child_name: childMap.get(Number(first.child_id)) ?? `학생(${first.child_id})`,
-        attended_dates: uniqueDateList(rows.filter((r) => r.status === 'attended').map((r) => r.class_date)),
-        makeup_dates: uniqueDateList(rows.filter((r) => r.status === 'makeup').map((r) => r.class_date)),
-        absent_dates: uniqueDateList(rows.filter((r) => r.status === 'absent').map((r) => r.class_date)),
-        same_day_absent_dates: uniqueDateList(
-          rows.filter((r) => r.status === 'same_day_absent').map((r) => r.class_date)
-        ),
-      }
-    })
+    return Array.from(grouped.entries())
+      .map(([key, rows]) => {
+        const first = rows[0]
+        return {
+          key,
+          teacher_name: teacherMap.get(Number(first.staff_id)) ?? `선생님(${first.staff_id})`,
+          child_name: childMap.get(Number(first.child_id)) ?? `학생(${first.child_id})`,
+          attended_dates: uniqueDateList(rows.filter((r) => r.status === 'attended').map((r) => r.class_date)),
+          makeup_dates: uniqueDateList(rows.filter((r) => r.status === 'makeup').map((r) => r.class_date)),
+          group_dates: uniqueDateList(rows.filter((r) => Boolean(r.is_group)).map((r) => r.class_date)),
+          absent_dates: uniqueDateList(rows.filter((r) => r.status === 'absent').map((r) => r.class_date)),
+          same_day_absent_dates: uniqueDateList(
+            rows.filter((r) => r.status === 'same_day_absent').map((r) => r.class_date)
+          ),
+        }
+      })
+      .sort((a, b) => a.teacher_name.localeCompare(b.teacher_name, 'ko'))
   }, [staffs, children, classLogs])
 
-  const settlementRows = useMemo<SummarySettlementRow[]>(() => {
+  const settlementRows = useMemo<SettlementRow[]>(() => {
     const start = `${csvMonth}-01`
     const endDate = new Date(start)
     endDate.setMonth(endDate.getMonth() + 1)
@@ -962,11 +1142,11 @@ async function handleDeleteSchedule(item: DisplayScheduleItem) {
     return children
       .filter((child) => child.is_active)
       .map((child) => {
-        const rows = monthlyScheduleRows.filter((r) => Number(r.child_id) === Number(child.id))
+        const scheduleRows = monthlyScheduleRows.filter((r) => Number(r.child_id) === Number(child.id))
         const attendanceRows = classLogs.filter((r) => Number(r.child_id) === Number(child.id))
 
-        const groupRows = rows.filter((r) => Boolean(r.is_group))
-        const individualRows = rows.filter((r) => !r.is_group)
+        const groupRows = scheduleRows.filter((r) => Boolean(r.is_group))
+        const individualRows = scheduleRows.filter((r) => !r.is_group)
 
         let didimCounter = 0
         let individualAmount = 0
@@ -1015,7 +1195,7 @@ async function handleDeleteSchedule(item: DisplayScheduleItem) {
 
     downloadCsvFile(
       `학생CSV_${csvMonth}.csv`,
-      ['월', '학생', '나이', '바우처', '수업횟수', '그룹횟수', '결석', '당일결석', '그룹단가', '총금액'],
+      ['월', '학생', '나이', '바우처', '출석+보강횟수', '그룹횟수', '결석', '당일결석', '그룹단가', '총금액'],
       monthRows
     )
   }
@@ -1051,6 +1231,11 @@ async function handleDeleteSchedule(item: DisplayScheduleItem) {
   }
 
   function renderScheduleCard(item: DisplayScheduleItem, dateStr: string, staffId: number) {
+    const firstChild = children.find((c) => c.id === Number(item.rows[0]?.child_id))
+    const title = item.isGroup
+      ? `${item.hourSlot.slice(0, 2)}:${String(item.minuteSlot).padStart(2, '0')}, ${item.groupName || '그룹수업'}`
+      : `${item.hourSlot.slice(0, 2)}:${String(item.minuteSlot).padStart(2, '0')}, ${firstChild?.child_name ?? ''} (${getAgeText(firstChild?.birth_date ?? null)})`
+
     const isEditing =
       editingCell?.date === dateStr &&
       editingCell?.hour === item.hourSlot &&
@@ -1176,14 +1361,7 @@ async function handleDeleteSchedule(item: DisplayScheduleItem) {
               onClick={() => setAttendanceModal({ open: true, item })}
               className="w-full text-left"
             >
-              <div className="font-medium text-slate-800">
-                {`${item.hourSlot.slice(0, 2)}:${String(item.minuteSlot).padStart(2, '0')}, `}
-                {item.isGroup
-                  ? `${item.groupName || '그룹수업'}`
-                  : `${children.find((c) => c.id === Number(item.rows[0]?.child_id))?.child_name ?? ''} (${
-                      getAgeText(children.find((c) => c.id === Number(item.rows[0]?.child_id))?.birth_date ?? null)
-                    })`}
-              </div>
+              <div className="font-medium text-slate-800">{title}</div>
             </button>
 
             <div className="mt-1 flex flex-wrap gap-1">
@@ -1197,18 +1375,14 @@ async function handleDeleteSchedule(item: DisplayScheduleItem) {
               ) : null}
             </div>
 
-            {!item.isGroup ? (
-              <div className="mt-1 text-[11px] text-slate-500">
-                {children.find((c) => c.id === Number(item.rows[0]?.child_id))?.child_name}
-              </div>
-            ) : (
+            {item.isGroup ? (
               <div className="mt-1 text-[11px] text-slate-500">
                 {item.rows
                   .map((r) => children.find((c) => c.id === Number(r.child_id))?.child_name ?? '')
                   .filter(Boolean)
                   .join(', ')}
               </div>
-            )}
+            ) : null}
 
             <div className="mt-2 flex gap-1">
               <button
@@ -1378,6 +1552,7 @@ async function handleDeleteSchedule(item: DisplayScheduleItem) {
                     >
                       + 추가
                     </button>
+
                     {items.map((item) => renderScheduleCard(item, dateStr, staffId))}
                   </div>
                 )}
@@ -1504,6 +1679,15 @@ async function handleDeleteSchedule(item: DisplayScheduleItem) {
                     </select>
                   ) : null}
 
+                  {viewMode === 'daily' ? (
+                    <input
+                      type="date"
+                      value={dailyDate}
+                      onChange={(e) => setDailyDate(e.target.value)}
+                      className="rounded-xl border px-3 py-3 md:py-2"
+                    />
+                  ) : null}
+
                   <div className="flex gap-2">
                     <button
                       onClick={() => {
@@ -1536,9 +1720,13 @@ async function handleDeleteSchedule(item: DisplayScheduleItem) {
                 시간표 불러오는 중...
               </div>
             ) : viewMode === 'daily' ? (
-              <div className="rounded-2xl border bg-white p-4">
-                <AdminDailySchedule />
-              </div>
+              <AdminDailySchedule
+                selectedDate={dailyDate}
+                staffs={staffs}
+                children={children}
+                entries={allScheduleEntries}
+                onOpenAttendance={(item) => setAttendanceModal({ open: true, item })}
+              />
             ) : viewMode === 'staff' && !selectedStaff ? (
               <div className="rounded-xl border bg-slate-50 p-6 text-center text-slate-500">
                 선생님을 선택하세요.
@@ -1550,6 +1738,7 @@ async function handleDeleteSchedule(item: DisplayScheduleItem) {
                     <thead>
                       <tr>
                         <th className="border bg-slate-100 px-1 py-2">시간</th>
+
                         {viewMode === 'staff'
                           ? weekDates.map((date, idx) => (
                               <th key={`staff-${idx}`} className="min-w-[170px] border bg-slate-100 px-1 py-2">
@@ -1581,7 +1770,9 @@ async function handleDeleteSchedule(item: DisplayScheduleItem) {
                     <tbody>
                       {hourSlots.map((hourSlot) => (
                         <tr key={hourSlot}>
-                          <td className="whitespace-nowrap border bg-slate-50 px-1 py-1 font-medium">{hourSlot}</td>
+                          <td className="whitespace-nowrap border bg-slate-50 px-1 py-1 font-medium">
+                            {hourSlot}
+                          </td>
 
                           {viewMode === 'staff' && selectedStaff
                             ? weekDates.map((date) => {
@@ -1640,9 +1831,7 @@ async function handleDeleteSchedule(item: DisplayScheduleItem) {
                                                       type="button"
                                                       onClick={() => toggleGroupChild(c.id)}
                                                       className={`rounded px-2 py-1 text-left text-[11px] ${
-                                                        active
-                                                          ? 'bg-rose-500 text-white'
-                                                          : 'bg-slate-100 text-slate-700'
+                                                        active ? 'bg-rose-500 text-white' : 'bg-slate-100 text-slate-700'
                                                       }`}
                                                     >
                                                       {getDisplayName(c)}
@@ -1738,7 +1927,9 @@ async function handleDeleteSchedule(item: DisplayScheduleItem) {
                                           + 추가
                                         </button>
 
-                                        {items.map((item) => renderScheduleCard(item, dateStr, Number(selectedStaff.id)))}
+                                        {items.map((item) =>
+                                          renderScheduleCard(item, dateStr, Number(selectedStaff.id))
+                                        )}
                                       </div>
                                     )}
                                   </td>
@@ -1801,9 +1992,7 @@ async function handleDeleteSchedule(item: DisplayScheduleItem) {
                                                         type="button"
                                                         onClick={() => toggleGroupChild(c.id)}
                                                         className={`rounded px-2 py-1 text-left text-[11px] ${
-                                                          active
-                                                            ? 'bg-rose-500 text-white'
-                                                            : 'bg-slate-100 text-slate-700'
+                                                          active ? 'bg-rose-500 text-white' : 'bg-slate-100 text-slate-700'
                                                         }`}
                                                       >
                                                         {getDisplayName(c)}
@@ -1899,7 +2088,9 @@ async function handleDeleteSchedule(item: DisplayScheduleItem) {
                                             + 추가
                                           </button>
 
-                                          {items.map((item) => renderScheduleCard(item, dateStr, Number(staff.id)))}
+                                          {items.map((item) =>
+                                            renderScheduleCard(item, dateStr, Number(staff.id))
+                                          )}
                                         </div>
                                       )}
                                     </td>
@@ -2050,18 +2241,20 @@ async function handleDeleteSchedule(item: DisplayScheduleItem) {
                 ) : (
                   filteredChildren.map((child) => {
                     const voucherPrices = getVoucherPrices(child)
+                    const childVouchers = child.vouchers ?? (child.voucher_yn ? ['디딤'] : ['일반'])
+
                     return (
                       <button
                         key={child.id}
                         onClick={() =>
                           setChildForm({
                             id: child.id,
-                            chartNo: child.chart_no ?? '',
                             childName: child.child_name,
                             birthDate: child.birth_date ?? '',
                             phone: child.phone ?? '',
-                            voucherTypes: child.vouchers ?? [],
-                            basePrice: String(child.base_price ?? 60000),
+                            chartNo: child.chart_no ?? '',
+                            voucherTypes: childVouchers,
+                            basePrice: String(child.base_price ?? child.monthly_limit ?? 60000),
                             didimPrice: String(voucherPrices['디딤'] ?? 10000),
                             achungsimPrice: String(voucherPrices['아청심'] ?? 54000),
                             dreamStartPrice: String(voucherPrices['드림스타트'] ?? 40000),
@@ -2074,14 +2267,14 @@ async function handleDeleteSchedule(item: DisplayScheduleItem) {
                       >
                         <div className="flex flex-wrap items-center gap-2">
                           <div className="font-medium">{getDisplayName(child)}</div>
-                          <span className={`rounded-full px-2 py-0.5 text-xs ${getVoucherClass(getVoucherLabel(child.vouchers))}`}>
-                            {getVoucherLabel(child.vouchers)}
+                          <span className={`rounded-full px-2 py-0.5 text-xs ${getVoucherClass(getVoucherLabel(childVouchers))}`}>
+                            {getVoucherLabel(childVouchers)}
                           </span>
                         </div>
                         <div className="mt-1 text-sm text-slate-500">
                           {child.chart_no ? `차트번호 ${child.chart_no}` : '차트번호 없음'}
                           {child.phone ? ` / ${child.phone}` : ''}
-                          {` / 일반단가 ${child.base_price ?? 60000}`}
+                          {` / 일반단가 ${child.base_price ?? child.monthly_limit ?? 60000}`}
                         </div>
                       </button>
                     )
@@ -2177,9 +2370,35 @@ async function handleDeleteSchedule(item: DisplayScheduleItem) {
         ) : null}
 
         {tab === 'summary' ? (
-          <div className="space-y-8">
-            <div>
-              <h2 className="mb-3 text-xl font-bold">1번 표 학생출결탭</h2>
+          <div>
+            <div className="mb-4 flex flex-wrap gap-2">
+              <button
+                onClick={() => setSummarySubTab('attendance')}
+                className={`rounded-xl px-4 py-2 text-sm ${
+                  summarySubTab === 'attendance' ? 'bg-emerald-500 text-white' : 'bg-slate-200'
+                }`}
+              >
+                1번표 학생출결탭
+              </button>
+              <button
+                onClick={() => setSummarySubTab('teacher')}
+                className={`rounded-xl px-4 py-2 text-sm ${
+                  summarySubTab === 'teacher' ? 'bg-indigo-500 text-white' : 'bg-slate-200'
+                }`}
+              >
+                2번표 선생님 수업탭
+              </button>
+              <button
+                onClick={() => setSummarySubTab('settlement')}
+                className={`rounded-xl px-4 py-2 text-sm ${
+                  summarySubTab === 'settlement' ? 'bg-orange-500 text-white' : 'bg-slate-200'
+                }`}
+              >
+                3번표 월학생 정산탭
+              </button>
+            </div>
+
+            {summarySubTab === 'attendance' ? (
               <div className="overflow-x-auto">
                 <table className="min-w-full border text-sm">
                   <thead>
@@ -2190,7 +2409,11 @@ async function handleDeleteSchedule(item: DisplayScheduleItem) {
                       <th className="border bg-slate-100 px-3 py-2">보강</th>
                       <th className="border bg-slate-100 px-3 py-2">결석</th>
                       <th className="border bg-slate-100 px-3 py-2">당일결석</th>
-                      <th className="border bg-slate-100 px-3 py-2">월출결날짜</th>
+                      <th className="border bg-slate-100 px-3 py-2">출석날짜</th>
+                      <th className="border bg-slate-100 px-3 py-2">보강날짜</th>
+                      <th className="border bg-slate-100 px-3 py-2">그룹수업날짜</th>
+                      <th className="border bg-slate-100 px-3 py-2">결석날짜</th>
+                      <th className="border bg-slate-100 px-3 py-2">당일결석날짜</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -2202,16 +2425,19 @@ async function handleDeleteSchedule(item: DisplayScheduleItem) {
                         <td className="border px-3 py-2 text-center">{row.makeup_count}</td>
                         <td className="border px-3 py-2 text-center">{row.absent_count}</td>
                         <td className="border px-3 py-2 text-center">{row.same_day_absent_count}</td>
-                        <td className="border px-3 py-2">{row.monthly_dates}</td>
+                        <td className="border px-3 py-2">{row.attended_dates}</td>
+                        <td className="border px-3 py-2">{row.makeup_dates}</td>
+                        <td className="border px-3 py-2">{row.group_dates}</td>
+                        <td className="border px-3 py-2">{row.absent_dates}</td>
+                        <td className="border px-3 py-2">{row.same_day_absent_dates}</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
-            </div>
+            ) : null}
 
-            <div>
-              <h2 className="mb-3 text-xl font-bold">2번 표 선생님 수업탭</h2>
+            {summarySubTab === 'teacher' ? (
               <div className="overflow-x-auto">
                 <table className="min-w-full border text-sm">
                   <thead>
@@ -2220,6 +2446,7 @@ async function handleDeleteSchedule(item: DisplayScheduleItem) {
                       <th className="border bg-slate-100 px-3 py-2">학생</th>
                       <th className="border bg-slate-100 px-3 py-2">출석날짜</th>
                       <th className="border bg-slate-100 px-3 py-2">보강날짜</th>
+                      <th className="border bg-slate-100 px-3 py-2">그룹수업날짜</th>
                       <th className="border bg-slate-100 px-3 py-2">결석날짜</th>
                       <th className="border bg-slate-100 px-3 py-2">당일결석날짜</th>
                     </tr>
@@ -2231,6 +2458,7 @@ async function handleDeleteSchedule(item: DisplayScheduleItem) {
                         <td className="border px-3 py-2">{row.child_name}</td>
                         <td className="border px-3 py-2">{row.attended_dates}</td>
                         <td className="border px-3 py-2">{row.makeup_dates}</td>
+                        <td className="border px-3 py-2">{row.group_dates}</td>
                         <td className="border px-3 py-2">{row.absent_dates}</td>
                         <td className="border px-3 py-2">{row.same_day_absent_dates}</td>
                       </tr>
@@ -2238,10 +2466,9 @@ async function handleDeleteSchedule(item: DisplayScheduleItem) {
                   </tbody>
                 </table>
               </div>
-            </div>
+            ) : null}
 
-            <div>
-              <h2 className="mb-3 text-xl font-bold">3번 표 월학생 정산탭</h2>
+            {summarySubTab === 'settlement' ? (
               <div className="overflow-x-auto">
                 <table className="min-w-full border text-sm">
                   <thead>
@@ -2294,7 +2521,7 @@ async function handleDeleteSchedule(item: DisplayScheduleItem) {
                   </tbody>
                 </table>
               </div>
-            </div>
+            ) : null}
           </div>
         ) : null}
 
@@ -2322,6 +2549,7 @@ async function handleDeleteSchedule(item: DisplayScheduleItem) {
                 {attendanceModal.item.rows.map((entry) => {
                   const child = children.find((c) => c.id === Number(entry.child_id))
                   const attendance = attendanceMap.get(getAttendanceKey(entry))
+
                   return (
                     <div key={entry.id} className="rounded-xl border p-3">
                       <div className="font-medium">
