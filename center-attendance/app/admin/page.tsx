@@ -239,20 +239,6 @@ function getVoucherClass(voucher?: string | null) {
   return 'border-slate-200 bg-slate-50 text-slate-700'
 }
 
-function getStatusLabel(status: AttendanceStatus) {
-  if (status === 'attended') return '출석'
-  if (status === 'absent') return '결석'
-  if (status === 'makeup') return '보강'
-  return '당일결석'
-}
-
-function getStatusClass(status: AttendanceStatus) {
-  if (status === 'attended') return 'bg-blue-50 text-blue-700'
-  if (status === 'makeup') return 'bg-sky-50 text-sky-700'
-  if (status === 'same_day_absent') return 'bg-red-100 text-red-700'
-  return 'bg-rose-50 text-rose-700'
-}
-
 function csvEscape(value: string | number | null | undefined) {
   const str = value == null ? '' : String(value)
   return `"${str.replace(/"/g, '""')}"`
@@ -300,52 +286,96 @@ function toMinuteNumberFromTimestamp(value?: string | null) {
   return date.getHours() * 60 + date.getMinutes()
 }
 
+function getEntryMinuteTotal(entry: ScheduleEntryRow) {
+  return Number(entry.time_slot.slice(0, 2)) * 60 + Number(entry.minute_slot ?? 0)
+}
+
+function getLogMinuteTotal(log: ClassLogRow) {
+  return toMinuteNumberFromTimestamp(log.class_time)
+}
+
+function buildLogicalAttendanceKey(params: {
+  classDate: string
+  minuteTotal: number
+  staffId: number
+  childId: number
+  isGroup?: boolean | null
+  groupId?: string | null
+}) {
+  return [
+    params.classDate,
+    params.minuteTotal,
+    Number(params.staffId),
+    Number(params.childId),
+    params.isGroup ? 'group' : 'single',
+    params.groupId ?? '',
+  ].join('|')
+}
+
+function isSameAttendanceLog(entry: ScheduleEntryRow, log: ClassLogRow) {
+  const logMinute = getLogMinuteTotal(log)
+  const entryMinute = getEntryMinuteTotal(entry)
+  if (logMinute == null) return false
+
+  const sameBase =
+    entry.date === log.class_date &&
+    Number(entry.teacher_id) === Number(log.staff_id) &&
+    Number(entry.child_id) === Number(log.child_id) &&
+    entryMinute === logMinute
+
+  if (!sameBase) return false
+
+  if (entry.is_group) {
+    return Boolean(log.is_group) && (entry.group_id ?? '') === (log.group_id ?? '')
+  }
+
+  return !log.is_group
+}
+
 function getScheduleCardBgClass(
   item: DisplayScheduleItem,
   classLogs: ClassLogRow[]
 ) {
-  const relatedLogs = classLogs.filter((log) => {
-    const sameDate = log.class_date === item.date
-    const sameStaff = Number(log.staff_id) === Number(item.staffId)
+  const relatedLogs = classLogs
+    .filter((log) => {
+      const sameDate = log.class_date === item.date
+      const sameStaff = Number(log.staff_id) === Number(item.staffId)
 
-    const logMinute = toMinuteNumberFromTimestamp(log.class_time)
-    const itemMinute =
-      Number(item.hourSlot.slice(0, 2)) * 60 + Number(item.minuteSlot)
+      const logMinute = getLogMinuteTotal(log)
+      const itemMinute =
+        Number(item.hourSlot.slice(0, 2)) * 60 + Number(item.minuteSlot)
 
-    const sameMinute = logMinute === itemMinute
+      const sameMinute = logMinute === itemMinute
 
-    if (item.isGroup) {
+      if (item.isGroup) {
+        return (
+          sameDate &&
+          sameStaff &&
+          sameMinute &&
+          Boolean(log.is_group) &&
+          (log.group_id ?? '') === (item.groupId ?? '')
+        )
+      }
+
+      const firstRow = item.rows[0]
       return (
         sameDate &&
         sameStaff &&
         sameMinute &&
-        Boolean(log.is_group) &&
-        (log.group_id ?? '') === (item.groupId ?? '')
+        Number(log.child_id) === Number(firstRow?.child_id) &&
+        !log.is_group
       )
-    }
+    })
+    .sort((a, b) => {
+      const aTime = new Date(a.updated_at ?? a.created_at ?? 0).getTime()
+      const bTime = new Date(b.updated_at ?? b.created_at ?? 0).getTime()
+      return bTime - aTime
+    })
 
-    const firstRow = item.rows[0]
-
-    return (
-      sameDate &&
-      sameStaff &&
-      sameMinute &&
-      Number(log.child_id) === Number(firstRow?.child_id)
-    )
-  })
-
-  if (relatedLogs.length === 0) return 'bg-white'
-
-  const hasBlue = relatedLogs.some(
-    (log) => log.status === 'attended' || log.status === 'makeup'
-  )
-
-  const hasRed = relatedLogs.some(
-    (log) => log.status === 'absent' || log.status === 'same_day_absent'
-  )
-
-  if (hasBlue) return 'bg-sky-50'
-  if (hasRed) return 'bg-rose-50'
+  const latest = relatedLogs[0]
+  if (!latest?.status) return 'bg-white'
+  if (latest.status === 'attended' || latest.status === 'makeup') return 'bg-sky-50'
+  if (latest.status === 'absent' || latest.status === 'same_day_absent') return 'bg-rose-50'
   return 'bg-white'
 }
 
@@ -916,6 +946,27 @@ export default function AdminPage() {
         const groupId =
           editingGroupId || (typeof crypto !== 'undefined' ? crypto.randomUUID() : `group-${Date.now()}`)
 
+        if (editingGroupId) {
+          const oldGroupRows = allScheduleEntries.filter((row) => row.group_id === editingGroupId && row.is_active)
+
+          const { error: clearError } = await supabase
+            .from('schedule_entries')
+            .update({ is_active: false })
+            .eq('group_id', editingGroupId)
+          if (clearError) throw clearError
+
+          for (const row of oldGroupRows) {
+            await supabase
+              .from('class_logs')
+              .delete()
+              .match({
+                class_date: row.date,
+                staff_id: Number(row.teacher_id),
+                child_id: Number(row.child_id),
+              })
+          }
+        }
+
         const groupRows = selectedGroupChildIds.map((childId) => ({
           date: dateStr,
           time_slot: hourSlot,
@@ -935,14 +986,6 @@ export default function AdminPage() {
           group_name: groupName || '그룹수업',
         }))
 
-        if (editingGroupId) {
-          const { error: clearError } = await supabase
-            .from('schedule_entries')
-            .update({ is_active: false })
-            .eq('group_id', editingGroupId)
-          if (clearError) throw clearError
-        }
-
         const { error } = await supabase.from('schedule_entries').insert(groupRows)
         if (error) throw error
       } else {
@@ -955,31 +998,62 @@ export default function AdminPage() {
           return
         }
 
-        const payload = {
-          date: dateStr,
-          time_slot: hourSlot,
-          room_number: 1,
-          teacher_id: Number(staffId),
-          teacher_name: staff?.name ?? '',
-          class_type: 'individual',
-          child_id: Number(scheduleChildId),
-          voucher_type: selectedVoucher,
-          status: 'scheduled',
-          minute_slot: minute,
-          is_active: true,
-          note: null,
-          is_group: false,
-          group_id: null,
-          group_name: null,
-        }
-
         if (editingEntryId) {
+          const oldEntry = allScheduleEntries.find((row) => row.id === editingEntryId)
+
+          const payload = {
+            date: dateStr,
+            time_slot: hourSlot,
+            room_number: 1,
+            teacher_id: Number(staffId),
+            teacher_name: staff?.name ?? '',
+            class_type: 'individual',
+            child_id: Number(scheduleChildId),
+            voucher_type: selectedVoucher,
+            status: 'scheduled',
+            minute_slot: minute,
+            is_active: true,
+            note: null,
+            is_group: false,
+            group_id: null,
+            group_name: null,
+          }
+
           const { error } = await supabase
             .from('schedule_entries')
             .update(payload)
             .eq('id', editingEntryId)
           if (error) throw error
+
+          if (oldEntry) {
+            await supabase
+              .from('class_logs')
+              .delete()
+              .match({
+                class_date: oldEntry.date,
+                staff_id: Number(oldEntry.teacher_id),
+                child_id: Number(oldEntry.child_id),
+              })
+          }
         } else {
+          const payload = {
+            date: dateStr,
+            time_slot: hourSlot,
+            room_number: 1,
+            teacher_id: Number(staffId),
+            teacher_name: staff?.name ?? '',
+            class_type: 'individual',
+            child_id: Number(scheduleChildId),
+            voucher_type: selectedVoucher,
+            status: 'scheduled',
+            minute_slot: minute,
+            is_active: true,
+            note: null,
+            is_group: false,
+            group_id: null,
+            group_name: null,
+          }
+
           const { error } = await supabase.from('schedule_entries').insert(payload)
           if (error) throw error
         }
@@ -987,6 +1061,7 @@ export default function AdminPage() {
 
       resetScheduleEditor()
       await loadSchedules()
+      await loadClassLogsForMonth()
       setMessage('시간표가 저장되었습니다.')
     } catch (err: any) {
       setMessage(err?.message ?? '시간표 저장 실패')
@@ -999,19 +1074,45 @@ export default function AdminPage() {
       if (!ok) return
 
       if (item.isGroup && item.groupId) {
+        const targetRows = allScheduleEntries.filter(
+          (row) => row.group_id === item.groupId && row.is_active
+        )
+
         const { error } = await supabase
           .from('schedule_entries')
           .update({ is_active: false })
           .eq('group_id', item.groupId)
         if (error) throw error
+
+        for (const row of targetRows) {
+          await supabase
+            .from('class_logs')
+            .delete()
+            .match({
+              class_date: row.date,
+              staff_id: Number(row.teacher_id),
+              child_id: Number(row.child_id),
+            })
+        }
       } else {
         const targetId = item.rows[0]?.id
-        if (!targetId) return
+        const targetRow = item.rows[0]
+        if (!targetId || !targetRow) return
+
         const { error } = await supabase
           .from('schedule_entries')
           .update({ is_active: false })
           .eq('id', targetId)
         if (error) throw error
+
+        await supabase
+          .from('class_logs')
+          .delete()
+          .match({
+            class_date: targetRow.date,
+            staff_id: Number(targetRow.teacher_id),
+            child_id: Number(targetRow.child_id),
+          })
       }
 
       await loadSchedules()
@@ -1054,21 +1155,55 @@ export default function AdminPage() {
   }
 
   function getAttendanceKey(entry: ScheduleEntryRow) {
-    const classTime = buildClassTimestamp(entry.date, entry.time_slot, entry.minute_slot)
-    return `${entry.date}|${classTime}|${entry.teacher_id}|${entry.child_id}`
+    return buildLogicalAttendanceKey({
+      classDate: entry.date,
+      minuteTotal: getEntryMinuteTotal(entry),
+      staffId: Number(entry.teacher_id),
+      childId: Number(entry.child_id),
+      isGroup: Boolean(entry.is_group),
+      groupId: entry.group_id ?? null,
+    })
   }
 
   const attendanceMap = useMemo(() => {
     const map = new Map<string, ClassLogRow>()
+
     classLogs.forEach((log) => {
-      const key = `${log.class_date}|${log.class_time}|${log.staff_id}|${log.child_id}`
-      map.set(key, log)
+      const minuteTotal = getLogMinuteTotal(log)
+      if (minuteTotal == null) return
+
+      const key = buildLogicalAttendanceKey({
+        classDate: log.class_date,
+        minuteTotal,
+        staffId: Number(log.staff_id),
+        childId: Number(log.child_id),
+        isGroup: Boolean(log.is_group),
+        groupId: log.group_id ?? null,
+      })
+
+      const prev = map.get(key)
+      if (!prev) {
+        map.set(key, log)
+        return
+      }
+
+      const prevTime = new Date(prev.updated_at ?? prev.created_at ?? 0).getTime()
+      const nextTime = new Date(log.updated_at ?? log.created_at ?? 0).getTime()
+
+      if (nextTime >= prevTime) {
+        map.set(key, log)
+      }
     })
+
     return map
   }, [classLogs])
 
+  function findExistingClassLog(entry: ScheduleEntryRow) {
+    return classLogs.find((log) => isSameAttendanceLog(entry, log)) ?? null
+  }
+
   function openRecordModal(entry: ScheduleEntryRow) {
-    const existing = attendanceMap.get(getAttendanceKey(entry))
+    const existing = findExistingClassLog(entry)
     setRecordModal({
       open: true,
       entry,
@@ -1083,7 +1218,7 @@ export default function AdminPage() {
       const entry = recordModal.entry
       const status = recordModal.status
       const classTime = buildClassTimestamp(entry.date, entry.time_slot, entry.minute_slot)
-      const existing = attendanceMap.get(getAttendanceKey(entry))
+      const existing = findExistingClassLog(entry)
 
       if (existing?.id) {
         const { error } = await supabase
@@ -1096,6 +1231,7 @@ export default function AdminPage() {
             group_name: entry.group_name ?? null,
           })
           .eq('id', existing.id)
+
         if (error) throw error
       } else {
         const { error } = await supabase.from('class_logs').insert({
@@ -1109,6 +1245,7 @@ export default function AdminPage() {
           group_id: entry.group_id ?? null,
           group_name: entry.group_name ?? null,
         })
+
         if (error) throw error
       }
 
@@ -1157,8 +1294,8 @@ export default function AdminPage() {
       (row) => row.date >= start && row.date <= end && row.is_active
     )
 
-    return classLogs.filter((log) => {
-      const logMinute = toMinuteNumberFromTimestamp(log.class_time)
+    const matchedLogs = classLogs.filter((log) => {
+      const logMinute = getLogMinuteTotal(log)
       if (logMinute == null) return false
 
       return monthlySchedules.some((row) => {
@@ -1171,7 +1308,8 @@ export default function AdminPage() {
             Number(row.teacher_id) === Number(log.staff_id) &&
             Number(row.child_id) === Number(log.child_id) &&
             rowMinute === logMinute &&
-            Boolean(log.is_group)
+            Boolean(log.is_group) &&
+            (row.group_id ?? '') === (log.group_id ?? '')
           )
         }
 
@@ -1179,10 +1317,42 @@ export default function AdminPage() {
           row.date === log.class_date &&
           Number(row.teacher_id) === Number(log.staff_id) &&
           Number(row.child_id) === Number(log.child_id) &&
-          rowMinute === logMinute
+          rowMinute === logMinute &&
+          !log.is_group
         )
       })
     })
+
+    const dedupedMap = new Map<string, ClassLogRow>()
+
+    matchedLogs.forEach((log) => {
+      const minuteTotal = getLogMinuteTotal(log)
+      if (minuteTotal == null) return
+
+      const key = buildLogicalAttendanceKey({
+        classDate: log.class_date,
+        minuteTotal,
+        staffId: Number(log.staff_id),
+        childId: Number(log.child_id),
+        isGroup: Boolean(log.is_group),
+        groupId: log.group_id ?? null,
+      })
+
+      const prev = dedupedMap.get(key)
+      if (!prev) {
+        dedupedMap.set(key, log)
+        return
+      }
+
+      const prevTime = new Date(prev.updated_at ?? prev.created_at ?? 0).getTime()
+      const nextTime = new Date(log.updated_at ?? log.created_at ?? 0).getTime()
+
+      if (nextTime >= prevTime) {
+        dedupedMap.set(key, log)
+      }
+    })
+
+    return Array.from(dedupedMap.values())
   }, [allScheduleEntries, classLogs, csvMonth])
 
   function getIndividualRowAmount(row: ScheduleEntryRow, child: ChildRow, didimIndex: number) {
