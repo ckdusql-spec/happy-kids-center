@@ -131,18 +131,21 @@ type RecordModalState = {
 }
 
 type AttendanceSummaryRow = {
+  key: string
   child_id: number
   child_name: string
   age_text: string
+  teacher_name: string
   attended_count: number
   makeup_count: number
   absent_count: number
   same_day_absent_count: number
   attended_dates: string
   makeup_dates: string
-  group_dates: string
   absent_dates: string
   same_day_absent_dates: string
+  group_attended_dates: string
+  group_absent_dates: string
 }
 
 type TeacherLessonRow = {
@@ -151,9 +154,10 @@ type TeacherLessonRow = {
   child_name: string
   attended_dates: string
   makeup_dates: string
-  group_dates: string
   absent_dates: string
   same_day_absent_dates: string
+  group_attended_dates: string
+  group_absent_dates: string
 }
 
 type SettlementRow = {
@@ -237,6 +241,13 @@ function getVoucherClass(voucher?: string | null) {
   if (voucher === '배움') return 'border-amber-200 bg-amber-50 text-amber-700'
   if (voucher === '그룹수업') return 'border-rose-200 bg-rose-50 text-rose-700'
   return 'border-slate-200 bg-slate-50 text-slate-700'
+}
+
+function getStatusLabel(status: AttendanceStatus) {
+  if (status === 'attended') return '출석'
+  if (status === 'absent') return '결석'
+  if (status === 'makeup') return '보강'
+  return '당일결석'
 }
 
 function csvEscape(value: string | number | null | undefined) {
@@ -340,37 +351,42 @@ function getScheduleCardBgClass(
     .filter((log) => {
       const sameDate = log.class_date === item.date
       const sameStaff = Number(log.staff_id) === Number(item.staffId)
-
       const logMinute = getLogMinuteTotal(log)
       const itemMinute =
         Number(item.hourSlot.slice(0, 2)) * 60 + Number(item.minuteSlot)
 
-      const sameMinute = logMinute === itemMinute
+      if (logMinute == null) return false
+      if (!sameDate || !sameStaff || logMinute !== itemMinute) return false
 
       if (item.isGroup) {
-        return (
-          sameDate &&
-          sameStaff &&
-          sameMinute &&
-          Boolean(log.is_group) &&
-          (log.group_id ?? '') === (item.groupId ?? '')
-        )
+        return Boolean(log.is_group) && (log.group_id ?? '') === (item.groupId ?? '')
       }
 
       const firstRow = item.rows[0]
-      return (
-        sameDate &&
-        sameStaff &&
-        sameMinute &&
-        Number(log.child_id) === Number(firstRow?.child_id) &&
-        !log.is_group
-      )
+      return Number(log.child_id) === Number(firstRow?.child_id) && !log.is_group
     })
     .sort((a, b) => {
       const aTime = new Date(a.updated_at ?? a.created_at ?? 0).getTime()
       const bTime = new Date(b.updated_at ?? b.created_at ?? 0).getTime()
       return bTime - aTime
     })
+
+  if (relatedLogs.length === 0) return 'bg-white'
+
+  if (item.isGroup) {
+    const hasBlue = relatedLogs.some(
+      (log) => log.status === 'attended' || log.status === 'makeup'
+    )
+    const hasOnlyRed =
+      relatedLogs.length > 0 &&
+      relatedLogs.every(
+        (log) => log.status === 'absent' || log.status === 'same_day_absent'
+      )
+
+    if (hasBlue) return 'bg-sky-50'
+    if (hasOnlyRed) return 'bg-rose-50'
+    return 'bg-white'
+  }
 
   const latest = relatedLogs[0]
   if (!latest?.status) return 'bg-white'
@@ -385,6 +401,7 @@ function AdminDailySchedule({
   children,
   entries,
   classLogs,
+  attendanceMap,
   onOpenRecord,
 }: {
   selectedDate: string
@@ -392,10 +409,22 @@ function AdminDailySchedule({
   children: ChildRow[]
   entries: ScheduleEntryRow[]
   classLogs: ClassLogRow[]
+  attendanceMap: Map<string, ClassLogRow>
   onOpenRecord: (entry: ScheduleEntryRow) => void
 }) {
   const teacherList = staffs.filter((s) => s.role === 'employee' && s.is_active)
   const slots = getHourSlots()
+
+  function getAttendanceKey(entry: ScheduleEntryRow) {
+    return buildLogicalAttendanceKey({
+      classDate: entry.date,
+      minuteTotal: getEntryMinuteTotal(entry),
+      staffId: Number(entry.teacher_id),
+      childId: Number(entry.child_id),
+      isGroup: Boolean(entry.is_group),
+      groupId: entry.group_id ?? null,
+    })
+  }
 
   function buildItems(hourSlot: string, staffId: number) {
     const rows = entries.filter(
@@ -504,12 +533,24 @@ function AdminDailySchedule({
                                       {item.voucherType || '일반'}
                                     </span>
                                   </div>
+
                                   {item.isGroup ? (
-                                    <div className="mt-1 text-[11px] text-slate-500">
-                                      {item.rows
-                                        .map((r) => children.find((c) => c.id === Number(r.child_id))?.child_name ?? '')
-                                        .filter(Boolean)
-                                        .join(', ')}
+                                    <div className="mt-1 space-y-1 text-[11px] text-slate-600">
+                                      {item.rows.map((r) => {
+                                        const child = children.find((c) => c.id === Number(r.child_id))
+                                        const log = attendanceMap.get(getAttendanceKey(r))
+                                        return (
+                                          <button
+                                            key={r.id}
+                                            type="button"
+                                            onClick={() => onOpenRecord(r)}
+                                            className="block w-full rounded bg-white/70 px-2 py-1 text-left hover:bg-white"
+                                          >
+                                            {child?.child_name ?? `학생(${r.child_id})`}
+                                            {log?.status ? ` (${getStatusLabel(log.status)})` : ' (미입력)'}
+                                          </button>
+                                        )
+                                      })}
                                     </div>
                                   ) : null}
                                 </button>
@@ -1202,6 +1243,28 @@ export default function AdminPage() {
     return classLogs.find((log) => isSameAttendanceLog(entry, log)) ?? null
   }
 
+  function getRunningAbsentCount(childId: number) {
+    const rows = classLogs.filter((log) => Number(log.child_id) === Number(childId))
+
+    let count = 0
+
+    rows
+      .sort((a, b) => {
+        const aTime = new Date(a.updated_at ?? a.created_at ?? 0).getTime()
+        const bTime = new Date(b.updated_at ?? b.created_at ?? 0).getTime()
+        return aTime - bTime
+      })
+      .forEach((log) => {
+        if (log.status === 'absent' || log.status === 'same_day_absent') {
+          count += 1
+        } else if (log.status === 'makeup') {
+          count = Math.max(0, count - 1)
+        }
+      })
+
+    return count
+  }
+
   function openRecordModal(entry: ScheduleEntryRow) {
     const existing = findExistingClassLog(entry)
     setRecordModal({
@@ -1368,29 +1431,50 @@ export default function AdminPage() {
   }
 
   const attendanceSummaryRows = useMemo<AttendanceSummaryRow[]>(() => {
-    return children
-      .filter((child) => child.is_active)
-      .map((child) => {
-        const rows = validClassLogs.filter((log) => Number(log.child_id) === Number(child.id))
+    const teacherMap = new Map<number, string>(staffs.map((s) => [Number(s.id), s.name]))
+    const grouped = new Map<string, ClassLogRow[]>()
+
+    validClassLogs.forEach((log) => {
+      const key = `${log.child_id}-${log.staff_id}`
+      if (!grouped.has(key)) grouped.set(key, [])
+      grouped.get(key)!.push(log)
+    })
+
+    return Array.from(grouped.entries())
+      .map(([key, rows]) => {
+        const first = rows[0]
+        const child = children.find((c) => Number(c.id) === Number(first.child_id))
+        const individualRows = rows.filter((r) => !r.is_group)
+        const groupRows = rows.filter((r) => Boolean(r.is_group))
+
         return {
-          child_id: child.id,
-          child_name: child.child_name,
-          age_text: getAgeText(child.birth_date),
-          attended_count: rows.filter((r) => r.status === 'attended').length,
-          makeup_count: rows.filter((r) => r.status === 'makeup').length,
-          absent_count: rows.filter((r) => r.status === 'absent').length,
-          same_day_absent_count: rows.filter((r) => r.status === 'same_day_absent').length,
-          attended_dates: uniqueDateList(rows.filter((r) => r.status === 'attended').map((r) => r.class_date)),
-          makeup_dates: uniqueDateList(rows.filter((r) => r.status === 'makeup').map((r) => r.class_date)),
-          group_dates: uniqueDateList(rows.filter((r) => Boolean(r.is_group)).map((r) => r.class_date)),
-          absent_dates: uniqueDateList(rows.filter((r) => r.status === 'absent').map((r) => r.class_date)),
-          same_day_absent_dates: uniqueDateList(
-            rows.filter((r) => r.status === 'same_day_absent').map((r) => r.class_date)
+          key,
+          child_id: Number(first.child_id),
+          child_name: child?.child_name ?? `학생(${first.child_id})`,
+          age_text: getAgeText(child?.birth_date),
+          teacher_name: teacherMap.get(Number(first.staff_id)) ?? `선생님(${first.staff_id})`,
+          attended_count: individualRows.filter((r) => r.status === 'attended').length,
+          makeup_count: individualRows.filter((r) => r.status === 'makeup').length,
+          absent_count: individualRows.filter((r) => r.status === 'absent').length,
+          same_day_absent_count: individualRows.filter((r) => r.status === 'same_day_absent').length,
+          attended_dates: uniqueDateList(individualRows.filter((r) => r.status === 'attended').map((r) => r.class_date)),
+          makeup_dates: uniqueDateList(individualRows.filter((r) => r.status === 'makeup').map((r) => r.class_date)),
+          absent_dates: uniqueDateList(individualRows.filter((r) => r.status === 'absent').map((r) => r.class_date)),
+          same_day_absent_dates: uniqueDateList(individualRows.filter((r) => r.status === 'same_day_absent').map((r) => r.class_date)),
+          group_attended_dates: uniqueDateList(
+            groupRows.filter((r) => r.status === 'attended' || r.status === 'makeup').map((r) => r.class_date)
+          ),
+          group_absent_dates: uniqueDateList(
+            groupRows.filter((r) => r.status === 'absent' || r.status === 'same_day_absent').map((r) => r.class_date)
           ),
         }
       })
-      .sort((a, b) => a.child_name.localeCompare(b.child_name, 'ko'))
-  }, [children, validClassLogs])
+      .sort((a, b) => {
+        const nameCompare = a.child_name.localeCompare(b.child_name, 'ko')
+        if (nameCompare !== 0) return nameCompare
+        return a.teacher_name.localeCompare(b.teacher_name, 'ko')
+      })
+  }, [children, staffs, validClassLogs])
 
   const teacherLessonRows = useMemo<TeacherLessonRow[]>(() => {
     const teacherMap = new Map<number, string>(staffs.map((s) => [Number(s.id), s.name]))
@@ -1406,16 +1490,22 @@ export default function AdminPage() {
     return Array.from(grouped.entries())
       .map(([key, rows]) => {
         const first = rows[0]
+        const individualRows = rows.filter((r) => !r.is_group)
+        const groupRows = rows.filter((r) => Boolean(r.is_group))
+
         return {
           key,
           teacher_name: teacherMap.get(Number(first.staff_id)) ?? `선생님(${first.staff_id})`,
           child_name: childMap.get(Number(first.child_id)) ?? `학생(${first.child_id})`,
-          attended_dates: uniqueDateList(rows.filter((r) => r.status === 'attended').map((r) => r.class_date)),
-          makeup_dates: uniqueDateList(rows.filter((r) => r.status === 'makeup').map((r) => r.class_date)),
-          group_dates: uniqueDateList(rows.filter((r) => Boolean(r.is_group)).map((r) => r.class_date)),
-          absent_dates: uniqueDateList(rows.filter((r) => r.status === 'absent').map((r) => r.class_date)),
-          same_day_absent_dates: uniqueDateList(
-            rows.filter((r) => r.status === 'same_day_absent').map((r) => r.class_date)
+          attended_dates: uniqueDateList(individualRows.filter((r) => r.status === 'attended').map((r) => r.class_date)),
+          makeup_dates: uniqueDateList(individualRows.filter((r) => r.status === 'makeup').map((r) => r.class_date)),
+          absent_dates: uniqueDateList(individualRows.filter((r) => r.status === 'absent').map((r) => r.class_date)),
+          same_day_absent_dates: uniqueDateList(individualRows.filter((r) => r.status === 'same_day_absent').map((r) => r.class_date)),
+          group_attended_dates: uniqueDateList(
+            groupRows.filter((r) => r.status === 'attended' || r.status === 'makeup').map((r) => r.class_date)
+          ),
+          group_absent_dates: uniqueDateList(
+            groupRows.filter((r) => r.status === 'absent' || r.status === 'same_day_absent').map((r) => r.class_date)
           ),
         }
       })
@@ -1464,8 +1554,8 @@ export default function AdminPage() {
           voucher_label: getVoucherLabel(child.vouchers),
           lesson_count: individualRows.length,
           group_count: groupRows.length,
-          absent_count: attendanceRows.filter((r) => r.status === 'absent').length,
-          same_day_absent_count: attendanceRows.filter((r) => r.status === 'same_day_absent').length,
+          absent_count: attendanceRows.filter((r) => !r.is_group && r.status === 'absent').length,
+          same_day_absent_count: attendanceRows.filter((r) => !r.is_group && r.status === 'same_day_absent').length,
           group_unit_price: groupUnitPrice,
           total_amount: individualAmount + groupAmount,
         }
@@ -1483,21 +1573,19 @@ export default function AdminPage() {
   }, [childInfoModal.child, validClassLogs, csvMonth])
 
   const childInfoDates = useMemo(() => {
+    const individualRows = selectedChildMonthlyLogs.filter((r) => !r.is_group)
+    const groupRows = selectedChildMonthlyLogs.filter((r) => Boolean(r.is_group))
+
     return {
-      attended: uniqueDateList(
-        selectedChildMonthlyLogs.filter((r) => r.status === 'attended').map((r) => r.class_date)
+      attended: uniqueDateList(individualRows.filter((r) => r.status === 'attended').map((r) => r.class_date)),
+      makeup: uniqueDateList(individualRows.filter((r) => r.status === 'makeup').map((r) => r.class_date)),
+      absent: uniqueDateList(individualRows.filter((r) => r.status === 'absent').map((r) => r.class_date)),
+      sameDayAbsent: uniqueDateList(individualRows.filter((r) => r.status === 'same_day_absent').map((r) => r.class_date)),
+      groupAttended: uniqueDateList(
+        groupRows.filter((r) => r.status === 'attended' || r.status === 'makeup').map((r) => r.class_date)
       ),
-      makeup: uniqueDateList(
-        selectedChildMonthlyLogs.filter((r) => r.status === 'makeup').map((r) => r.class_date)
-      ),
-      group: uniqueDateList(
-        selectedChildMonthlyLogs.filter((r) => Boolean(r.is_group)).map((r) => r.class_date)
-      ),
-      absent: uniqueDateList(
-        selectedChildMonthlyLogs.filter((r) => r.status === 'absent').map((r) => r.class_date)
-      ),
-      sameDayAbsent: uniqueDateList(
-        selectedChildMonthlyLogs.filter((r) => r.status === 'same_day_absent').map((r) => r.class_date)
+      groupAbsent: uniqueDateList(
+        groupRows.filter((r) => r.status === 'absent' || r.status === 'same_day_absent').map((r) => r.class_date)
       ),
     }
   }, [selectedChildMonthlyLogs])
@@ -1708,6 +1796,8 @@ export default function AdminPage() {
               <div className="mt-1 space-y-1 text-[11px] text-slate-600">
                 {item.rows.map((r) => {
                   const child = children.find((c) => c.id === Number(r.child_id))
+                  const log = attendanceMap.get(getAttendanceKey(r))
+
                   return (
                     <button
                       key={r.id}
@@ -1716,6 +1806,7 @@ export default function AdminPage() {
                       className="block w-full rounded bg-white/70 px-2 py-1 text-left hover:bg-white"
                     >
                       {child?.child_name ?? `학생(${r.child_id})`}
+                      {log?.status ? ` (${getStatusLabel(log.status)})` : ' (미입력)'}
                     </button>
                   )
                 })}
@@ -2073,6 +2164,7 @@ export default function AdminPage() {
                 children={children}
                 entries={allScheduleEntries}
                 classLogs={classLogs}
+                attendanceMap={attendanceMap}
                 onOpenRecord={(entry) => openRecordModal(entry)}
               />
             ) : viewMode === 'staff' && !selectedStaff ? (
@@ -2753,31 +2845,35 @@ export default function AdminPage() {
                     <tr>
                       <th className="border bg-slate-100 px-3 py-2">학생</th>
                       <th className="border bg-slate-100 px-3 py-2">나이</th>
+                      <th className="border bg-slate-100 px-3 py-2">선생님</th>
                       <th className="border bg-slate-100 px-3 py-2">출석</th>
                       <th className="border bg-slate-100 px-3 py-2">보강</th>
                       <th className="border bg-slate-100 px-3 py-2">결석</th>
                       <th className="border bg-slate-100 px-3 py-2">당일결석</th>
                       <th className="border bg-slate-100 px-3 py-2">출석날짜</th>
                       <th className="border bg-slate-100 px-3 py-2">보강날짜</th>
-                      <th className="border bg-slate-100 px-3 py-2">그룹수업날짜</th>
                       <th className="border bg-slate-100 px-3 py-2">결석날짜</th>
                       <th className="border bg-slate-100 px-3 py-2">당일결석날짜</th>
+                      <th className="border bg-slate-100 px-3 py-2">그룹수업출석</th>
+                      <th className="border bg-slate-100 px-3 py-2">그룹수업결석및 당일결석</th>
                     </tr>
                   </thead>
                   <tbody>
                     {attendanceSummaryRows.map((row) => (
-                      <tr key={row.child_id}>
+                      <tr key={row.key}>
                         <td className="border px-3 py-2">{row.child_name}</td>
                         <td className="border px-3 py-2">{row.age_text}</td>
+                        <td className="border px-3 py-2">{row.teacher_name}</td>
                         <td className="border px-3 py-2 text-center">{row.attended_count}</td>
                         <td className="border px-3 py-2 text-center">{row.makeup_count}</td>
                         <td className="border px-3 py-2 text-center">{row.absent_count}</td>
                         <td className="border px-3 py-2 text-center">{row.same_day_absent_count}</td>
                         <td className="border px-3 py-2">{row.attended_dates}</td>
                         <td className="border px-3 py-2">{row.makeup_dates}</td>
-                        <td className="border px-3 py-2">{row.group_dates}</td>
                         <td className="border px-3 py-2">{row.absent_dates}</td>
                         <td className="border px-3 py-2">{row.same_day_absent_dates}</td>
+                        <td className="border px-3 py-2">{row.group_attended_dates}</td>
+                        <td className="border px-3 py-2">{row.group_absent_dates}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -2794,9 +2890,10 @@ export default function AdminPage() {
                       <th className="border bg-slate-100 px-3 py-2">학생</th>
                       <th className="border bg-slate-100 px-3 py-2">출석날짜</th>
                       <th className="border bg-slate-100 px-3 py-2">보강날짜</th>
-                      <th className="border bg-slate-100 px-3 py-2">그룹수업날짜</th>
                       <th className="border bg-slate-100 px-3 py-2">결석날짜</th>
                       <th className="border bg-slate-100 px-3 py-2">당일결석날짜</th>
+                      <th className="border bg-slate-100 px-3 py-2">그룹 출석(그룹출석,그룹보강)</th>
+                      <th className="border bg-slate-100 px-3 py-2">그룹 결석(그룹결석,그룹당일결석)</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -2806,9 +2903,10 @@ export default function AdminPage() {
                         <td className="border px-3 py-2">{row.child_name}</td>
                         <td className="border px-3 py-2">{row.attended_dates}</td>
                         <td className="border px-3 py-2">{row.makeup_dates}</td>
-                        <td className="border px-3 py-2">{row.group_dates}</td>
                         <td className="border px-3 py-2">{row.absent_dates}</td>
                         <td className="border px-3 py-2">{row.same_day_absent_dates}</td>
+                        <td className="border px-3 py-2">{row.group_attended_dates}</td>
+                        <td className="border px-3 py-2">{row.group_absent_dates}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -2878,9 +2976,16 @@ export default function AdminPage() {
             <div className="w-full max-w-lg rounded-[28px] bg-white p-6 shadow-xl">
               <h3 className="mb-4 text-2xl font-bold">수업 상태 선택</h3>
 
-              <div className="mb-4 text-lg text-slate-600">
+              <div className="mb-2 text-lg text-slate-600">
                 {recordModal.entry.date} / {recordModal.entry.time_slot.slice(0, 2)}:
                 {String(recordModal.entry.minute_slot ?? 0).padStart(2, '0')}
+              </div>
+
+              <div className="mb-3 text-base text-slate-600">
+                결석횟수:{' '}
+                {recordModal.entry?.child_id
+                  ? getRunningAbsentCount(Number(recordModal.entry.child_id))
+                  : 0}
               </div>
 
               <select
@@ -2941,9 +3046,10 @@ export default function AdminPage() {
               <div className="mt-5 space-y-2 rounded-2xl bg-slate-50 p-4 text-sm">
                 <div><span className="font-semibold">출석날짜:</span> {childInfoDates.attended || '-'}</div>
                 <div><span className="font-semibold">보강날짜:</span> {childInfoDates.makeup || '-'}</div>
-                <div><span className="font-semibold">그룹수업날짜:</span> {childInfoDates.group || '-'}</div>
                 <div><span className="font-semibold">결석날짜:</span> {childInfoDates.absent || '-'}</div>
                 <div><span className="font-semibold">당일결석날짜:</span> {childInfoDates.sameDayAbsent || '-'}</div>
+                <div><span className="font-semibold">그룹수업출석:</span> {childInfoDates.groupAttended || '-'}</div>
+                <div><span className="font-semibold">그룹수업결석및 당일결석:</span> {childInfoDates.groupAbsent || '-'}</div>
               </div>
 
               <button
