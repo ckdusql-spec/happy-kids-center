@@ -128,7 +128,6 @@ type RecordModalState = {
   open: boolean
   entry: ScheduleEntryRow | null
   status: AttendanceStatus
-  teacherName: string
 }
 
 type AttendanceSummaryRow = {
@@ -236,10 +235,10 @@ function getVoucherLabel(vouchers?: string[] | null) {
 }
 
 function getVoucherClass(voucher?: string | null) {
-  if (voucher === '디딤') return 'border-amber-200 bg-amber-50 text-amber-700'
+  if (voucher === '디딤') return 'border-blue-200 bg-blue-50 text-blue-700'
   if (voucher === '아청심') return 'border-violet-200 bg-violet-50 text-violet-700'
   if (voucher === '드림스타트') return 'border-emerald-200 bg-emerald-50 text-emerald-700'
-  if (voucher === '배움') return 'border-blue-200 bg-blue-50 text-blue-700'
+  if (voucher === '배움') return 'border-amber-200 bg-amber-50 text-amber-700'
   if (voucher === '그룹수업') return 'border-rose-200 bg-rose-50 text-rose-700'
   return 'border-slate-200 bg-slate-50 text-slate-700'
 }
@@ -396,32 +395,7 @@ function getScheduleCardBgClass(
   return 'bg-white'
 }
 
-function formatKoreanStatus(status?: string | null) {
-  if (status === 'attended') return '출석'
-  if (status === 'makeup') return '보강'
-  if (status === 'absent') return '결석'
-  if (status === 'same_day_absent') return '당일결석'
-  return ''
-}
-
-function formatClassTimeText(timeSlot?: string | null, minuteSlot?: number | null) {
-  if (!timeSlot) return ''
-  return `${timeSlot.slice(0, 2)}:${String(minuteSlot ?? 0).padStart(2, '0')}`
-}
-
-function formatTimestampToText(value?: string | null) {
-  if (!value) return ''
-  const d = new Date(value)
-  if (Number.isNaN(d.getTime())) return value
-  const y = d.getFullYear()
-  const m = String(d.getMonth() + 1).padStart(2, '0')
-  const day = String(d.getDate()).padStart(2, '0')
-  const hh = String(d.getHours()).padStart(2, '0')
-  const mm = String(d.getMinutes()).padStart(2, '0')
-  return `${y}-${m}-${day} ${hh}:${mm}`
-}
-
-function DailyScheduleView({
+function AdminDailySchedule({
   selectedDate,
   staffs,
   children,
@@ -438,13 +412,7 @@ function DailyScheduleView({
   attendanceMap: Map<string, ClassLogRow>
   onOpenRecord: (entry: ScheduleEntryRow) => void
 }) {
-  const dayEntries = entries.filter((e) => e.date === selectedDate && e.is_active)
-  const activeTeacherIds = new Set(dayEntries.map((e) => Number(e.teacher_id)))
-
-  const teacherList = staffs.filter(
-    (s) => s.role === 'employee' && s.is_active && activeTeacherIds.has(Number(s.id))
-  )
-
+  const teacherList = staffs.filter((s) => s.role === 'employee' && s.is_active)
   const slots = getHourSlots()
 
   function getAttendanceKey(entry: ScheduleEntryRow) {
@@ -459,8 +427,9 @@ function DailyScheduleView({
   }
 
   function buildItems(hourSlot: string, staffId: number) {
-    const rows = dayEntries.filter(
+    const rows = entries.filter(
       (row) =>
+        row.date === selectedDate &&
         row.time_slot === hourSlot &&
         Number(row.teacher_id) === Number(staffId) &&
         row.is_active
@@ -492,163 +461,112 @@ function DailyScheduleView({
     return Array.from(groupMap.values()).sort((a, b) => a.minuteSlot - b.minuteSlot)
   }
 
-  if (teacherList.length === 0) {
-    return (
-      <div className="rounded-2xl border bg-white p-6 text-center text-slate-500 shadow-sm">
-        선택한 날짜에 수업이 없습니다.
-      </div>
-    )
-  }
+  const totalCount = entries.filter((v) => v.date === selectedDate && v.is_active).length
 
   return (
-    <div className="space-y-4">
-      <div className="rounded-2xl border bg-white p-4 shadow-sm">
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <div className="text-lg font-bold text-slate-900">일별 보기</div>
-            <div className="mt-1 text-sm text-slate-500">
-              해당 날짜에 수업이 있는 선생님만 표시됩니다.
-            </div>
-          </div>
-          <div className="rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-600">
-            {teacherList.length}명
-          </div>
+    <div className="rounded-2xl bg-white p-4 shadow-sm">
+      <div className="mb-4">
+        <h2 className="text-xl font-bold">일별 보기</h2>
+        <p className="mt-1 text-sm text-slate-500">
+          가로는 선생님, 세로는 시간이며 시간표 입력 기준으로 표시됩니다.
+        </p>
+        <div className="mt-3 flex flex-wrap gap-2 text-sm">
+          <div className="rounded-full bg-slate-100 px-3 py-1">선생님 수 {teacherList.length}</div>
+          <div className="rounded-full bg-slate-100 px-3 py-1">시간 수 {slots.length}</div>
+          <div className="rounded-full bg-slate-100 px-3 py-1">학생 배정 수 {totalCount}</div>
         </div>
       </div>
-<div className="space-y-4 md:hidden">
-        {teacherList.map((teacher) => (
-          <div key={teacher.id} className="rounded-2xl border bg-white p-4 shadow-sm">
-            <div className="mb-4 flex items-center justify-between">
-              <div className="text-base font-bold text-slate-900">{teacher.name}</div>
-              <div className="rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-500">
-                {selectedDate}
-              </div>
-            </div>
 
-            <div className="space-y-3">
-              {slots.map((slot) => {
-                const items = buildItems(slot, teacher.id)
-                if (items.length === 0) return null
-
-                return (
-                  <div key={`${teacher.id}-${slot}`} className="rounded-2xl border bg-slate-50/80 p-3">
-                    <div className="mb-2 text-sm font-bold text-slate-800">{slot}</div>
-                    <div className="space-y-2">
-                      {items.map((item) => {
-                        const firstChild = children.find((c) => c.id === Number(item.rows[0]?.child_id))
-                        const title = item.isGroup
-                          ? `${slot.slice(0, 2)}:${String(item.minuteSlot).padStart(2, '0')}, ${item.groupName || '그룹수업'}`
-                          : `${slot.slice(0, 2)}:${String(item.minuteSlot).padStart(2, '0')}, ${firstChild?.child_name ?? ''} (${getAgeText(firstChild?.birth_date ?? null)})`
-
-                        return (
-                          <button
-                            key={item.key}
-                            type="button"
-                            onClick={() => {
-                              const firstEntry = item.rows[0]
-                              if (firstEntry) onOpenRecord(firstEntry)
-                            }}
-                            className={`block w-full rounded-2xl border px-3 py-3 text-left shadow-sm ${getScheduleCardBgClass(
-                              item,
-                              classLogs
-                            )}`}
-                          >
-                            <div className="font-semibold text-slate-900">{title}</div>
-
-                            <div className="mt-2 flex flex-wrap gap-1.5">
-                              <span className={`rounded-full border px-2.5 py-1 text-[11px] ${getVoucherClass(item.voucherType)}`}>
-                                {item.voucherType || '일반'}
-                              </span>
-                              {item.isGroup ? (
-                                <span className="rounded-full border border-rose-200 bg-rose-50 px-2.5 py-1 text-[11px] text-rose-700">
-                                  그룹
-                                </span>
-                              ) : null}
-                            </div>
-
-                            {item.isGroup ? (
-                              <div className="mt-2 space-y-1 text-[11px] text-slate-600">
-                                {item.rows.map((r) => {
-                                  const child = children.find((c) => c.id === Number(r.child_id))
-                                  const log = attendanceMap.get(getAttendanceKey(r))
-                                  return (
-                                    <div key={r.id} className="rounded-xl bg-white/80 px-2 py-2">
-                                      {child?.child_name ?? `학생(${r.child_id})`}
-                                      {log?.status ? ` (${getStatusLabel(log.status)})` : ' (미입력)'}
-                                    </div>
-                                  )
-                                })}
-                              </div>
-                            ) : null}
-                          </button>
-                        )
-                      })}
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
-          </div>
-        ))}
-      </div>
-
-      <div className="hidden overflow-x-auto rounded-2xl border bg-white shadow-sm md:block">
-        <table className="min-w-[900px] border text-sm">
-          <thead>
-            <tr>
-              <th className="border bg-slate-100 px-2 py-2">시간</th>
-              {teacherList.map((teacher) => (
-                <th key={teacher.id} className="min-w-[220px] border bg-slate-100 px-2 py-2">
-                  {teacher.name}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {slots.map((slot) => (
-              <tr key={slot}>
-                <td className="border bg-slate-50 px-2 py-2 font-medium">{slot}</td>
-                {teacherList.map((teacher) => {
-                  const items = buildItems(slot, teacher.id)
-                  return (
-                    <td key={`${slot}-${teacher.id}`} className="border px-2 py-2 align-top">
-                      <div className="space-y-2">
-                        {items.length === 0 ? (
-                          <div className="min-h-[36px]" />
-                        ) : (
-                          items.map((item) => {
-                            const firstChild = children.find((c) => c.id === Number(item.rows[0]?.child_id))
-                            const title = item.isGroup
-                              ? `${slot.slice(0, 2)}:${String(item.minuteSlot).padStart(2, '0')}, ${item.groupName || '그룹수업'}`
-                              : `${slot.slice(0, 2)}:${String(item.minuteSlot).padStart(2, '0')}, ${firstChild?.child_name ?? ''} (${getAgeText(firstChild?.birth_date ?? null)})`
-
-                            return (
-                              <button
-                                key={item.key}
-                                type="button"
-                                onClick={() => {
-                                  const firstEntry = item.rows[0]
-                                  if (firstEntry) onOpenRecord(firstEntry)
-                                }}
-                                className={`block w-full rounded-2xl border px-3 py-3 text-left shadow-sm ${getScheduleCardBgClass(
-                                  item,
-                                  classLogs
-                                )}`}
-                              >
-                                <div className="font-semibold text-slate-900">{title}</div>
-                              </button>
-                            )
-                          })
-                        )}
-                      </div>
-                    </td>
-                  )
-                })}
+      {teacherList.length === 0 ? (
+        <div className="rounded-xl border bg-slate-50 p-6 text-center text-slate-500">
+          선택 날짜에 표시할 선생님이 없습니다.
+        </div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="min-w-[900px] border text-sm">
+            <thead>
+              <tr>
+                <th className="border bg-slate-100 px-2 py-2">시간</th>
+                {teacherList.map((teacher) => (
+                  <th key={teacher.id} className="min-w-[220px] border bg-slate-100 px-2 py-2">
+                    {teacher.name}
+                  </th>
+                ))}
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+            </thead>
+            <tbody>
+              {slots.map((slot) => (
+                <tr key={slot}>
+                  <td className="border bg-slate-50 px-2 py-2 font-medium">{slot}</td>
+                  {teacherList.map((teacher) => {
+                    const items = buildItems(slot, teacher.id)
+                    return (
+                      <td key={`${slot}-${teacher.id}`} className="border px-2 py-2 align-top">
+                        <div className="space-y-2">
+                          {items.length === 0 ? (
+                            <div className="min-h-[40px]" />
+                          ) : (
+                            items.map((item) => {
+                              const firstChild = children.find(
+                                (c) => c.id === Number(item.rows[0]?.child_id)
+                              )
+                              const title = item.isGroup
+                                ? `${slot.slice(0, 2)}:${String(item.minuteSlot).padStart(2, '0')}, ${item.groupName || '그룹수업'}`
+                                : `${slot.slice(0, 2)}:${String(item.minuteSlot).padStart(2, '0')}, ${firstChild?.child_name ?? ''} (${getAgeText(firstChild?.birth_date ?? null)})`
+
+                              return (
+                                <button
+                                  key={item.key}
+                                  type="button"
+                                  onClick={() => {
+                                    const firstEntry = item.rows[0]
+                                    if (firstEntry) onOpenRecord(firstEntry)
+                                  }}
+                                  className={`block w-full rounded-lg border px-2 py-2 text-left shadow-sm ${getScheduleCardBgClass(
+                                    item,
+                                    classLogs
+                                  )}`}
+                                >
+                                  <div className="font-medium text-slate-800">{title}</div>
+                                  <div className="mt-1 flex flex-wrap gap-1">
+                                    <span className={`rounded-full border px-2 py-0.5 text-[11px] ${getVoucherClass(item.voucherType)}`}>
+                                      {item.voucherType || '일반'}
+                                    </span>
+                                  </div>
+
+                                  {item.isGroup ? (
+                                    <div className="mt-1 space-y-1 text-[11px] text-slate-600">
+                                      {item.rows.map((r) => {
+                                        const child = children.find((c) => c.id === Number(r.child_id))
+                                        const log = attendanceMap.get(getAttendanceKey(r))
+                                        return (
+                                          <button
+                                            key={r.id}
+                                            type="button"
+                                            onClick={() => onOpenRecord(r)}
+                                            className="block w-full rounded bg-white/70 px-2 py-1 text-left hover:bg-white"
+                                          >
+                                            {child?.child_name ?? `학생(${r.child_id})`}
+                                            {log?.status ? ` (${getStatusLabel(log.status)})` : ' (미입력)'}
+                                          </button>
+                                        )
+                                      })}
+                                    </div>
+                                  ) : null}
+                                </button>
+                              )
+                            })
+                          )}
+                        </div>
+                      </td>
+                    )
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   )
 }
@@ -693,7 +611,6 @@ export default function AdminPage() {
     open: false,
     entry: null,
     status: 'attended',
-    teacherName: '',
   })
 
   const [childInfoModal, setChildInfoModal] = useState<{
@@ -1004,7 +921,8 @@ export default function AdminPage() {
       setMessage(err?.message ?? '아이 저장 실패')
     }
   }
-async function handleSaveStaff() {
+
+  async function handleSaveStaff() {
     try {
       if (!staffForm.loginId.trim()) {
         setMessage('로그인 ID를 입력하세요.')
@@ -1116,7 +1034,6 @@ async function handleSaveStaff() {
           setMessage('학생을 선택하세요.')
           return
         }
-
         if (!selectedVoucher) {
           setMessage('바우처를 선택하세요.')
           return
@@ -1330,6 +1247,7 @@ async function handleSaveStaff() {
     const rows = classLogs.filter((log) => Number(log.child_id) === Number(childId))
 
     let count = 0
+
     rows
       .sort((a, b) => {
         const aTime = new Date(a.updated_at ?? a.created_at ?? 0).getTime()
@@ -1337,8 +1255,11 @@ async function handleSaveStaff() {
         return aTime - bTime
       })
       .forEach((log) => {
-        if (log.status === 'absent' || log.status === 'same_day_absent') count += 1
-        else if (log.status === 'makeup') count = Math.max(0, count - 1)
+        if (log.status === 'absent' || log.status === 'same_day_absent') {
+          count += 1
+        } else if (log.status === 'makeup') {
+          count = Math.max(0, count - 1)
+        }
       })
 
     return count
@@ -1346,13 +1267,10 @@ async function handleSaveStaff() {
 
   function openRecordModal(entry: ScheduleEntryRow) {
     const existing = findExistingClassLog(entry)
-    const teacher = staffs.find((s) => Number(s.id) === Number(entry.teacher_id))
-
     setRecordModal({
       open: true,
       entry,
       status: existing?.status ?? 'attended',
-      teacherName: teacher?.name ?? entry.teacher_name ?? '',
     })
   }
 
@@ -1361,6 +1279,7 @@ async function handleSaveStaff() {
       if (!recordModal.entry) return
 
       const entry = recordModal.entry
+      const status = recordModal.status
       const classTime = buildClassTimestamp(entry.date, entry.time_slot, entry.minute_slot)
       const existing = findExistingClassLog(entry)
 
@@ -1368,13 +1287,14 @@ async function handleSaveStaff() {
         const { error } = await supabase
           .from('class_logs')
           .update({
-            status: recordModal.status,
+            status,
             voucher_type: entry.voucher_type ?? null,
             is_group: Boolean(entry.is_group),
             group_id: entry.group_id ?? null,
             group_name: entry.group_name ?? null,
           })
           .eq('id', existing.id)
+
         if (error) throw error
       } else {
         const { error } = await supabase.from('class_logs').insert({
@@ -1382,12 +1302,13 @@ async function handleSaveStaff() {
           child_id: Number(entry.child_id),
           class_date: entry.date,
           class_time: classTime,
-          status: recordModal.status,
+          status,
           voucher_type: entry.voucher_type ?? null,
           is_group: Boolean(entry.is_group),
           group_id: entry.group_id ?? null,
           group_name: entry.group_name ?? null,
         })
+
         if (error) throw error
       }
 
@@ -1396,7 +1317,6 @@ async function handleSaveStaff() {
         open: false,
         entry: null,
         status: 'attended',
-        teacherName: '',
       })
       setMessage('출결이 저장되었습니다.')
     } catch (err: any) {
@@ -1671,7 +1591,7 @@ async function handleSaveStaff() {
   }, [selectedChildMonthlyLogs])
 
   function downloadStudentCsv() {
-    const rows = settlementRows.map((row) => [
+    const monthRows = settlementRows.map((row) => [
       csvMonth,
       row.child_name,
       row.age_text,
@@ -1685,104 +1605,32 @@ async function handleSaveStaff() {
     ])
 
     downloadCsvFile(
-      `학생정산_${csvMonth}.csv`,
-      ['정산월', '학생', '나이', '바우처', '개별수업횟수', '그룹수업횟수', '결석', '당일결석', '그룹단가', '총금액'],
-      rows
+      `학생CSV_${csvMonth}.csv`,
+      ['월', '학생', '나이', '바우처', '출석+보강횟수', '그룹횟수', '결석', '당일결석', '그룹단가', '총금액'],
+      monthRows
     )
   }
 
   function downloadStaffCsv() {
-    const rows = teacherLessonRows.map((row) => [
-      csvMonth,
-      row.teacher_name,
-      row.child_name,
-      row.attended_dates,
-      row.makeup_dates,
-      row.absent_dates,
-      row.same_day_absent_dates,
-      row.group_attended_dates,
-      row.group_absent_dates,
-    ])
-
-    downloadCsvFile(
-      `선생님수업정리_${csvMonth}.csv`,
-      ['정산월', '선생님', '학생', '출석날짜', '보강날짜', '결석날짜', '당일결석날짜', '그룹출석/보강', '그룹결석/당일결석'],
-      rows
-    )
-  }
-
-  function downloadAttendanceRawCsv() {
-    const rows = validClassLogs
-      .slice()
-      .sort((a, b) => {
-        const aKey = `${a.class_date} ${a.class_time}`
-        const bKey = `${b.class_date} ${b.class_time}`
-        return aKey.localeCompare(bKey)
-      })
-      .map((log) => {
-        const child = children.find((c) => Number(c.id) === Number(log.child_id))
-        const staff = staffs.find((s) => Number(s.id) === Number(log.staff_id))
-
-        return [
-          log.id,
-          log.class_date,
-          formatTimestampToText(log.class_time),
-          staff?.name ?? log.staff_id,
-          child?.child_name ?? log.child_id,
-          getAgeText(child?.birth_date),
-          log.voucher_type ?? '',
-          log.is_group ? 'Y' : 'N',
-          log.group_name ?? '',
-          formatKoreanStatus(log.status),
-          log.note ?? '',
-          formatTimestampToText(log.created_at),
-          formatTimestampToText(log.updated_at),
-        ]
-      })
-
-    downloadCsvFile(
-      `출결RAW_${csvMonth}.csv`,
-      ['로그ID', '수업일자', '수업시간', '선생님', '학생', '나이', '바우처', '그룹여부', '그룹명', '출결상태', '메모', '생성일시', '수정일시'],
-      rows
-    )
-  }
-
-  function downloadScheduleRawCsv() {
-    const rows = allScheduleEntries
-      .filter((row) => row.date.startsWith(csvMonth))
-      .slice()
-      .sort((a, b) => {
-        const aKey = `${a.date} ${a.time_slot} ${String(a.minute_slot ?? 0).padStart(2, '0')}`
-        const bKey = `${b.date} ${b.time_slot} ${String(b.minute_slot ?? 0).padStart(2, '0')}`
-        return aKey.localeCompare(bKey)
-      })
+    const monthRows = allScheduleEntries
+      .filter((row) => row.date.startsWith(csvMonth) && row.is_active)
       .map((row) => {
-        const child = children.find((c) => Number(c.id) === Number(row.child_id))
-        const staff = staffs.find((s) => Number(s.id) === Number(row.teacher_id))
-
+        const child = children.find((c) => c.id === Number(row.child_id))
         return [
-          row.id,
           row.date,
-          formatClassTimeText(row.time_slot, row.minute_slot),
-          staff?.name ?? row.teacher_name ?? row.teacher_id,
-          child?.child_name ?? row.child_id ?? '',
-          getAgeText(child?.birth_date),
-          row.voucher_type ?? '',
-          row.class_type ?? '',
-          row.is_group ? 'Y' : 'N',
-          row.group_name ?? '',
-          row.room_number ?? '',
-          row.is_active ? '사용중' : '삭제됨',
-          row.note ?? '',
-          formatTimestampToText(row.created_at),
-          formatTimestampToText(row.updated_at),
+          row.teacher_name,
+          row.time_slot,
+          String(row.minute_slot ?? 0).padStart(2, '0'),
+          child?.child_name ?? row.child_id,
+          row.voucher_type,
+          row.is_group ? row.group_name || '그룹수업' : '',
         ]
       })
 
     downloadCsvFile(
-      `시간표RAW_${csvMonth}.csv`,
-      ['시간표ID', '수업일자', '수업시간', '선생님', '학생', '나이', '바우처', '수업유형', '그룹여부', '그룹명', '방번호', '활성상태', '메모', '생성일시', '수정일시'],
-      rows
+      `선생님CSV_${csvMonth}.csv`,
+      ['날짜', '선생님', '시간', '분', '학생', '바우처', '그룹'],
+      monthRows
     )
   }
 
@@ -1793,610 +1641,949 @@ async function handleSaveStaff() {
     window.location.href = '/'
   }
 
+  function renderScheduleCard(item: DisplayScheduleItem, dateStr: string, staffId: number) {
+    const firstChild = children.find((c) => c.id === Number(item.rows[0]?.child_id))
+    const title = item.isGroup
+      ? `${item.hourSlot.slice(0, 2)}:${String(item.minuteSlot).padStart(2, '0')}, ${item.groupName || '그룹수업'}`
+      : `${item.hourSlot.slice(0, 2)}:${String(item.minuteSlot).padStart(2, '0')}, ${firstChild?.child_name ?? ''} (${getAgeText(firstChild?.birth_date ?? null)})`
+
+    const isEditing =
+      editingCell?.date === dateStr &&
+      editingCell?.hour === item.hourSlot &&
+      Number(editingCell?.staffId) === Number(staffId) &&
+      (editingEntryId === item.rows[0]?.id || editingGroupId === item.groupId)
+
+    return (
+      <div
+        key={item.key}
+        className={`rounded-lg border border-slate-200 px-2 py-2 text-xs shadow-sm ${getScheduleCardBgClass(item, classLogs)}`}
+      >
+        {isEditing ? (
+          <div className="space-y-2">
+            <label className="flex items-center gap-2 text-xs">
+              <input
+                type="checkbox"
+                checked={isGroupLesson}
+                onChange={(e) => {
+                  setIsGroupLesson(e.target.checked)
+                  setSelectedVoucher('')
+                  setScheduleChildId('')
+                  setSelectedGroupChildIds([])
+                }}
+              />
+              그룹수업
+            </label>
+
+            {isGroupLesson ? (
+              <>
+                <input
+                  value={groupName}
+                  onChange={(e) => setGroupName(e.target.value)}
+                  placeholder="그룹명"
+                  className="w-full rounded border bg-white px-2 py-1 text-xs"
+                />
+                <input
+                  value={groupSearch}
+                  onChange={(e) => setGroupSearch(e.target.value)}
+                  placeholder="학생 이름 검색"
+                  className="w-full rounded border bg-white px-2 py-1 text-xs"
+                />
+                <div className="rounded border bg-white p-2">
+                  <div className="mb-2 text-[11px] text-slate-500">
+                    학생 선택 ({selectedGroupChildIds.length}/8)
+                  </div>
+                  <div className="grid max-h-40 grid-cols-1 gap-1 overflow-y-auto">
+                    {filteredGroupChildren.map((c) => {
+                      const active = selectedGroupChildIds.includes(c.id)
+                      return (
+                        <button
+                          key={c.id}
+                          type="button"
+                          onClick={() => toggleGroupChild(c.id)}
+                          className={`rounded px-2 py-1 text-left text-[11px] ${
+                            active ? 'bg-rose-500 text-white' : 'bg-slate-100 text-slate-700'
+                          }`}
+                        >
+                          {getDisplayName(c)}
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+              </>
+            ) : (
+              <>
+                <select
+                  value={scheduleChildId}
+                  onChange={(e) => setScheduleChildId(e.target.value ? Number(e.target.value) : '')}
+                  className="w-full rounded border bg-white px-2 py-1 text-xs"
+                >
+                  <option value="">학생 선택</option>
+                  {children.filter((c) => c.is_active).map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {getDisplayName(c)}
+                    </option>
+                  ))}
+                </select>
+
+                <select
+                  value={selectedVoucher}
+                  onChange={(e) => setSelectedVoucher(e.target.value)}
+                  className="w-full rounded border bg-white px-2 py-1 text-xs"
+                >
+                  <option value="">바우처 선택</option>
+                  {getVoucherOptionsForChild(scheduleChildId).map((voucher) => (
+                    <option key={voucher} value={voucher}>
+                      {voucher}
+                    </option>
+                  ))}
+                </select>
+              </>
+            )}
+
+            <select
+              value={selectedMinute}
+              onChange={(e) => setSelectedMinute(e.target.value)}
+              className="w-full rounded border bg-white px-2 py-1 text-xs"
+            >
+              {getMinutesOptions().map((m) => (
+                <option key={m} value={m}>
+                  {m}분
+                </option>
+              ))}
+            </select>
+
+            <div className="flex gap-1">
+              <button
+                onClick={() => handleSaveSchedule(dateStr, item.hourSlot, staffId)}
+                className="flex-1 rounded bg-indigo-600 px-2 py-1 text-xs text-white"
+              >
+                저장
+              </button>
+              <button
+                onClick={resetScheduleEditor}
+                className="flex-1 rounded bg-slate-300 px-2 py-1 text-xs"
+              >
+                취소
+              </button>
+            </div>
+          </div>
+        ) : (
+          <>
+            <button
+              type="button"
+              onClick={() => {
+                const firstEntry = item.rows[0]
+                if (firstEntry) openRecordModal(firstEntry)
+              }}
+              className="w-full text-left"
+            >
+              <div className="font-medium text-slate-800">{title}</div>
+            </button>
+
+            <div className="mt-1 flex flex-wrap gap-1">
+              <span className={`rounded-full border px-2 py-0.5 text-[11px] ${getVoucherClass(item.voucherType)}`}>
+                {item.voucherType || '일반'}
+              </span>
+              {item.isGroup ? (
+                <span className="rounded-full border border-rose-200 bg-rose-50 px-2 py-0.5 text-[11px] text-rose-700">
+                  그룹
+                </span>
+              ) : null}
+            </div>
+
+            {item.isGroup ? (
+              <div className="mt-1 space-y-1 text-[11px] text-slate-600">
+                {item.rows.map((r) => {
+                  const child = children.find((c) => c.id === Number(r.child_id))
+                  const log = attendanceMap.get(getAttendanceKey(r))
+
+                  return (
+                    <button
+                      key={r.id}
+                      type="button"
+                      onClick={() => openRecordModal(r)}
+                      className="block w-full rounded bg-white/70 px-2 py-1 text-left hover:bg-white"
+                    >
+                      {child?.child_name ?? `학생(${r.child_id})`}
+                      {log?.status ? ` (${getStatusLabel(log.status)})` : ' (미입력)'}
+                    </button>
+                  )
+                })}
+              </div>
+            ) : null}
+
+            <div className="mt-2 flex flex-wrap gap-1">
+              {!item.isGroup && firstChild ? (
+                <button
+                  onClick={() => setChildInfoModal({ open: true, child: firstChild })}
+                  className="rounded bg-slate-100 px-2 py-0.5 text-[11px] text-slate-700"
+                >
+                  아이정보
+                </button>
+              ) : null}
+
+              <button
+                onClick={() => handleEditSchedule(item)}
+                className="rounded bg-blue-50 px-2 py-0.5 text-[11px] text-blue-700"
+              >
+                수정
+              </button>
+              <button
+                onClick={() => handleDeleteSchedule(item)}
+                className="rounded bg-rose-50 px-2 py-0.5 text-[11px] text-rose-700"
+              >
+                삭제
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    )
+  }
+
+  function renderMobileDayCard(date: Date, staffId: number) {
+    const dateStr = toDateString(date)
+    const staff = employeeStaffs.find((s) => Number(s.id) === Number(staffId))
+
+    return (
+      <div key={`${dateStr}-${staffId}`} className="rounded-2xl border bg-white p-4">
+        <div className="mb-3">
+          <div className="font-semibold">{toShortMonthDay(date)}</div>
+          <div className="text-sm text-slate-500">{staff?.name}</div>
+        </div>
+
+        <div className="space-y-3">
+          {hourSlots.map((hourSlot) => {
+            const items = buildDisplayItems(dateStr, hourSlot, staffId)
+            const isEditing =
+              editingCell?.date === dateStr &&
+              editingCell?.hour === hourSlot &&
+              Number(editingCell?.staffId) === Number(staffId)
+
+            return (
+              <div key={`${dateStr}-${staffId}-${hourSlot}`} className="rounded-xl border p-3">
+                <div className="mb-2 font-medium">{hourSlot}</div>
+
+                {isEditing ? (
+                  <div className="space-y-2">
+                    <label className="flex items-center gap-2 text-xs">
+                      <input
+                        type="checkbox"
+                        checked={isGroupLesson}
+                        onChange={(e) => {
+                          setIsGroupLesson(e.target.checked)
+                          setSelectedVoucher('')
+                          setScheduleChildId('')
+                          setSelectedGroupChildIds([])
+                        }}
+                      />
+                      그룹수업
+                    </label>
+
+                    {isGroupLesson ? (
+                      <>
+                        <input
+                          value={groupName}
+                          onChange={(e) => setGroupName(e.target.value)}
+                          placeholder="그룹명"
+                          className="w-full rounded border bg-white px-2 py-2 text-sm"
+                        />
+                        <input
+                          value={groupSearch}
+                          onChange={(e) => setGroupSearch(e.target.value)}
+                          placeholder="학생 이름 검색"
+                          className="w-full rounded border bg-white px-2 py-2 text-sm"
+                        />
+                        <div className="grid max-h-40 grid-cols-1 gap-1 overflow-y-auto rounded border p-2">
+                          {filteredGroupChildren.map((c) => {
+                            const active = selectedGroupChildIds.includes(c.id)
+                            return (
+                              <button
+                                key={c.id}
+                                type="button"
+                                onClick={() => toggleGroupChild(c.id)}
+                                className={`rounded px-2 py-2 text-left text-sm ${
+                                  active ? 'bg-rose-500 text-white' : 'bg-slate-100 text-slate-700'
+                                }`}
+                              >
+                                {getDisplayName(c)}
+                              </button>
+                            )
+                          })}
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <select
+                          value={scheduleChildId}
+                          onChange={(e) => setScheduleChildId(e.target.value ? Number(e.target.value) : '')}
+                          className="w-full rounded border bg-white px-2 py-2 text-sm"
+                        >
+                          <option value="">학생 선택</option>
+                          {children.filter((c) => c.is_active).map((c) => (
+                            <option key={c.id} value={c.id}>
+                              {getDisplayName(c)}
+                            </option>
+                          ))}
+                        </select>
+
+                        <select
+                          value={selectedVoucher}
+                          onChange={(e) => setSelectedVoucher(e.target.value)}
+                          className="w-full rounded border bg-white px-2 py-2 text-sm"
+                        >
+                          <option value="">바우처 선택</option>
+                          {getVoucherOptionsForChild(scheduleChildId).map((voucher) => (
+                            <option key={voucher} value={voucher}>
+                              {voucher}
+                            </option>
+                          ))}
+                        </select>
+                      </>
+                    )}
+
+                    <select
+                      value={selectedMinute}
+                      onChange={(e) => setSelectedMinute(e.target.value)}
+                      className="w-full rounded border bg-white px-2 py-2 text-sm"
+                    >
+                      {getMinutesOptions().map((m) => (
+                        <option key={m} value={m}>
+                          {m}분
+                        </option>
+                      ))}
+                    </select>
+
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => handleSaveSchedule(dateStr, hourSlot, staffId)}
+                        className="flex-1 rounded bg-indigo-600 px-3 py-2 text-sm text-white"
+                      >
+                        저장
+                      </button>
+                      <button
+                        onClick={resetScheduleEditor}
+                        className="flex-1 rounded bg-slate-300 px-3 py-2 text-sm"
+                      >
+                        취소
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingCell({ date: dateStr, hour: hourSlot, staffId })
+                        setEditingEntryId(null)
+                        setEditingGroupId(null)
+                        setScheduleChildId('')
+                        setSelectedMinute('00')
+                        setSelectedVoucher('')
+                        setIsGroupLesson(false)
+                        setGroupName('')
+                        setSelectedGroupChildIds([])
+                        setGroupSearch('')
+                      }}
+                      className="w-full rounded border border-dashed border-slate-300 px-2 py-2 text-left text-sm text-slate-500"
+                    >
+                      + 추가
+                    </button>
+
+                    {items.map((item) => renderScheduleCard(item, dateStr, staffId))}
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      </div>
+    )
+  }
+
   return (
-    <main className="min-h-screen bg-slate-50 p-2 sm:p-3 md:p-6">
-      <div className="relative mx-auto max-w-7xl rounded-[28px] border border-white/70 bg-white/95 p-3 shadow-[0_20px_60px_rgba(0,0,0,0.08)] backdrop-blur sm:p-4 md:p-6">
+    <main className="min-h-screen bg-slate-50 p-3 md:p-6">
+      <div className="relative mx-auto max-w-7xl rounded-[28px] border border-white/70 bg-white/85 p-4 shadow-[0_20px_60px_rgba(0,0,0,0.08)] backdrop-blur md:p-6">
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap gap-2">
-            <button onClick={() => setTab('schedule')} className={`rounded-xl px-4 py-2 ${tab === 'schedule' ? 'bg-black text-white' : 'bg-slate-200'}`}>관리자 시간표</button>
-            <button onClick={() => setTab('children')} className={`rounded-xl px-4 py-2 ${tab === 'children' ? 'bg-black text-white' : 'bg-slate-200'}`}>아이등록</button>
-            <button onClick={() => setTab('staff')} className={`rounded-xl px-4 py-2 ${tab === 'staff' ? 'bg-black text-white' : 'bg-slate-200'}`}>선생님등록</button>
-            <button onClick={() => setTab('summary')} className={`rounded-xl px-4 py-2 ${tab === 'summary' ? 'bg-black text-white' : 'bg-slate-200'}`}>월정산</button>
+            <button
+              onClick={() => setTab('schedule')}
+              className={`rounded-xl px-4 py-2 ${tab === 'schedule' ? 'bg-black text-white' : 'bg-slate-200'}`}
+            >
+              관리자 시간표
+            </button>
+            <button
+              onClick={() => setTab('children')}
+              className={`rounded-xl px-4 py-2 ${tab === 'children' ? 'bg-black text-white' : 'bg-slate-200'}`}
+            >
+              아이등록
+            </button>
+            <button
+              onClick={() => setTab('staff')}
+              className={`rounded-xl px-4 py-2 ${tab === 'staff' ? 'bg-black text-white' : 'bg-slate-200'}`}
+            >
+              선생님등록
+            </button>
+            <button
+              onClick={() => setTab('summary')}
+              className={`rounded-xl px-4 py-2 ${tab === 'summary' ? 'bg-black text-white' : 'bg-slate-200'}`}
+            >
+              월정산
+            </button>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center gap-3">
             <input
               type="month"
               value={csvMonth}
               onChange={(e) => setCsvMonth(e.target.value)}
               className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
             />
-            <button onClick={downloadStudentCsv} className="rounded-xl bg-emerald-500 px-3 py-2 text-sm font-bold text-white shadow">학생CSV</button>
-            <button onClick={downloadStaffCsv} className="rounded-xl bg-blue-500 px-3 py-2 text-sm font-bold text-white shadow">선생님CSV</button>
-            <button onClick={downloadAttendanceRawCsv} className="rounded-xl bg-purple-500 px-3 py-2 text-sm font-bold text-white shadow">출결RAW</button>
-            <button onClick={downloadScheduleRawCsv} className="rounded-xl bg-cyan-600 px-3 py-2 text-sm font-bold text-white shadow">시간표RAW</button>
-            <button onClick={handleLogout} className="rounded-xl bg-slate-700 px-3 py-2 text-sm font-bold text-white shadow">로그아웃</button>
+
+            <button
+              onClick={downloadStudentCsv}
+              className="rounded-xl bg-emerald-500 px-4 py-2 text-sm font-bold text-white shadow"
+            >
+              학생CSV
+            </button>
+
+            <button
+              onClick={downloadStaffCsv}
+              className="rounded-xl bg-blue-500 px-4 py-2 text-sm font-bold text-white shadow"
+            >
+              선생님CSV
+            </button>
+
+            <button
+              onClick={handleLogout}
+              className="rounded-xl bg-slate-700 px-4 py-2 text-sm font-bold text-white shadow"
+            >
+              로그아웃
+            </button>
           </div>
         </div>
 
         {message ? <p className="mb-4 text-sm text-red-500">{message}</p> : null}
 
         {tab === 'schedule' ? (
-          <div className="space-y-4">
-            <div className="rounded-2xl border bg-white p-4 shadow-sm">
-              <div className="mb-3 flex flex-wrap gap-2">
-                <button onClick={() => setViewMode('all')} className={`rounded-xl px-4 py-2 text-sm ${viewMode === 'all' ? 'bg-emerald-500 text-white' : 'bg-slate-200'}`}>전체보기</button>
-                <button onClick={() => setViewMode('staff')} className={`rounded-xl px-4 py-2 text-sm ${viewMode === 'staff' ? 'bg-indigo-500 text-white' : 'bg-slate-200'}`}>선생님별 보기</button>
-                <button onClick={() => setViewMode('daily')} className={`rounded-xl px-4 py-2 text-sm ${viewMode === 'daily' ? 'bg-orange-500 text-white' : 'bg-slate-200'}`}>일별 보기</button>
-              </div>
+          <div>
+            <div className="mb-4 flex flex-col gap-3">
+              <h1 className="text-xl font-bold md:text-2xl">관리자 시간표</h1>
 
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                <div className="flex gap-2">
+              <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                <div className="flex flex-wrap gap-2">
                   <button
-                    onClick={() => {
-                      const d = new Date(weekBaseDate)
-                      d.setDate(d.getDate() - 7)
-                      setWeekBaseDate(d)
-                    }}
-                    className="rounded-xl bg-slate-200 px-4 py-2"
+                    onClick={() => setViewMode('all')}
+                    className={`rounded-xl px-4 py-2 text-sm font-medium ${
+                      viewMode === 'all' ? 'bg-emerald-500 text-white' : 'bg-slate-200 text-slate-700'
+                    }`}
                   >
-                    ◀
+                    전체보기
                   </button>
+
                   <button
-                    onClick={() => {
-                      const d = new Date(weekBaseDate)
-                      d.setDate(d.getDate() + 7)
-                      setWeekBaseDate(d)
-                    }}
-                    className="rounded-xl bg-slate-200 px-4 py-2"
+                    onClick={() => setViewMode('staff')}
+                    className={`rounded-xl px-4 py-2 text-sm font-medium ${
+                      viewMode === 'staff' ? 'bg-indigo-500 text-white' : 'bg-slate-200 text-slate-700'
+                    }`}
                   >
-                    ▶
+                    선생님별 보기
+                  </button>
+
+                  <button
+                    onClick={() => setViewMode('daily')}
+                    className={`rounded-xl px-4 py-2 text-sm font-medium ${
+                      viewMode === 'daily' ? 'bg-orange-500 text-white' : 'bg-slate-200 text-slate-700'
+                    }`}
+                  >
+                    일별 보기
                   </button>
                 </div>
 
-                {viewMode === 'staff' ? (
-                  <select
-                    value={selectedStaffId}
-                    onChange={(e) => setSelectedStaffId(e.target.value ? Number(e.target.value) : '')}
-                    className="rounded-xl border px-3 py-2"
-                  >
-                    <option value="">선생님 선택</option>
-                    {employeeStaffs.map((staff) => (
-                      <option key={staff.id} value={staff.id}>
-                        {staff.name} ({staff.login_id})
-                      </option>
-                    ))}
-                  </select>
-                ) : null}
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                  {viewMode === 'staff' ? (
+                    <select
+                      value={selectedStaffId}
+                      onChange={(e) => setSelectedStaffId(e.target.value ? Number(e.target.value) : '')}
+                      className="rounded-xl border px-3 py-3 md:py-2"
+                    >
+                      <option value="">선생님 선택</option>
+                      {employeeStaffs.map((staff) => (
+                        <option key={staff.id} value={staff.id}>
+                          {staff.name} ({staff.login_id})
+                        </option>
+                      ))}
+                    </select>
+                  ) : null}
 
-                {viewMode === 'daily' ? (
-                  <input
-                    type="date"
-                    value={dailyDate}
-                    onChange={(e) => setDailyDate(e.target.value)}
-                    className="rounded-xl border px-3 py-2"
-                  />
-                ) : null}
+                  {viewMode === 'daily' ? (
+                    <input
+                      type="date"
+                      value={dailyDate}
+                      onChange={(e) => setDailyDate(e.target.value)}
+                      className="rounded-xl border px-3 py-3 md:py-2"
+                    />
+                  ) : null}
+
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => {
+                        const d = new Date(weekBaseDate)
+                        d.setDate(d.getDate() - 7)
+                        setWeekBaseDate(d)
+                      }}
+                      className="rounded-lg bg-slate-200 px-3 py-3 md:py-2"
+                    >
+                      ◀
+                    </button>
+
+                    <button
+                      onClick={() => {
+                        const d = new Date(weekBaseDate)
+                        d.setDate(d.getDate() + 7)
+                        setWeekBaseDate(d)
+                      }}
+                      className="rounded-lg bg-slate-200 px-3 py-3 md:py-2"
+                    >
+                      ▶
+                    </button>
+                  </div>
+                </div>
               </div>
             </div>
 
             {loading ? (
-              <div className="rounded-2xl border bg-white p-6 text-center text-slate-500 shadow-sm">
-                불러오는 중...
+              <div className="rounded-xl border bg-slate-50 p-6 text-center text-slate-500">
+                시간표 불러오는 중...
               </div>
             ) : viewMode === 'daily' ? (
-              <DailyScheduleView
+              <AdminDailySchedule
                 selectedDate={dailyDate}
                 staffs={staffs}
                 children={children}
                 entries={allScheduleEntries}
                 classLogs={classLogs}
                 attendanceMap={attendanceMap}
-                onOpenRecord={openRecordModal}
+                onOpenRecord={(entry) => openRecordModal(entry)}
               />
-) : viewMode === 'staff' && !selectedStaff ? (
-  <div className="rounded-2xl border bg-white p-6 text-center text-slate-500 shadow-sm">
-    선생님을 선택하세요.
-  </div>
-) : (
-  <>
-    <div className="-mx-3 overflow-x-auto px-3 md:mx-0 md:px-0">
-      <table className="min-w-[980px] border text-xs md:min-w-full md:text-sm">
-        <thead>
-          <tr>
-            <th className="whitespace-nowrap border bg-slate-100 px-2 py-2 text-[11px] md:px-3 md:text-sm">
-              시간
-            </th>
-
-            {viewMode === 'staff'
-              ? weekDates.map((date, idx) => (
-                  <th
-                    key={`staff-${idx}`}
-                    className="min-w-[170px] whitespace-nowrap border bg-slate-100 px-2 py-2 text-[11px] md:px-3 md:text-sm"
-                  >
-                    <div className="text-sm font-semibold leading-tight">
-                      {['월', '화', '수', '목', '금', '토'][idx]} {toShortMonthDay(date)}
-                    </div>
-                    <div className="mt-1 text-xs font-normal leading-tight text-slate-500">
-                      {selectedStaff?.name}
-                    </div>
-                  </th>
-                ))
-              : weekDates.flatMap((date, idx) =>
-                  employeeStaffs.map((staff) => (
-                    <th
-                      key={`all-${toDateString(date)}-${staff.id}`}
-                      className="min-w-[170px] whitespace-nowrap border bg-slate-100 px-2 py-2 text-[11px] md:px-3 md:text-sm"
-                    >
-                      <div className="text-sm font-semibold leading-tight">
-                        {['월', '화', '수', '목', '금', '토'][idx]} {toShortMonthDay(date)}
-                      </div>
-                      <div className="mt-1 text-xs font-normal leading-tight text-slate-500">
-                        {staff.name}
-                      </div>
-                    </th>
-                  ))
-                )}
-          </tr>
-        </thead>
-
-        <tbody>
-          {hourSlots.map((hourSlot) => (
-            <tr key={hourSlot}>
-              <td className="whitespace-nowrap border bg-slate-50 px-2 py-2 text-[11px] font-medium md:px-3 md:text-sm">
-                {hourSlot}
-              </td>
-
-              {viewMode === 'staff' && selectedStaff
-                ? weekDates.map((date) => {
-                    const dateStr = toDateString(date)
-                    const items = buildDisplayItems(dateStr, hourSlot, selectedStaff.id)
-                    const isEditing =
-                      editingCell?.date === dateStr &&
-                      editingCell?.hour === hourSlot &&
-                      Number(editingCell?.staffId) === Number(selectedStaff.id)
-
-                    return (
-                      <td
-                        key={`${selectedStaff.id}-${dateStr}-${hourSlot}`}
-                        className="min-w-[170px] border px-2 py-2 align-top"
-                      >
-                        {isEditing ? (
-                          <div className="space-y-2">
-                            <label className="flex items-center gap-2 text-xs">
-                              <input
-                                type="checkbox"
-                                checked={isGroupLesson}
-                                onChange={(e) => {
-                                  setIsGroupLesson(e.target.checked)
-                                  setSelectedVoucher('')
-                                  setScheduleChildId('')
-                                  setSelectedGroupChildIds([])
-                                }}
-                              />
-                              그룹수업
-                            </label>
-
-                            {isGroupLesson ? (
-                              <>
-                                <input
-                                  value={groupName}
-                                  onChange={(e) => setGroupName(e.target.value)}
-                                  placeholder="그룹명"
-                                  className="w-full rounded-xl border bg-white px-3 py-2 text-sm"
-                                />
-
-                                <input
-                                  value={groupSearch}
-                                  onChange={(e) => setGroupSearch(e.target.value)}
-                                  placeholder="학생 이름 검색"
-                                  className="w-full rounded-xl border bg-white px-3 py-2 text-sm"
-                                />
-
-                                <div className="rounded-xl border bg-white p-2">
-                                  <div className="mb-2 text-[11px] text-slate-500">
-                                    학생 선택 ({selectedGroupChildIds.length}/8)
-                                  </div>
-
-                                  <div className="grid max-h-40 grid-cols-1 gap-1 overflow-y-auto">
-                                    {filteredGroupChildren.map((c) => {
-                                      const active = selectedGroupChildIds.includes(c.id)
-
-                                      return (
-                                        <button
-                                          key={c.id}
-                                          type="button"
-                                          onClick={() => toggleGroupChild(c.id)}
-                                          className={`rounded-xl px-2 py-2 text-left text-xs ${
-                                            active
-                                              ? 'bg-rose-500 text-white'
-                                              : 'bg-slate-100 text-slate-700'
-                                          }`}
-                                        >
-                                          {getDisplayName(c)}
-                                        </button>
-                                      )
-                                    })}
-                                  </div>
-                                </div>
-                              </>
-                            ) : (
-                              <>
-                                <select
-                                  value={scheduleChildId}
-                                  onChange={(e) =>
-                                    setScheduleChildId(e.target.value ? Number(e.target.value) : '')
-                                  }
-                                  className="w-full rounded-xl border bg-white px-3 py-2 text-sm"
-                                >
-                                  <option value="">학생 선택</option>
-                                  {children
-                                    .filter((c) => c.is_active)
-                                    .map((c) => (
-                                      <option key={c.id} value={c.id}>
-                                        {getDisplayName(c)}
-                                      </option>
-                                    ))}
-                                </select>
-
-                                <select
-                                  value={selectedVoucher}
-                                  onChange={(e) => setSelectedVoucher(e.target.value)}
-                                  className="w-full rounded-xl border bg-white px-3 py-2 text-sm"
-                                >
-                                  <option value="">바우처 선택</option>
-                                  {getVoucherOptionsForChild(scheduleChildId).map((voucher) => (
-                                    <option key={voucher} value={voucher}>
-                                      {voucher}
-                                    </option>
-                                  ))}
-                                </select>
-                              </>
-                            )}
-
-                            <select
-                              value={selectedMinute}
-                              onChange={(e) => setSelectedMinute(e.target.value)}
-                              className="w-full rounded-xl border bg-white px-3 py-2 text-sm"
-                            >
-                              {getMinutesOptions().map((m) => (
-                                <option key={m} value={m}>
-                                  {m}분
-                                </option>
-                              ))}
-                            </select>
-
-                            <div className="grid grid-cols-2 gap-2">
-                              <button
-                                onClick={() => handleSaveSchedule(dateStr, hourSlot, selectedStaff.id)}
-                                className="rounded-xl bg-indigo-600 px-3 py-2 text-sm font-semibold text-white"
-                              >
-                                저장
-                              </button>
-                              <button
-                                onClick={resetScheduleEditor}
-                                className="rounded-xl bg-slate-200 px-3 py-2 text-sm font-semibold text-slate-700"
-                              >
-                                취소
-                              </button>
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="space-y-2">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setEditingCell({
-                                  date: dateStr,
-                                  hour: hourSlot,
-                                  staffId: selectedStaff.id,
-                                })
-                                setEditingEntryId(null)
-                                setEditingGroupId(null)
-                                setScheduleChildId('')
-                                setSelectedMinute('00')
-                                setSelectedVoucher('')
-                                setIsGroupLesson(false)
-                                setGroupName('')
-                                setSelectedGroupChildIds([])
-                                setGroupSearch('')
-                              }}
-                              className="w-full rounded-xl border border-dashed border-slate-300 px-2 py-2 text-left text-xs text-slate-500"
-                            >
-                              + 추가
-                            </button>
-
-                            {items.map((item) => renderScheduleCard(item, dateStr, selectedStaff.id))}
-                          </div>
-                        )}
-                      </td>
-                    )
-                  })
-                : weekDates.flatMap((date) =>
-                    employeeStaffs.map((staff) => {
-                      const dateStr = toDateString(date)
-                      const items = buildDisplayItems(dateStr, hourSlot, staff.id)
-                      const isEditing =
-                        editingCell?.date === dateStr &&
-                        editingCell?.hour === hourSlot &&
-                        Number(editingCell?.staffId) === Number(staff.id)
-
-                      return (
-                        <td
-                          key={`all-${staff.id}-${dateStr}-${hourSlot}`}
-                          className="min-w-[170px] border px-2 py-2 align-top"
-                        >
-                          {isEditing ? (
-                            <div className="space-y-2">
-                              <label className="flex items-center gap-2 text-xs">
-                                <input
-                                  type="checkbox"
-                                  checked={isGroupLesson}
-                                  onChange={(e) => {
-                                    setIsGroupLesson(e.target.checked)
-                                    setSelectedVoucher('')
-                                    setScheduleChildId('')
-                                    setSelectedGroupChildIds([])
-                                  }}
-                                />
-                                그룹수업
-                              </label>
-
-                              {isGroupLesson ? (
-                                <>
-                                  <input
-                                    value={groupName}
-                                    onChange={(e) => setGroupName(e.target.value)}
-                                    placeholder="그룹명"
-                                    className="w-full rounded-xl border bg-white px-3 py-2 text-sm"
-                                  />
-
-                                  <input
-                                    value={groupSearch}
-                                    onChange={(e) => setGroupSearch(e.target.value)}
-                                    placeholder="학생 이름 검색"
-                                    className="w-full rounded-xl border bg-white px-3 py-2 text-sm"
-                                  />
-
-                                  <div className="rounded-xl border bg-white p-2">
-                                    <div className="mb-2 text-[11px] text-slate-500">
-                                      학생 선택 ({selectedGroupChildIds.length}/8)
-                                    </div>
-
-                                    <div className="grid max-h-40 grid-cols-1 gap-1 overflow-y-auto">
-                                      {filteredGroupChildren.map((c) => {
-                                        const active = selectedGroupChildIds.includes(c.id)
-
-                                        return (
-                                          <button
-                                            key={c.id}
-                                            type="button"
-                                            onClick={() => toggleGroupChild(c.id)}
-                                            className={`rounded-xl px-2 py-2 text-left text-xs ${
-                                              active
-                                                ? 'bg-rose-500 text-white'
-                                                : 'bg-slate-100 text-slate-700'
-                                            }`}
-                                          >
-                                            {getDisplayName(c)}
-                                          </button>
-                                        )
-                                      })}
-                                    </div>
-                                  </div>
-                                </>
-                              ) : (
-                                <>
-                                  <select
-                                    value={scheduleChildId}
-                                    onChange={(e) =>
-                                      setScheduleChildId(e.target.value ? Number(e.target.value) : '')
-                                    }
-                                    className="w-full rounded-xl border bg-white px-3 py-2 text-sm"
-                                  >
-                                    <option value="">학생 선택</option>
-                                    {children
-                                      .filter((c) => c.is_active)
-                                      .map((c) => (
-                                        <option key={c.id} value={c.id}>
-                                          {getDisplayName(c)}
-                                        </option>
-                                      ))}
-                                  </select>
-
-                                  <select
-                                    value={selectedVoucher}
-                                    onChange={(e) => setSelectedVoucher(e.target.value)}
-                                    className="w-full rounded-xl border bg-white px-3 py-2 text-sm"
-                                  >
-                                    <option value="">바우처 선택</option>
-                                    {getVoucherOptionsForChild(scheduleChildId).map((voucher) => (
-                                      <option key={voucher} value={voucher}>
-                                        {voucher}
-                                      </option>
-                                    ))}
-                                  </select>
-                                </>
-                              )}
-
-                              <select
-                                value={selectedMinute}
-                                onChange={(e) => setSelectedMinute(e.target.value)}
-                                className="w-full rounded-xl border bg-white px-3 py-2 text-sm"
-                              >
-                                {getMinutesOptions().map((m) => (
-                                  <option key={m} value={m}>
-                                    {m}분
-                                  </option>
-                                ))}
-                              </select>
-
-                              <div className="grid grid-cols-2 gap-2">
-                                <button
-                                  onClick={() => handleSaveSchedule(dateStr, hourSlot, staff.id)}
-                                  className="rounded-xl bg-indigo-600 px-3 py-2 text-sm font-semibold text-white"
-                                >
-                                  저장
-                                </button>
-                                <button
-                                  onClick={resetScheduleEditor}
-                                  className="rounded-xl bg-slate-200 px-3 py-2 text-sm font-semibold text-slate-700"
-                                >
-                                  취소
-                                </button>
-                              </div>
-                            </div>
-                          ) : (
-                            <div className="space-y-2">
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setEditingCell({
-                                    date: dateStr,
-                                    hour: hourSlot,
-                                    staffId: staff.id,
-                                  })
-                                  setEditingEntryId(null)
-                                  setEditingGroupId(null)
-                                  setScheduleChildId('')
-                                  setSelectedMinute('00')
-                                  setSelectedVoucher('')
-                                  setIsGroupLesson(false)
-                                  setGroupName('')
-                                  setSelectedGroupChildIds([])
-                                  setGroupSearch('')
-                                }}
-                                className="w-full rounded-xl border border-dashed border-slate-300 px-2 py-2 text-left text-xs text-slate-500"
-                              >
-                                + 추가
-                              </button>
-
-                              {items.map((item) => renderScheduleCard(item, dateStr, staff.id))}
-                            </div>
-                          )}
-                        </td>
-                      )
-                    })
-                  )}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  </>
-)}
-
-function renderScheduleCard(item: DisplayScheduleItem, dateStr: string, staffId: number) {
-  const firstChild = children.find((c) => c.id === Number(item.rows[0]?.child_id))
-  const title = item.isGroup
-    ? `${item.hourSlot.slice(0, 2)}:${String(item.minuteSlot).padStart(2, '0')}, ${item.groupName || '그룹수업'}`
-    : `${item.hourSlot.slice(0, 2)}:${String(item.minuteSlot).padStart(2, '0')}, ${firstChild?.child_name ?? ''} (${getAgeText(firstChild?.birth_date ?? null)})`
-
-  const isEditing =
-    editingCell?.date === dateStr &&
-    editingCell?.hour === item.hourSlot &&
-    Number(editingCell?.staffId) === Number(staffId) &&
-    (editingEntryId === item.rows[0]?.id || editingGroupId === item.groupId)
-
-  return (
-    <div
-      key={item.key}
-      className={`rounded-2xl border border-slate-200 px-3 py-3 text-sm shadow-sm ${getScheduleCardBgClass(
-        item,
-        classLogs
-      )}`}
-    >
-      {isEditing ? (
-        <div className="text-xs text-slate-500">수정 중...</div>
-      ) : (
-        <>
-          <button
-            type="button"
-            onClick={() => {
-              const firstEntry = item.rows[0]
-              if (firstEntry) openRecordModal(firstEntry)
-            }}
-            className="w-full rounded-xl text-left"
-          >
-            <div className="font-semibold leading-snug text-slate-900">{title}</div>
-          </button>
-
-          <div className="mt-2 flex flex-wrap gap-1.5">
-            <span className={`rounded-full border px-2.5 py-1 text-[11px] ${getVoucherClass(item.voucherType)}`}>
-              {item.voucherType || '일반'}
-            </span>
-
-            {item.isGroup ? (
-              <span className="rounded-full border border-rose-200 bg-rose-50 px-2.5 py-1 text-[11px] text-rose-700">
-                그룹
-              </span>
-            ) : null}
-          </div>
-
-          {item.isGroup ? (
-            <div className="mt-2 space-y-1 text-[11px] text-slate-600">
-              {item.rows.map((r) => {
-                const child = children.find((c) => c.id === Number(r.child_id))
-                const log = attendanceMap.get(getAttendanceKey(r))
-
-                return (
-                  <button
-                    key={r.id}
-                    type="button"
-                    onClick={() => openRecordModal(r)}
-                    className="block w-full rounded-xl bg-white/70 px-2 py-2 text-left hover:bg-white"
-                  >
-                    {child?.child_name ?? `학생(${r.child_id})`}
-                    {log?.status ? ` (${getStatusLabel(log.status)})` : ' (미입력)'}
-                  </button>
-                )
-              })}
-            </div>
-          ) : null}
-
-          <div className="mt-3 grid grid-cols-3 gap-2">
-            {!item.isGroup && firstChild ? (
-              <button
-                onClick={() => setChildInfoModal({ open: true, child: firstChild })}
-                className="rounded-xl bg-slate-100 px-2 py-2 text-xs font-medium text-slate-700"
-              >
-                아이정보
-              </button>
+            ) : viewMode === 'staff' && !selectedStaff ? (
+              <div className="rounded-xl border bg-slate-50 p-6 text-center text-slate-500">
+                선생님을 선택하세요.
+              </div>
             ) : (
-              <div />
+              <>
+                <div className="hidden overflow-x-auto md:block">
+                  <table className="min-w-full border text-sm">
+                    <thead>
+                      <tr>
+                        <th className="border bg-slate-100 px-1 py-2">시간</th>
+
+                        {viewMode === 'staff'
+                          ? weekDates.map((date, idx) => (
+                              <th key={`staff-${idx}`} className="min-w-[170px] border bg-slate-100 px-1 py-2">
+                                <div className="text-sm font-semibold leading-tight">
+                                  {['월', '화', '수', '목', '금', '토'][idx]} {toShortMonthDay(date)}
+                                </div>
+                                <div className="mt-1 text-xs font-normal leading-tight text-slate-500">
+                                  {selectedStaff?.name}
+                                </div>
+                              </th>
+                            ))
+                          : weekDates.flatMap((date, idx) =>
+                              employeeStaffs.map((staff) => (
+                                <th
+                                  key={`all-${toDateString(date)}-${staff.id}`}
+                                  className="min-w-[170px] border bg-slate-100 px-1 py-2"
+                                >
+                                  <div className="text-sm font-semibold leading-tight">
+                                    {['월', '화', '수', '목', '금', '토'][idx]} {toShortMonthDay(date)}
+                                  </div>
+                                  <div className="mt-1 text-xs font-normal leading-tight text-slate-500">
+                                    {staff.name}
+                                  </div>
+                                </th>
+                              ))
+                            )}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {hourSlots.map((hourSlot) => (
+                        <tr key={hourSlot}>
+                          <td className="whitespace-nowrap border bg-slate-50 px-1 py-1 font-medium">
+                            {hourSlot}
+                          </td>
+
+                          {viewMode === 'staff' && selectedStaff
+                            ? weekDates.map((date) => {
+                                const dateStr = toDateString(date)
+                                const items = buildDisplayItems(dateStr, hourSlot, Number(selectedStaff.id))
+                                const isEditing =
+                                  editingCell?.date === dateStr &&
+                                  editingCell?.hour === hourSlot &&
+                                  Number(editingCell?.staffId) === Number(selectedStaff.id)
+
+                                return (
+                                  <td
+                                    key={`${selectedStaff.id}-${dateStr}-${hourSlot}`}
+                                    className="min-w-[170px] border px-1 py-1 align-top"
+                                  >
+                                    {isEditing ? (
+                                      <div className="min-h-[72px] space-y-2">
+                                        <label className="flex items-center gap-2 text-xs">
+                                          <input
+                                            type="checkbox"
+                                            checked={isGroupLesson}
+                                            onChange={(e) => {
+                                              setIsGroupLesson(e.target.checked)
+                                              setSelectedVoucher('')
+                                              setScheduleChildId('')
+                                              setSelectedGroupChildIds([])
+                                            }}
+                                          />
+                                          그룹수업
+                                        </label>
+
+                                        {isGroupLesson ? (
+                                          <>
+                                            <input
+                                              value={groupName}
+                                              onChange={(e) => setGroupName(e.target.value)}
+                                              placeholder="그룹명"
+                                              className="w-full rounded border bg-white px-2 py-1 text-xs"
+                                            />
+                                            <input
+                                              value={groupSearch}
+                                              onChange={(e) => setGroupSearch(e.target.value)}
+                                              placeholder="학생 이름 검색"
+                                              className="w-full rounded border bg-white px-2 py-1 text-xs"
+                                            />
+                                            <div className="rounded border p-2">
+                                              <div className="mb-2 text-[11px] text-slate-500">
+                                                학생 선택 ({selectedGroupChildIds.length}/8)
+                                              </div>
+                                              <div className="grid max-h-40 grid-cols-1 gap-1 overflow-y-auto">
+                                                {filteredGroupChildren.map((c) => {
+                                                  const active = selectedGroupChildIds.includes(c.id)
+                                                  return (
+                                                    <button
+                                                      key={c.id}
+                                                      type="button"
+                                                      onClick={() => toggleGroupChild(c.id)}
+                                                      className={`rounded px-2 py-1 text-left text-[11px] ${
+                                                        active ? 'bg-rose-500 text-white' : 'bg-slate-100 text-slate-700'
+                                                      }`}
+                                                    >
+                                                      {getDisplayName(c)}
+                                                    </button>
+                                                  )
+                                                })}
+                                              </div>
+                                            </div>
+                                          </>
+                                        ) : (
+                                          <>
+                                            <select
+                                              value={scheduleChildId}
+                                              onChange={(e) =>
+                                                setScheduleChildId(e.target.value ? Number(e.target.value) : '')
+                                              }
+                                              className="w-full rounded border bg-white px-2 py-1 text-xs"
+                                            >
+                                              <option value="">학생 선택</option>
+                                              {children.filter((c) => c.is_active).map((c) => (
+                                                <option key={c.id} value={c.id}>
+                                                  {getDisplayName(c)}
+                                                </option>
+                                              ))}
+                                            </select>
+
+                                            <select
+                                              value={selectedVoucher}
+                                              onChange={(e) => setSelectedVoucher(e.target.value)}
+                                              className="w-full rounded border bg-white px-2 py-1 text-xs"
+                                            >
+                                              <option value="">바우처 선택</option>
+                                              {getVoucherOptionsForChild(scheduleChildId).map((voucher) => (
+                                                <option key={voucher} value={voucher}>
+                                                  {voucher}
+                                                </option>
+                                              ))}
+                                            </select>
+                                          </>
+                                        )}
+
+                                        <select
+                                          value={selectedMinute}
+                                          onChange={(e) => setSelectedMinute(e.target.value)}
+                                          className="w-full rounded border bg-white px-2 py-1 text-xs"
+                                        >
+                                          {getMinutesOptions().map((m) => (
+                                            <option key={m} value={m}>
+                                              {m}분
+                                            </option>
+                                          ))}
+                                        </select>
+
+                                        <div className="flex gap-1">
+                                          <button
+                                            onClick={() =>
+                                              handleSaveSchedule(dateStr, hourSlot, Number(selectedStaff.id))
+                                            }
+                                            className="flex-1 rounded bg-indigo-600 px-2 py-1 text-xs text-white"
+                                          >
+                                            저장
+                                          </button>
+                                          <button
+                                            onClick={resetScheduleEditor}
+                                            className="flex-1 rounded bg-slate-300 px-2 py-1 text-xs"
+                                          >
+                                            취소
+                                          </button>
+                                        </div>
+                                      </div>
+                                    ) : (
+                                      <div className="space-y-1">
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            setEditingCell({
+                                              date: dateStr,
+                                              hour: hourSlot,
+                                              staffId: Number(selectedStaff.id),
+                                            })
+                                            setEditingEntryId(null)
+                                            setEditingGroupId(null)
+                                            setScheduleChildId('')
+                                            setSelectedMinute('00')
+                                            setSelectedVoucher('')
+                                            setIsGroupLesson(false)
+                                            setGroupName('')
+                                            setSelectedGroupChildIds([])
+                                            setGroupSearch('')
+                                          }}
+                                          className="min-h-[28px] w-full rounded border border-dashed border-slate-300 px-2 py-1 text-left text-xs text-slate-500 hover:bg-slate-100"
+                                        >
+                                          + 추가
+                                        </button>
+
+                                        {items.map((item) =>
+                                          renderScheduleCard(item, dateStr, Number(selectedStaff.id))
+                                        )}
+                                      </div>
+                                    )}
+                                  </td>
+                                )
+                              })
+                            : weekDates.flatMap((date) =>
+                                employeeStaffs.map((staff) => {
+                                  const dateStr = toDateString(date)
+                                  const items = buildDisplayItems(dateStr, hourSlot, Number(staff.id))
+                                  const isEditing =
+                                    editingCell?.date === dateStr &&
+                                    editingCell?.hour === hourSlot &&
+                                    Number(editingCell?.staffId) === Number(staff.id)
+
+                                  return (
+                                    <td
+                                      key={`all-${staff.id}-${dateStr}-${hourSlot}`}
+                                      className="min-w-[170px] border px-1 py-1 align-top"
+                                    >
+                                      {isEditing ? (
+                                        <div className="min-h-[72px] space-y-2">
+                                          <label className="flex items-center gap-2 text-xs">
+                                            <input
+                                              type="checkbox"
+                                              checked={isGroupLesson}
+                                              onChange={(e) => {
+                                                setIsGroupLesson(e.target.checked)
+                                                setSelectedVoucher('')
+                                                setScheduleChildId('')
+                                                setSelectedGroupChildIds([])
+                                              }}
+                                            />
+                                            그룹수업
+                                          </label>
+
+                                          {isGroupLesson ? (
+                                            <>
+                                              <input
+                                                value={groupName}
+                                                onChange={(e) => setGroupName(e.target.value)}
+                                                placeholder="그룹명"
+                                                className="w-full rounded border bg-white px-2 py-1 text-xs"
+                                              />
+                                              <input
+                                                value={groupSearch}
+                                                onChange={(e) => setGroupSearch(e.target.value)}
+                                                placeholder="학생 이름 검색"
+                                                className="w-full rounded border bg-white px-2 py-1 text-xs"
+                                              />
+                                              <div className="rounded border p-2">
+                                                <div className="mb-2 text-[11px] text-slate-500">
+                                                  학생 선택 ({selectedGroupChildIds.length}/8)
+                                                </div>
+                                                <div className="grid max-h-40 grid-cols-1 gap-1 overflow-y-auto">
+                                                  {filteredGroupChildren.map((c) => {
+                                                    const active = selectedGroupChildIds.includes(c.id)
+                                                    return (
+                                                      <button
+                                                        key={c.id}
+                                                        type="button"
+                                                        onClick={() => toggleGroupChild(c.id)}
+                                                        className={`rounded px-2 py-1 text-left text-[11px] ${
+                                                          active ? 'bg-rose-500 text-white' : 'bg-slate-100 text-slate-700'
+                                                        }`}
+                                                      >
+                                                        {getDisplayName(c)}
+                                                      </button>
+                                                    )
+                                                  })}
+                                                </div>
+                                              </div>
+                                            </>
+                                          ) : (
+                                            <>
+                                              <select
+                                                value={scheduleChildId}
+                                                onChange={(e) =>
+                                                  setScheduleChildId(e.target.value ? Number(e.target.value) : '')
+                                                }
+                                                className="w-full rounded border bg-white px-2 py-1 text-xs"
+                                              >
+                                                <option value="">학생 선택</option>
+                                                {children.filter((c) => c.is_active).map((c) => (
+                                                  <option key={c.id} value={c.id}>
+                                                    {getDisplayName(c)}
+                                                  </option>
+                                                ))}
+                                              </select>
+
+                                              <select
+                                                value={selectedVoucher}
+                                                onChange={(e) => setSelectedVoucher(e.target.value)}
+                                                className="w-full rounded border bg-white px-2 py-1 text-xs"
+                                              >
+                                                <option value="">바우처 선택</option>
+                                                {getVoucherOptionsForChild(scheduleChildId).map((voucher) => (
+                                                  <option key={voucher} value={voucher}>
+                                                    {voucher}
+                                                  </option>
+                                                ))}
+                                              </select>
+                                            </>
+                                          )}
+
+                                          <select
+                                            value={selectedMinute}
+                                            onChange={(e) => setSelectedMinute(e.target.value)}
+                                            className="w-full rounded border bg-white px-2 py-1 text-xs"
+                                          >
+                                            {getMinutesOptions().map((m) => (
+                                              <option key={m} value={m}>
+                                                {m}분
+                                              </option>
+                                            ))}
+                                          </select>
+
+                                          <div className="flex gap-1">
+                                            <button
+                                              onClick={() =>
+                                                handleSaveSchedule(dateStr, hourSlot, Number(staff.id))
+                                              }
+                                              className="flex-1 rounded bg-indigo-600 px-2 py-1 text-xs text-white"
+                                            >
+                                              저장
+                                            </button>
+                                            <button
+                                              onClick={resetScheduleEditor}
+                                              className="flex-1 rounded bg-slate-300 px-2 py-1 text-xs"
+                                            >
+                                              취소
+                                            </button>
+                                          </div>
+                                        </div>
+                                      ) : (
+                                        <div className="space-y-1">
+                                          <button
+                                            type="button"
+                                            onClick={() => {
+                                              setEditingCell({
+                                                date: dateStr,
+                                                hour: hourSlot,
+                                                staffId: Number(staff.id),
+                                              })
+                                              setEditingEntryId(null)
+                                              setEditingGroupId(null)
+                                              setScheduleChildId('')
+                                              setSelectedMinute('00')
+                                              setSelectedVoucher('')
+                                              setIsGroupLesson(false)
+                                              setGroupName('')
+                                              setSelectedGroupChildIds([])
+                                              setGroupSearch('')
+                                            }}
+                                            className="min-h-[28px] w-full rounded border border-dashed border-slate-300 px-2 py-1 text-left text-xs text-slate-500 hover:bg-slate-100"
+                                          >
+                                            + 추가
+                                          </button>
+
+                                          {items.map((item) =>
+                                            renderScheduleCard(item, dateStr, Number(staff.id))
+                                          )}
+                                        </div>
+                                      )}
+                                    </td>
+                                  )
+                                })
+                              )}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div className="space-y-4 md:hidden">
+                  {viewMode === 'staff' && selectedStaff
+                    ? weekDates.map((date) => renderMobileDayCard(date, Number(selectedStaff.id)))
+                    : weekDates.flatMap((date) =>
+                        employeeStaffs.map((staff) => renderMobileDayCard(date, Number(staff.id)))
+                      )}
+                </div>
+              </>
             )}
-
-            <button
-              onClick={() => handleEditSchedule(item)}
-              className="rounded-xl bg-blue-50 px-2 py-2 text-xs font-medium text-blue-700"
-            >
-              수정
-            </button>
-
-            <button
-              onClick={() => handleDeleteSchedule(item)}
-              className="rounded-xl bg-rose-50 px-2 py-2 text-xs font-medium text-rose-700"
-            >
-              삭제
-            </button>
-          </div>
-        </>
-      )}
-    </div>
-  )
-}
           </div>
         ) : null}
 
         {tab === 'children' ? (
-          <div className="grid gap-4 md:grid-cols-2">
-            <div className="rounded-2xl border bg-white p-4 shadow-sm">
-              <h2 className="mb-3 text-lg font-bold">아이 등록 / 수정</h2>
+          <div className="grid gap-6 md:grid-cols-2">
+            <div className="rounded-2xl border p-4">
+              <h2 className="mb-3 text-xl font-bold">아이 등록 / 수정</h2>
               <div className="space-y-3">
-                <input value={childForm.chartNo} onChange={(e) => setChildForm((p) => ({ ...p, chartNo: e.target.value }))} placeholder="차트번호" className="w-full rounded-2xl border px-3 py-3" />
-                <input value={childForm.childName} onChange={(e) => setChildForm((p) => ({ ...p, childName: e.target.value }))} placeholder="이름" className="w-full rounded-2xl border px-3 py-3" />
-                <input type="date" value={childForm.birthDate} onChange={(e) => setChildForm((p) => ({ ...p, birthDate: e.target.value }))} className="w-full rounded-2xl border px-3 py-3" />
-                <input value={childForm.phone} onChange={(e) => setChildForm((p) => ({ ...p, phone: e.target.value }))} placeholder="핸드폰 번호" className="w-full rounded-2xl border px-3 py-3" />
+                <input
+                  value={childForm.chartNo}
+                  onChange={(e) => setChildForm((p) => ({ ...p, chartNo: e.target.value }))}
+                  placeholder="차트번호"
+                  className="w-full rounded-xl border px-3 py-3 md:py-2"
+                />
+                <input
+                  value={childForm.childName}
+                  onChange={(e) => setChildForm((p) => ({ ...p, childName: e.target.value }))}
+                  placeholder="이름"
+                  className="w-full rounded-xl border px-3 py-3 md:py-2"
+                />
+                <input
+                  type="date"
+                  value={childForm.birthDate}
+                  onChange={(e) => setChildForm((p) => ({ ...p, birthDate: e.target.value }))}
+                  className="w-full rounded-xl border px-3 py-3 md:py-2"
+                />
+                <input
+                  value={childForm.phone}
+                  onChange={(e) => setChildForm((p) => ({ ...p, phone: e.target.value }))}
+                  placeholder="핸드폰 번호"
+                  className="w-full rounded-xl border px-3 py-3 md:py-2"
+                />
 
                 <div>
                   <div className="mb-2 text-sm font-medium text-slate-700">바우처(여러 개 선택)</div>
@@ -2408,7 +2595,9 @@ function renderScheduleCard(item: DisplayScheduleItem, dateStr: string, staffId:
                           key={voucher}
                           type="button"
                           onClick={() => toggleChildVoucher(voucher)}
-                          className={`rounded-full px-3 py-2 text-sm ${active ? 'bg-black text-white' : 'bg-slate-200 text-slate-700'}`}
+                          className={`rounded-full px-3 py-2 text-sm ${
+                            active ? 'bg-black text-white' : 'bg-slate-200 text-slate-700'
+                          }`}
                         >
                           {voucher}
                         </button>
@@ -2417,37 +2606,73 @@ function renderScheduleCard(item: DisplayScheduleItem, dateStr: string, staffId:
                   </div>
                 </div>
 
-                <div className="space-y-2 rounded-2xl border p-3">
+                <div className="space-y-2 rounded-xl border p-3">
                   <div className="font-medium">단가 입력</div>
                   <label className="block text-sm">일반</label>
-                  <input value={childForm.basePrice} onChange={(e) => setChildForm((p) => ({ ...p, basePrice: e.target.value }))} className="w-full rounded-xl border px-3 py-2" />
+                  <input
+                    value={childForm.basePrice}
+                    onChange={(e) => setChildForm((p) => ({ ...p, basePrice: e.target.value }))}
+                    className="w-full rounded-xl border px-3 py-2"
+                  />
                   <label className="block text-sm">디딤</label>
-                  <input value={childForm.didimPrice} onChange={(e) => setChildForm((p) => ({ ...p, didimPrice: e.target.value }))} className="w-full rounded-xl border px-3 py-2" />
+                  <input
+                    value={childForm.didimPrice}
+                    onChange={(e) => setChildForm((p) => ({ ...p, didimPrice: e.target.value }))}
+                    className="w-full rounded-xl border px-3 py-2"
+                  />
                   <label className="block text-sm">아청심</label>
-                  <input value={childForm.achungsimPrice} onChange={(e) => setChildForm((p) => ({ ...p, achungsimPrice: e.target.value }))} className="w-full rounded-xl border px-3 py-2" />
+                  <input
+                    value={childForm.achungsimPrice}
+                    onChange={(e) => setChildForm((p) => ({ ...p, achungsimPrice: e.target.value }))}
+                    className="w-full rounded-xl border px-3 py-2"
+                  />
                   <label className="block text-sm">드림스타트</label>
-                  <input value={childForm.dreamStartPrice} onChange={(e) => setChildForm((p) => ({ ...p, dreamStartPrice: e.target.value }))} className="w-full rounded-xl border px-3 py-2" />
+                  <input
+                    value={childForm.dreamStartPrice}
+                    onChange={(e) => setChildForm((p) => ({ ...p, dreamStartPrice: e.target.value }))}
+                    className="w-full rounded-xl border px-3 py-2"
+                  />
                   <label className="block text-sm">배움</label>
-                  <input value={childForm.baeumPrice} onChange={(e) => setChildForm((p) => ({ ...p, baeumPrice: e.target.value }))} className="w-full rounded-xl border px-3 py-2" />
+                  <input
+                    value={childForm.baeumPrice}
+                    onChange={(e) => setChildForm((p) => ({ ...p, baeumPrice: e.target.value }))}
+                    className="w-full rounded-xl border px-3 py-2"
+                  />
                   <label className="block text-sm">메모</label>
-                  <input value={childForm.notes} onChange={(e) => setChildForm((p) => ({ ...p, notes: e.target.value }))} className="w-full rounded-xl border px-3 py-2" />
+                  <input
+                    value={childForm.notes}
+                    onChange={(e) => setChildForm((p) => ({ ...p, notes: e.target.value }))}
+                    className="w-full rounded-xl border px-3 py-2"
+                  />
                 </div>
 
                 <label className="flex items-center gap-2">
-                  <input type="checkbox" checked={childForm.isActive} onChange={(e) => setChildForm((p) => ({ ...p, isActive: e.target.checked }))} />
+                  <input
+                    type="checkbox"
+                    checked={childForm.isActive}
+                    onChange={(e) => setChildForm((p) => ({ ...p, isActive: e.target.checked }))}
+                  />
                   사용중
                 </label>
 
-                <button onClick={handleSaveChild} className="w-full rounded-2xl bg-black py-3 text-white">
+                <button
+                  onClick={handleSaveChild}
+                  className="w-full rounded-xl bg-black py-3 text-white md:py-2"
+                >
                   {childForm.id ? '아이 수정' : '아이 등록'}
                 </button>
               </div>
             </div>
 
-            <div className="rounded-2xl border bg-white p-4 shadow-sm">
+            <div className="rounded-2xl border p-4">
               <div className="mb-3 flex items-center justify-between gap-2">
-                <h2 className="text-lg font-bold">아이 목록</h2>
-                <input value={childSearch} onChange={(e) => setChildSearch(e.target.value)} placeholder="이름 검색" className="rounded-xl border px-3 py-2 text-sm" />
+                <h2 className="text-xl font-bold">아이 목록</h2>
+                <input
+                  value={childSearch}
+                  onChange={(e) => setChildSearch(e.target.value)}
+                  placeholder="이름 검색"
+                  className="rounded-xl border px-3 py-2 text-sm"
+                />
               </div>
 
               <div className="space-y-2">
@@ -2478,7 +2703,7 @@ function renderScheduleCard(item: DisplayScheduleItem, dateStr: string, staffId:
                             isActive: child.is_active,
                           })
                         }
-                        className="w-full rounded-2xl border p-3 text-left hover:bg-slate-50"
+                        className="w-full rounded-xl border p-3 text-left hover:bg-slate-50"
                       >
                         <div className="flex flex-wrap items-center gap-2">
                           <div className="font-medium">{getDisplayName(child)}</div>
@@ -2489,6 +2714,7 @@ function renderScheduleCard(item: DisplayScheduleItem, dateStr: string, staffId:
                         <div className="mt-1 text-sm text-slate-500">
                           {child.chart_no ? `차트번호 ${child.chart_no}` : '차트번호 없음'}
                           {child.phone ? ` / ${child.phone}` : ''}
+                          {` / 일반단가 ${child.base_price ?? child.monthly_limit ?? 60000}`}
                         </div>
                       </button>
                     )
@@ -2500,133 +2726,187 @@ function renderScheduleCard(item: DisplayScheduleItem, dateStr: string, staffId:
         ) : null}
 
         {tab === 'staff' ? (
-          <div className="grid gap-4 md:grid-cols-2">
-            <div className="rounded-2xl border bg-white p-4 shadow-sm">
-              <h2 className="mb-3 text-lg font-bold">선생님 등록 / 수정</h2>
+          <div className="grid gap-6 md:grid-cols-2">
+            <div className="rounded-2xl border p-4">
+              <h2 className="mb-3 text-xl font-bold">선생님 등록 / 수정</h2>
               <div className="space-y-3">
-                <input value={staffForm.loginId} onChange={(e) => setStaffForm((p) => ({ ...p, loginId: e.target.value }))} placeholder="로그인 ID" className="w-full rounded-2xl border px-3 py-3" />
-                <input value={staffForm.name} onChange={(e) => setStaffForm((p) => ({ ...p, name: e.target.value }))} placeholder="이름" className="w-full rounded-2xl border px-3 py-3" />
-                <input type="password" value={staffForm.password} onChange={(e) => setStaffForm((p) => ({ ...p, password: e.target.value }))} placeholder={staffForm.id ? '비밀번호 변경 시만 입력' : '비밀번호'} className="w-full rounded-2xl border px-3 py-3" />
-                <select value={staffForm.role} onChange={(e) => setStaffForm((p) => ({ ...p, role: e.target.value as StaffRole }))} className="w-full rounded-2xl border px-3 py-3">
+                <input
+                  value={staffForm.loginId}
+                  onChange={(e) => setStaffForm((p) => ({ ...p, loginId: e.target.value }))}
+                  placeholder="로그인 ID"
+                  className="w-full rounded-xl border px-3 py-3 md:py-2"
+                />
+                <input
+                  value={staffForm.name}
+                  onChange={(e) => setStaffForm((p) => ({ ...p, name: e.target.value }))}
+                  placeholder="이름"
+                  className="w-full rounded-xl border px-3 py-3 md:py-2"
+                />
+                <input
+                  type="password"
+                  value={staffForm.password}
+                  onChange={(e) => setStaffForm((p) => ({ ...p, password: e.target.value }))}
+                  placeholder={staffForm.id ? '비밀번호 변경 시만 입력' : '비밀번호'}
+                  className="w-full rounded-xl border px-3 py-3 md:py-2"
+                />
+                <select
+                  value={staffForm.role}
+                  onChange={(e) => setStaffForm((p) => ({ ...p, role: e.target.value as StaffRole }))}
+                  className="w-full rounded-xl border px-3 py-3 md:py-2"
+                >
                   <option value="employee">employee</option>
                   <option value="admin">admin</option>
                 </select>
                 <label className="flex items-center gap-2">
-                  <input type="checkbox" checked={staffForm.isActive} onChange={(e) => setStaffForm((p) => ({ ...p, isActive: e.target.checked }))} />
+                  <input
+                    type="checkbox"
+                    checked={staffForm.isActive}
+                    onChange={(e) => setStaffForm((p) => ({ ...p, isActive: e.target.checked }))}
+                  />
                   사용중
                 </label>
-                <button onClick={handleSaveStaff} className="w-full rounded-2xl bg-black py-3 text-white">
+                <button
+                  onClick={handleSaveStaff}
+                  className="w-full rounded-xl bg-black py-3 text-white md:py-2"
+                >
                   {staffForm.id ? '선생님 수정' : '선생님 등록'}
                 </button>
               </div>
             </div>
 
-            <div className="rounded-2xl border bg-white p-4 shadow-sm">
-              <h2 className="mb-3 text-lg font-bold">선생님 목록</h2>
+            <div className="rounded-2xl border p-4">
+              <h2 className="mb-3 text-xl font-bold">선생님 목록</h2>
               <div className="space-y-2">
-                {staffs.map((staff) => (
-                  <button
-                    key={staff.id}
-                    onClick={() =>
-                      setStaffForm({
-                        id: staff.id,
-                        loginId: staff.login_id,
-                        password: '',
-                        name: staff.name,
-                        role: staff.role,
-                        isActive: staff.is_active,
-                      })
-                    }
-                    className="w-full rounded-2xl border p-3 text-left hover:bg-slate-50"
-                  >
-                    <div className="font-medium">{staff.name} ({staff.login_id})</div>
-                    <div className="text-sm text-slate-500">{staff.role} / {staff.is_active ? '사용중' : '중지'}</div>
-                  </button>
-                ))}
+                {staffs.length === 0 ? (
+                  <div className="rounded-xl border p-3 text-slate-500">등록된 선생님이 없습니다.</div>
+                ) : (
+                  staffs.map((staff) => (
+                    <button
+                      key={staff.id}
+                      onClick={() =>
+                        setStaffForm({
+                          id: staff.id,
+                          loginId: staff.login_id,
+                          password: '',
+                          name: staff.name,
+                          role: staff.role,
+                          isActive: staff.is_active,
+                        })
+                      }
+                      className="w-full rounded-xl border p-3 text-left hover:bg-slate-50"
+                    >
+                      <div className="font-medium">
+                        {staff.name} ({staff.login_id})
+                      </div>
+                      <div className="text-sm text-slate-500">
+                        {staff.role} / {staff.is_active ? '사용중' : '중지'}
+                      </div>
+                    </button>
+                  ))
+                )}
               </div>
             </div>
           </div>
         ) : null}
 
         {tab === 'summary' ? (
-          <div className="space-y-4">
-            <div className="flex flex-wrap gap-2">
-              <button onClick={() => setSummarySubTab('attendance')} className={`rounded-xl px-4 py-2 text-sm ${summarySubTab === 'attendance' ? 'bg-emerald-500 text-white' : 'bg-slate-200'}`}>학생출결</button>
-              <button onClick={() => setSummarySubTab('teacher')} className={`rounded-xl px-4 py-2 text-sm ${summarySubTab === 'teacher' ? 'bg-indigo-500 text-white' : 'bg-slate-200'}`}>선생님 수업</button>
-              <button onClick={() => setSummarySubTab('settlement')} className={`rounded-xl px-4 py-2 text-sm ${summarySubTab === 'settlement' ? 'bg-orange-500 text-white' : 'bg-slate-200'}`}>월학생정산</button>
+          <div>
+            <div className="mb-4 flex flex-wrap gap-2">
+              <button
+                onClick={() => setSummarySubTab('attendance')}
+                className={`rounded-xl px-4 py-2 text-sm ${
+                  summarySubTab === 'attendance' ? 'bg-emerald-500 text-white' : 'bg-slate-200'
+                }`}
+              >
+                학생출결
+              </button>
+              <button
+                onClick={() => setSummarySubTab('teacher')}
+                className={`rounded-xl px-4 py-2 text-sm ${
+                  summarySubTab === 'teacher' ? 'bg-indigo-500 text-white' : 'bg-slate-200'
+                }`}
+              >
+                선생님 수업
+              </button>
+              <button
+                onClick={() => setSummarySubTab('settlement')}
+                className={`rounded-xl px-4 py-2 text-sm ${
+                  summarySubTab === 'settlement' ? 'bg-orange-500 text-white' : 'bg-slate-200'
+                }`}
+              >
+                월학생정산
+              </button>
             </div>
 
             {summarySubTab === 'attendance' ? (
-              <div className="space-y-3">
-                <div className="-mx-3 overflow-x-auto px-3 md:mx-0 md:px-0">
-                  <table className="min-w-[980px] border text-xs md:min-w-full md:text-sm">
-                    <thead>
-                      <tr>
-                        <th className="whitespace-nowrap border bg-slate-100 px-2 py-2 text-[11px] md:px-3 md:text-sm">학생</th>
-                        <th className="whitespace-nowrap border bg-slate-100 px-2 py-2 text-[11px] md:px-3 md:text-sm">나이</th>
-                        <th className="whitespace-nowrap border bg-slate-100 px-2 py-2 text-[11px] md:px-3 md:text-sm">선생님</th>
-                        <th className="whitespace-nowrap border bg-slate-100 px-2 py-2 text-[11px] md:px-3 md:text-sm">출석</th>
-                        <th className="whitespace-nowrap border bg-slate-100 px-2 py-2 text-[11px] md:px-3 md:text-sm">보강</th>
-                        <th className="whitespace-nowrap border bg-slate-100 px-2 py-2 text-[11px] md:px-3 md:text-sm">결석</th>
-                        <th className="whitespace-nowrap border bg-slate-100 px-2 py-2 text-[11px] md:px-3 md:text-sm">당일결석</th>
-                        <th className="whitespace-nowrap border bg-slate-100 px-2 py-2 text-[11px] md:px-3 md:text-sm">출석날짜</th>
-                        <th className="whitespace-nowrap border bg-slate-100 px-2 py-2 text-[11px] md:px-3 md:text-sm">보강날짜</th>
-                        <th className="whitespace-nowrap border bg-slate-100 px-2 py-2 text-[11px] md:px-3 md:text-sm">결석날짜</th>
-                        <th className="whitespace-nowrap border bg-slate-100 px-2 py-2 text-[11px] md:px-3 md:text-sm">당일결석날짜</th>
-                        <th className="whitespace-nowrap border bg-slate-100 px-2 py-2 text-[11px] md:px-3 md:text-sm">그룹수업출석</th>
-                        <th className="whitespace-nowrap border bg-slate-100 px-2 py-2 text-[11px] md:px-3 md:text-sm">그룹수업결석및 당일결석</th>
+              <div className="overflow-x-auto">
+                <table className="min-w-full border text-sm">
+                  <thead>
+                    <tr>
+                      <th className="border bg-slate-100 px-3 py-2">학생</th>
+                      <th className="border bg-slate-100 px-3 py-2">나이</th>
+                      <th className="border bg-slate-100 px-3 py-2">선생님</th>
+                      <th className="border bg-slate-100 px-3 py-2">출석</th>
+                      <th className="border bg-slate-100 px-3 py-2">보강</th>
+                      <th className="border bg-slate-100 px-3 py-2">결석</th>
+                      <th className="border bg-slate-100 px-3 py-2">당일결석</th>
+                      <th className="border bg-slate-100 px-3 py-2">출석날짜</th>
+                      <th className="border bg-slate-100 px-3 py-2">보강날짜</th>
+                      <th className="border bg-slate-100 px-3 py-2">결석날짜</th>
+                      <th className="border bg-slate-100 px-3 py-2">당일결석날짜</th>
+                      <th className="border bg-slate-100 px-3 py-2">그룹수업출석</th>
+                      <th className="border bg-slate-100 px-3 py-2">그룹수업결석및 당일결석</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {attendanceSummaryRows.map((row) => (
+                      <tr key={row.key}>
+                        <td className="border px-3 py-2">{row.child_name}</td>
+                        <td className="border px-3 py-2">{row.age_text}</td>
+                        <td className="border px-3 py-2">{row.teacher_name}</td>
+                        <td className="border px-3 py-2 text-center">{row.attended_count}</td>
+                        <td className="border px-3 py-2 text-center">{row.makeup_count}</td>
+                        <td className="border px-3 py-2 text-center">{row.absent_count}</td>
+                        <td className="border px-3 py-2 text-center">{row.same_day_absent_count}</td>
+                        <td className="border px-3 py-2">{row.attended_dates}</td>
+                        <td className="border px-3 py-2">{row.makeup_dates}</td>
+                        <td className="border px-3 py-2">{row.absent_dates}</td>
+                        <td className="border px-3 py-2">{row.same_day_absent_dates}</td>
+                        <td className="border px-3 py-2">{row.group_attended_dates}</td>
+                        <td className="border px-3 py-2">{row.group_absent_dates}</td>
                       </tr>
-                    </thead>
-                    <tbody>
-                      {attendanceSummaryRows.map((row) => (
-                        <tr key={row.key}>
-                          <td className="whitespace-nowrap border px-2 py-2 text-[11px] md:px-3 md:text-sm">{row.child_name}</td>
-                          <td className="whitespace-nowrap border px-2 py-2 text-[11px] md:px-3 md:text-sm">{row.age_text}</td>
-                          <td className="whitespace-nowrap border px-2 py-2 text-[11px] md:px-3 md:text-sm">{row.teacher_name}</td>
-                          <td className="whitespace-nowrap border px-2 py-2 text-[11px] text-center md:px-3 md:text-sm">{row.attended_count}</td>
-                          <td className="whitespace-nowrap border px-2 py-2 text-[11px] text-center md:px-3 md:text-sm">{row.makeup_count}</td>
-                          <td className="whitespace-nowrap border px-2 py-2 text-[11px] text-center md:px-3 md:text-sm">{row.absent_count}</td>
-                          <td className="whitespace-nowrap border px-2 py-2 text-[11px] text-center md:px-3 md:text-sm">{row.same_day_absent_count}</td>
-                          <td className="whitespace-nowrap border px-2 py-2 text-[11px] md:px-3 md:text-sm">{row.attended_dates}</td>
-                          <td className="whitespace-nowrap border px-2 py-2 text-[11px] md:px-3 md:text-sm">{row.makeup_dates}</td>
-                          <td className="whitespace-nowrap border px-2 py-2 text-[11px] md:px-3 md:text-sm">{row.absent_dates}</td>
-                          <td className="whitespace-nowrap border px-2 py-2 text-[11px] md:px-3 md:text-sm">{row.same_day_absent_dates}</td>
-                          <td className="whitespace-nowrap border px-2 py-2 text-[11px] md:px-3 md:text-sm">{row.group_attended_dates}</td>
-                          <td className="whitespace-nowrap border px-2 py-2 text-[11px] md:px-3 md:text-sm">{row.group_absent_dates}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             ) : null}
 
             {summarySubTab === 'teacher' ? (
-              <div className="-mx-3 overflow-x-auto px-3 md:mx-0 md:px-0">
-                <table className="min-w-[980px] border text-xs md:min-w-full md:text-sm">
+              <div className="overflow-x-auto">
+                <table className="min-w-full border text-sm">
                   <thead>
                     <tr>
-                      <th className="whitespace-nowrap border bg-slate-100 px-2 py-2 text-[11px] md:px-3 md:text-sm">선생님</th>
-                      <th className="whitespace-nowrap border bg-slate-100 px-2 py-2 text-[11px] md:px-3 md:text-sm">학생</th>
-                      <th className="whitespace-nowrap border bg-slate-100 px-2 py-2 text-[11px] md:px-3 md:text-sm">출석날짜</th>
-                      <th className="whitespace-nowrap border bg-slate-100 px-2 py-2 text-[11px] md:px-3 md:text-sm">보강날짜</th>
-                      <th className="whitespace-nowrap border bg-slate-100 px-2 py-2 text-[11px] md:px-3 md:text-sm">결석날짜</th>
-                      <th className="whitespace-nowrap border bg-slate-100 px-2 py-2 text-[11px] md:px-3 md:text-sm">당일결석날짜</th>
-                      <th className="whitespace-nowrap border bg-slate-100 px-2 py-2 text-[11px] md:px-3 md:text-sm">그룹출석/보강</th>
-                      <th className="whitespace-nowrap border bg-slate-100 px-2 py-2 text-[11px] md:px-3 md:text-sm">그룹결석/당일결석</th>
+                      <th className="border bg-slate-100 px-3 py-2">선생님</th>
+                      <th className="border bg-slate-100 px-3 py-2">학생</th>
+                      <th className="border bg-slate-100 px-3 py-2">출석날짜</th>
+                      <th className="border bg-slate-100 px-3 py-2">보강날짜</th>
+                      <th className="border bg-slate-100 px-3 py-2">결석날짜</th>
+                      <th className="border bg-slate-100 px-3 py-2">당일결석날짜</th>
+                      <th className="border bg-slate-100 px-3 py-2">그룹 출석(그룹출석,그룹보강)</th>
+                      <th className="border bg-slate-100 px-3 py-2">그룹 결석(그룹결석,그룹당일결석)</th>
                     </tr>
                   </thead>
                   <tbody>
                     {teacherLessonRows.map((row) => (
                       <tr key={row.key}>
-                        <td className="whitespace-nowrap border px-2 py-2 text-[11px] md:px-3 md:text-sm">{row.teacher_name}</td>
-                        <td className="whitespace-nowrap border px-2 py-2 text-[11px] md:px-3 md:text-sm">{row.child_name}</td>
-                        <td className="whitespace-nowrap border px-2 py-2 text-[11px] md:px-3 md:text-sm">{row.attended_dates}</td>
-                        <td className="whitespace-nowrap border px-2 py-2 text-[11px] md:px-3 md:text-sm">{row.makeup_dates}</td>
-                        <td className="whitespace-nowrap border px-2 py-2 text-[11px] md:px-3 md:text-sm">{row.absent_dates}</td>
-                        <td className="whitespace-nowrap border px-2 py-2 text-[11px] md:px-3 md:text-sm">{row.same_day_absent_dates}</td>
-                        <td className="whitespace-nowrap border px-2 py-2 text-[11px] md:px-3 md:text-sm">{row.group_attended_dates}</td>
-                        <td className="whitespace-nowrap border px-2 py-2 text-[11px] md:px-3 md:text-sm">{row.group_absent_dates}</td>
+                        <td className="border px-3 py-2">{row.teacher_name}</td>
+                        <td className="border px-3 py-2">{row.child_name}</td>
+                        <td className="border px-3 py-2">{row.attended_dates}</td>
+                        <td className="border px-3 py-2">{row.makeup_dates}</td>
+                        <td className="border px-3 py-2">{row.absent_dates}</td>
+                        <td className="border px-3 py-2">{row.same_day_absent_dates}</td>
+                        <td className="border px-3 py-2">{row.group_attended_dates}</td>
+                        <td className="border px-3 py-2">{row.group_absent_dates}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -2635,33 +2915,53 @@ function renderScheduleCard(item: DisplayScheduleItem, dateStr: string, staffId:
             ) : null}
 
             {summarySubTab === 'settlement' ? (
-              <div className="-mx-3 overflow-x-auto px-3 md:mx-0 md:px-0">
-                <table className="min-w-[980px] border text-xs md:min-w-full md:text-sm">
+              <div className="overflow-x-auto">
+                <table className="min-w-full border text-sm">
                   <thead>
                     <tr>
-                      <th className="whitespace-nowrap border bg-slate-100 px-2 py-2 text-[11px] md:px-3 md:text-sm">학생</th>
-                      <th className="whitespace-nowrap border bg-slate-100 px-2 py-2 text-[11px] md:px-3 md:text-sm">나이</th>
-                      <th className="whitespace-nowrap border bg-slate-100 px-2 py-2 text-[11px] md:px-3 md:text-sm">바우처</th>
-                      <th className="whitespace-nowrap border bg-slate-100 px-2 py-2 text-[11px] md:px-3 md:text-sm">출석+보강횟수</th>
-                      <th className="whitespace-nowrap border bg-slate-100 px-2 py-2 text-[11px] md:px-3 md:text-sm">그룹횟수</th>
-                      <th className="whitespace-nowrap border bg-slate-100 px-2 py-2 text-[11px] md:px-3 md:text-sm">결석</th>
-                      <th className="whitespace-nowrap border bg-slate-100 px-2 py-2 text-[11px] md:px-3 md:text-sm">당일결석</th>
-                      <th className="whitespace-nowrap border bg-slate-100 px-2 py-2 text-[11px] md:px-3 md:text-sm">그룹단가</th>
-                      <th className="whitespace-nowrap border bg-slate-100 px-2 py-2 text-[11px] md:px-3 md:text-sm">총금액</th>
+                      <th className="border bg-slate-100 px-3 py-2">학생</th>
+                      <th className="border bg-slate-100 px-3 py-2">나이</th>
+                      <th className="border bg-slate-100 px-3 py-2">바우처</th>
+                      <th className="border bg-slate-100 px-3 py-2">출석+보강횟수</th>
+                      <th className="border bg-slate-100 px-3 py-2">그룹횟수</th>
+                      <th className="border bg-slate-100 px-3 py-2">결석</th>
+                      <th className="border bg-slate-100 px-3 py-2">당일결석</th>
+                      <th className="border bg-slate-100 px-3 py-2">그룹단가</th>
+                      <th className="border bg-slate-100 px-3 py-2">총금액</th>
+                      <th className="border bg-slate-100 px-3 py-2">저장</th>
                     </tr>
                   </thead>
                   <tbody>
                     {settlementRows.map((row) => (
                       <tr key={row.child_id}>
-                        <td className="whitespace-nowrap border px-2 py-2 text-[11px] md:px-3 md:text-sm">{row.child_name}</td>
-                        <td className="whitespace-nowrap border px-2 py-2 text-[11px] md:px-3 md:text-sm">{row.age_text}</td>
-                        <td className="whitespace-nowrap border px-2 py-2 text-[11px] md:px-3 md:text-sm">{row.voucher_label}</td>
-                        <td className="whitespace-nowrap border px-2 py-2 text-[11px] text-center md:px-3 md:text-sm">{row.lesson_count}</td>
-                        <td className="whitespace-nowrap border px-2 py-2 text-[11px] text-center md:px-3 md:text-sm">{row.group_count}</td>
-                        <td className="whitespace-nowrap border px-2 py-2 text-[11px] text-center md:px-3 md:text-sm">{row.absent_count}</td>
-                        <td className="whitespace-nowrap border px-2 py-2 text-[11px] text-center md:px-3 md:text-sm">{row.same_day_absent_count}</td>
-                        <td className="whitespace-nowrap border px-2 py-2 text-[11px] md:px-3 md:text-sm">{row.group_unit_price}</td>
-                        <td className="whitespace-nowrap border px-2 py-2 text-[11px] font-semibold md:px-3 md:text-sm">{row.total_amount}</td>
+                        <td className="border px-3 py-2">{row.child_name}</td>
+                        <td className="border px-3 py-2">{row.age_text}</td>
+                        <td className="border px-3 py-2">{row.voucher_label}</td>
+                        <td className="border px-3 py-2 text-center">{row.lesson_count}</td>
+                        <td className="border px-3 py-2 text-center">{row.group_count}</td>
+                        <td className="border px-3 py-2 text-center">{row.absent_count}</td>
+                        <td className="border px-3 py-2 text-center">{row.same_day_absent_count}</td>
+                        <td className="border px-3 py-2 text-center">
+                          <input
+                            value={monthlyGroupPrices[row.child_id] ?? ''}
+                            onChange={(e) =>
+                              setMonthlyGroupPrices((prev) => ({
+                                ...prev,
+                                [row.child_id]: e.target.value,
+                              }))
+                            }
+                            className="w-20 rounded border px-2 py-1 text-sm"
+                          />
+                        </td>
+                        <td className="border px-3 py-2 text-center font-semibold">{row.total_amount}</td>
+                        <td className="border px-3 py-2 text-center">
+                          <button
+                            onClick={() => saveGroupUnitPrice(row.child_id, monthlyGroupPrices[row.child_id] ?? '0')}
+                            className="rounded bg-slate-700 px-3 py-1 text-xs text-white"
+                          >
+                            저장
+                          </button>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -2672,172 +2972,68 @@ function renderScheduleCard(item: DisplayScheduleItem, dateStr: string, staffId:
         ) : null}
 
         {recordModal.open && recordModal.entry ? (
-          <div
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-4"
-            onClick={() =>
-              setRecordModal({
-                open: false,
-                entry: null,
-                status: 'attended',
-                teacherName: '',
-              })
-            }
-          >
-            <div
-              className="w-full max-w-md rounded-[32px] bg-white p-5 shadow-[0_24px_80px_rgba(0,0,0,0.18)] sm:p-6"
-              onClick={(e) => e.stopPropagation()}
-            >
-              {(() => {
-                const entry = recordModal.entry!
-                const child = children.find((c) => Number(c.id) === Number(entry.child_id))
-                const minuteText = String(entry.minute_slot ?? 0).padStart(2, '0')
-                const lessonTime = `${entry.time_slot.slice(0, 2)}:${minuteText}`
-                const absentCount = entry.child_id ? getRunningAbsentCount(Number(entry.child_id)) : 0
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+            <div className="w-full max-w-lg rounded-[28px] bg-white p-6 shadow-xl">
+              <h3 className="mb-4 text-2xl font-bold">수업 상태 선택</h3>
 
-                return (
-                  <>
-                    <div className="mb-5 flex items-start justify-between gap-3">
-                      <div>
-                        <div className="text-xl font-bold text-slate-900 sm:text-2xl">수업 상태 선택</div>
-                        <div className="mt-2 text-sm text-slate-500">
-                          {entry.date} · {lessonTime}
-                        </div>
-                      </div>
+              <div className="mb-2 text-lg text-slate-600">
+                {recordModal.entry.date} / {recordModal.entry.time_slot.slice(0, 2)}:
+                {String(recordModal.entry.minute_slot ?? 0).padStart(2, '0')}
+              </div>
 
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setRecordModal({
-                            open: false,
-                            entry: null,
-                            status: 'attended',
-                            teacherName: '',
-                          })
-                        }
-                        className="rounded-full bg-slate-100 px-3 py-1.5 text-sm font-semibold text-slate-500 hover:bg-slate-200"
-                      >
-                        닫기
-                      </button>
-                    </div>
+              <div className="mb-3 text-base text-slate-600">
+                결석횟수:{' '}
+                {recordModal.entry?.child_id
+                  ? getRunningAbsentCount(Number(recordModal.entry.child_id))
+                  : 0}
+              </div>
 
-                    <div className="mb-5 rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                      <div className="grid gap-2 text-sm sm:grid-cols-2">
-                        <div>
-                          <span className="text-slate-400">학생</span>
-                          <div className="mt-1 font-semibold text-slate-900">
-                            {child?.child_name ?? `학생(${entry.child_id})`}
-                            {child ? ` (${getAgeText(child.birth_date)}세)` : ''}
-                          </div>
-                        </div>
+              <select
+                value={recordModal.status}
+                onChange={(e) =>
+                  setRecordModal((prev) => ({
+                    ...prev,
+                    status: e.target.value as AttendanceStatus,
+                  }))
+                }
+                className="mb-5 w-full rounded-full border px-5 py-4 text-2xl"
+              >
+                <option value="attended">출석</option>
+                <option value="absent">결석</option>
+                <option value="makeup">보강</option>
+                <option value="same_day_absent">당일결석</option>
+              </select>
 
-                        <div>
-                          <span className="text-slate-400">선생님</span>
-                          <div className="mt-1 font-semibold text-slate-900">
-                            {recordModal.teacherName || '-'}
-                          </div>
-                        </div>
-
-                        <div>
-                          <span className="text-slate-400">수업유형</span>
-                          <div className="mt-1">
-                            <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${getVoucherClass(entry.voucher_type)}`}>
-                              {entry.voucher_type || '일반'}
-                            </span>
-                          </div>
-                        </div>
-
-                        <div>
-                          <span className="text-slate-400">누적 결석횟수</span>
-                          <div className="mt-1 font-semibold text-rose-600">{absentCount}</div>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-2 sm:gap-3">
-                      <button
-                        type="button"
-                        onClick={() => setRecordModal((prev) => ({ ...prev, status: 'attended' }))}
-                        className={`rounded-2xl border px-4 py-4 text-base font-bold transition ${
-                          recordModal.status === 'attended'
-                            ? 'border-blue-600 bg-blue-600 text-white shadow'
-                            : 'border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100'
-                        }`}
-                      >
-                        출석
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => setRecordModal((prev) => ({ ...prev, status: 'makeup' }))}
-                        className={`rounded-2xl border px-4 py-4 text-base font-bold transition ${
-                          recordModal.status === 'makeup'
-                            ? 'border-sky-600 bg-sky-600 text-white shadow'
-                            : 'border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100'
-                        }`}
-                      >
-                        보강
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => setRecordModal((prev) => ({ ...prev, status: 'absent' }))}
-                        className={`rounded-2xl border px-4 py-4 text-base font-bold transition ${
-                          recordModal.status === 'absent'
-                            ? 'border-rose-600 bg-rose-600 text-white shadow'
-                            : 'border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100'
-                        }`}
-                      >
-                        결석
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => setRecordModal((prev) => ({ ...prev, status: 'same_day_absent' }))}
-                        className={`rounded-2xl border px-4 py-4 text-base font-bold transition ${
-                          recordModal.status === 'same_day_absent'
-                            ? 'border-red-600 bg-red-600 text-white shadow'
-                            : 'border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100'
-                        }`}
-                      >
-                        당일결석
-                      </button>
-                    </div>
-
-                    <div className="mt-5 grid grid-cols-2 gap-3">
-                      <button
-                        onClick={handleSaveAttendanceFromModal}
-                        className="rounded-2xl bg-indigo-600 px-4 py-3 text-lg font-bold text-white shadow hover:bg-indigo-700"
-                      >
-                        저장
-                      </button>
-
-                      <button
-                        onClick={() =>
-                          setRecordModal({
-                            open: false,
-                            entry: null,
-                            status: 'attended',
-                            teacherName: '',
-                          })
-                        }
-                        className="rounded-2xl bg-slate-100 px-4 py-3 text-lg font-bold text-slate-700 hover:bg-slate-200"
-                      >
-                        취소
-                      </button>
-                    </div>
-                  </>
-                )
-              })()}
+              <div className="flex gap-3">
+                <button
+                  onClick={handleSaveAttendanceFromModal}
+                  className="flex-1 rounded-2xl bg-blue-700 px-4 py-4 text-2xl font-bold text-white"
+                >
+                  저장
+                </button>
+                <button
+                  onClick={() =>
+                    setRecordModal({
+                      open: false,
+                      entry: null,
+                      status: 'attended',
+                    })
+                  }
+                  className="flex-1 rounded-2xl bg-slate-100 px-4 py-4 text-2xl font-bold text-slate-700"
+                >
+                  취소
+                </button>
+              </div>
             </div>
           </div>
         ) : null}
 
         {childInfoModal.open && childInfoModal.child ? (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-4">
-            <div className="w-full max-w-lg rounded-[32px] bg-white p-5 shadow-2xl">
-              <h3 className="mb-4 text-xl font-bold sm:text-2xl">아이 정보</h3>
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+            <div className="w-full max-w-xl rounded-[28px] bg-white p-6 shadow-xl">
+              <h3 className="mb-4 text-2xl font-bold">아이 정보</h3>
 
-              <div className="grid gap-2 text-sm sm:text-base">
+              <div className="space-y-2 text-lg">
                 <div>이름: {childInfoModal.child.child_name}</div>
                 <div>나이: {getAgeText(childInfoModal.child.birth_date)}세</div>
                 <div>차트번호: {childInfoModal.child.chart_no ?? '-'}</div>
@@ -2847,7 +3043,7 @@ function renderScheduleCard(item: DisplayScheduleItem, dateStr: string, staffId:
                 <div>메모: {childInfoModal.child.notes ?? '-'}</div>
               </div>
 
-              <div className="mt-4 space-y-2 rounded-2xl bg-slate-50 p-4 text-xs sm:text-sm">
+              <div className="mt-5 space-y-2 rounded-2xl bg-slate-50 p-4 text-sm">
                 <div><span className="font-semibold">출석날짜:</span> {childInfoDates.attended || '-'}</div>
                 <div><span className="font-semibold">보강날짜:</span> {childInfoDates.makeup || '-'}</div>
                 <div><span className="font-semibold">결석날짜:</span> {childInfoDates.absent || '-'}</div>
@@ -2858,7 +3054,7 @@ function renderScheduleCard(item: DisplayScheduleItem, dateStr: string, staffId:
 
               <button
                 onClick={() => setChildInfoModal({ open: false, child: null })}
-                className="mt-4 w-full rounded-2xl bg-slate-100 px-4 py-3 text-lg font-bold text-slate-700"
+                className="mt-5 w-full rounded-2xl bg-slate-100 px-4 py-4 text-xl font-bold text-slate-700"
               >
                 닫기
               </button>
