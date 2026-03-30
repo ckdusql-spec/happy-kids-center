@@ -235,10 +235,10 @@ function getVoucherLabel(vouchers?: string[] | null) {
 }
 
 function getVoucherClass(voucher?: string | null) {
-  if (voucher === '디딤') return 'border-blue-200 bg-blue-50 text-blue-700'
+  if (voucher === '디딤') return 'border-amber-200 bg-amber-50 text-amber-700'
   if (voucher === '아청심') return 'border-violet-200 bg-violet-50 text-violet-700'
   if (voucher === '드림스타트') return 'border-emerald-200 bg-emerald-50 text-emerald-700'
-  if (voucher === '배움') return 'border-amber-200 bg-amber-50 text-amber-700'
+  if (voucher === '배움') return 'border-blue-200 bg-blue-50 text-blue-700'
   if (voucher === '그룹수업') return 'border-rose-200 bg-rose-50 text-rose-700'
   return 'border-slate-200 bg-slate-50 text-slate-700'
 }
@@ -412,8 +412,17 @@ function AdminDailySchedule({
   attendanceMap: Map<string, ClassLogRow>
   onOpenRecord: (entry: ScheduleEntryRow) => void
 }) {
-  const teacherList = staffs.filter((s) => s.role === 'employee' && s.is_active)
-  const slots = getHourSlots()
+const dayEntries = entries.filter((e) => e.date === selectedDate && e.is_active)
+
+const activeTeacherIds = new Set(dayEntries.map((e) => Number(e.teacher_id)))
+
+const teacherList = staffs.filter(
+  (s) => s.role === 'employee' && s.is_active && activeTeacherIds.has(Number(s.id))
+)
+
+const slots = Array.from(new Set(dayEntries.map((e) => e.time_slot))).sort((a, b) =>
+  a.localeCompare(b)
+)
 
   function getAttendanceKey(entry: ScheduleEntryRow) {
     return buildLogicalAttendanceKey({
@@ -461,8 +470,7 @@ function AdminDailySchedule({
     return Array.from(groupMap.values()).sort((a, b) => a.minuteSlot - b.minuteSlot)
   }
 
-  const totalCount = entries.filter((v) => v.date === selectedDate && v.is_active).length
-
+const totalCount = dayEntries.length
   return (
     <div className="rounded-2xl bg-white p-4 shadow-sm">
       <div className="mb-4">
@@ -2072,35 +2080,34 @@ export default function AdminPage() {
               <h1 className="text-xl font-bold md:text-2xl">관리자 시간표</h1>
 
               <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                <div className="flex flex-wrap gap-2">
-                  <button
-                    onClick={() => setViewMode('all')}
-                    className={`rounded-xl px-4 py-2 text-sm font-medium ${
-                      viewMode === 'all' ? 'bg-emerald-500 text-white' : 'bg-slate-200 text-slate-700'
-                    }`}
-                  >
-                    전체보기
-                  </button>
+<div className="flex flex-wrap gap-2">
+  <button
+    onClick={() => setViewMode('daily')}
+    className={`rounded-xl px-4 py-2 text-sm font-medium ${
+      viewMode === 'daily' ? 'bg-orange-500 text-white' : 'bg-slate-200 text-slate-700'
+    }`}
+  >
+    일별 보기
+  </button>
 
-                  <button
-                    onClick={() => setViewMode('staff')}
-                    className={`rounded-xl px-4 py-2 text-sm font-medium ${
-                      viewMode === 'staff' ? 'bg-indigo-500 text-white' : 'bg-slate-200 text-slate-700'
-                    }`}
-                  >
-                    선생님별 보기
-                  </button>
+  <button
+    onClick={() => setViewMode('all')}
+    className={`rounded-xl px-4 py-2 text-sm font-medium ${
+      viewMode === 'all' ? 'bg-emerald-500 text-white' : 'bg-slate-200 text-slate-700'
+    }`}
+  >
+    전체보기
+  </button>
 
-                  <button
-                    onClick={() => setViewMode('daily')}
-                    className={`rounded-xl px-4 py-2 text-sm font-medium ${
-                      viewMode === 'daily' ? 'bg-orange-500 text-white' : 'bg-slate-200 text-slate-700'
-                    }`}
-                  >
-                    일별 보기
-                  </button>
-                </div>
-
+  <button
+    onClick={() => setViewMode('staff')}
+    className={`rounded-xl px-4 py-2 text-sm font-medium ${
+      viewMode === 'staff' ? 'bg-indigo-500 text-white' : 'bg-slate-200 text-slate-700'
+    }`}
+  >
+    선생님별 보기
+  </button>
+</div>
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                   {viewMode === 'staff' ? (
                     <select
