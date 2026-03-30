@@ -496,7 +496,7 @@ const totalCount = dayEntries.length
               <tr>
                 <th className="border bg-slate-100 px-2 py-2">시간</th>
                 {teacherList.map((teacher) => (
-                  <th key={teacher.id} className="min-w-[220px] border bg-slate-100 px-2 py-2">
+                  <th key={teacher.id} className="min-w-[150px] border bg-slate-100 px-2 py-2">
                     {teacher.name}
                   </th>
                 ))}
@@ -530,7 +530,7 @@ const totalCount = dayEntries.length
                                     const firstEntry = item.rows[0]
                                     if (firstEntry) onOpenRecord(firstEntry)
                                   }}
-                                  className={`block w-full rounded-lg border px-2 py-2 text-left shadow-sm ${getScheduleCardBgClass(
+                                  className={`block w-full rounded-lg border px-1.5 py-1.5 text-left shadow-sm ${getScheduleCardBgClass(
                                     item,
                                     classLogs
                                   )}`}
@@ -552,7 +552,7 @@ const totalCount = dayEntries.length
                                             key={r.id}
                                             type="button"
                                             onClick={() => onOpenRecord(r)}
-                                            className="block w-full rounded bg-white/70 px-2 py-1 text-left hover:bg-white"
+                                            className="block w-full rounded bg-white/70 px-1.5 py-1 text-left hover:bg-white"
                                           >
                                             {child?.child_name ?? `학생(${r.child_id})`}
                                             {log?.status ? ` (${getStatusLabel(log.status)})` : ' (미입력)'}
@@ -2721,7 +2721,6 @@ export default function AdminPage() {
                         <div className="mt-1 text-sm text-slate-500">
                           {child.chart_no ? `차트번호 ${child.chart_no}` : '차트번호 없음'}
                           {child.phone ? ` / ${child.phone}` : ''}
-                          {` / 일반단가 ${child.base_price ?? child.monthly_limit ?? 60000}`}
                         </div>
                       </button>
                     )
