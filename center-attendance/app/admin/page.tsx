@@ -2191,7 +2191,7 @@ export default function AdminPage() {
             ) : (
               <>
                 <div className="hidden overflow-x-auto md:block">
-                  <table className="min-w-full border text-sm">
+                  <table className="min-w-full border text-xs">
                     <thead>
                       <tr>
                         <th className="border bg-slate-100 px-1 py-2">시간</th>
