@@ -2198,7 +2198,7 @@ export default function AdminPage() {
 
                         {viewMode === 'staff'
                           ? weekDates.map((date, idx) => (
-                              <th key={`staff-${idx}`}  className="w-[70px] min-w-[70px] max-w-[70px] border bg-slate-100 px-1 py-1 text-[10px] leading-none"
+                              <th key={`staff-${idx}`}  className="w-[120px] min-w-[120px] max-w-[120px] border bg-slate-100 px-1 py-1.5 text-[10px] leading-none"
 >
                                <div className="truncate text-[10px] font-semibold leading-none">
                                   {['월', '화', '수', '목', '금', '토'][idx]} {toShortMonthDay(date)}
