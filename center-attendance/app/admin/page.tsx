@@ -494,9 +494,14 @@ const totalCount = dayEntries.length
           <table className="min-w-[900px] border text-sm">
             <thead>
               <tr>
-                <th className="border bg-slate-100 px-2 py-2">시간</th>
+                <th className="w-[60px] border bg-slate-100 px-1 py-1 text-[10px]">
+  시간
+</th>
                 {teacherList.map((teacher) => (
-                  <th key={teacher.id} className="min-w-[100px] border bg-slate-100 px-1.5 py-1.5">
+                  <th
+  key={teacher.id}
+  className="w-[90px] min-w-[90px] max-w-[90px] border bg-slate-100 px-1 py-1 text-[10px] leading-tight"
+>
                     {teacher.name}
                   </th>
                 ))}
@@ -505,14 +510,19 @@ const totalCount = dayEntries.length
             <tbody>
               {slots.map((slot) => (
                 <tr key={slot}>
-                  <td className="border bg-slate-50 px-2 py-2 font-medium">{slot}</td>
+                  <td className="w-[52px] min-w-[52px] max-w-[52px] border bg-slate-50 px-1 py-1 text-[10px] font-medium leading-tight">
+  {slot}
+</td>
                   {teacherList.map((teacher) => {
                     const items = buildItems(slot, teacher.id)
                     return (
-                      <td key={`${slot}-${teacher.id}`} className="border px-2 py-2 align-top">
-                        <div className="space-y-2">
+                      <td
+  key={`${slot}-${teacher.id}`}
+  className="w-[90px] min-w-[90px] max-w-[90px] border px-1 py-1 align-top"
+>
+                        <div className="space-y-1">
                           {items.length === 0 ? (
-                            <div className="min-h-[40px]" />
+                            <div className="min-h-[24px]" />
                           ) : (
                             items.map((item) => {
                               const firstChild = children.find(
