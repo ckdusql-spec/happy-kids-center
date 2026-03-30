@@ -2200,10 +2200,10 @@ export default function AdminPage() {
                           ? weekDates.map((date, idx) => (
                               <th key={`staff-${idx}`}  className="w-[120px] min-w-[120px] max-w-[120px] border bg-slate-100 px-1 py-1.5 text-[10px] leading-none"
 >
-                               <div className="truncate text-[10px] font-semibold leading-none">
+                              <div className="text-sm font-semibold leading-tight">
                                   {['월', '화', '수', '목', '금', '토'][idx]} {toShortMonthDay(date)}
                                 </div>
-                                <div className="mt-0.5 truncate text-[9px] font-normal leading-none text-slate-500">
+                                <div className="mt-1 text-xs font-normal leading-tight text-slate-500">
                                   {selectedStaff?.name}
                                 </div>
                               </th>
