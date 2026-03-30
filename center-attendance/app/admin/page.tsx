@@ -2191,14 +2191,14 @@ export default function AdminPage() {
             ) : (
               <>
                 <div className="hidden overflow-x-auto md:block">
-                  <table className="w-full border text-xs table-fixed">
+                  <table className="min-w-full border text-sm">
                     <thead>
                       <tr>
                         <th className="border bg-slate-100 px-1 py-2">시간</th>
 
                         {viewMode === 'staff'
                           ? weekDates.map((date, idx) => (
-                              <th key={`staff-${idx}`}  className="w-[120px] min-w-[120px] max-w-[120px] border bg-slate-100 px-1 py-1.5 text-[10px] >
+                              <th key={`staff-${idx}`}  className="w-[120px] min-w-[120px] max-w-[120px] border bg-slate-100 px-1 py-1.5 text-[10px] leading-none">
                               <div className="text-sm font-semibold leading-tight">
                                   {['월', '화', '수', '목', '금', '토'][idx]} {toShortMonthDay(date)}
                                 </div>
