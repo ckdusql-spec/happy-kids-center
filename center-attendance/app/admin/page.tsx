@@ -508,7 +508,7 @@ const totalCount = dayEntries.length
             <tbody>
               {slots.map((slot) => (
                       <tr key={slot}>
-                  <td className="w-[40px] min-w-[40px] max-w-[40px] border bg-slate-50 px-1 py-1 text-[15px] font-medium leading-tight">
+                  <td className="w-[40px] min-w-[40px] max-w-[40px] border bg-slate-50 px-2 py-2 text-[15px] font-medium leading-tight">
   {slot}
 </td>
                   {teacherList.map((teacher) => {
