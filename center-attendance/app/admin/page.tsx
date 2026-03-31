@@ -498,7 +498,7 @@ const totalCount = dayEntries.length
                 {teacherList.map((teacher) => (
                                   <th
   key={teacher.id}
-  className="w-[70px] min-w-[70px] max-w-[70px] border bg-slate-100 px-1 py-1 text-[15px] leading-tight"
+  className="w-[60px] min-w-[60px] max-w-[60px] border bg-slate-100 px-1 py-1 text-[15px] leading-tight"
 >
                     {teacher.name}
                   </th>
@@ -516,7 +516,7 @@ const totalCount = dayEntries.length
                     return (
        <td
   key={`${slot}-${teacher.id}`}
-  className="w-[70px] min-w-[70px] max-w-[70px] border px-1 py-1 align-top"
+  className="w-[60px] min-w-[60px] max-w-[60px] border px-1 py-1 align-top"
 >
 
                         <div className="space-y-1">
