@@ -489,7 +489,7 @@ const totalCount = dayEntries.length
         </div>
       ) : (
         <div className="overflow-x-auto">
-          <table className="min-w-[850px] border text-sm">
+          <table className="min-w-[900px] border text-sm">
             <thead>
               <tr>
                 <th className="w-[30px] border bg-slate-100 px-1 py-1 text-[15px]">
@@ -2133,14 +2133,14 @@ export default function AdminPage() {
                     </select>
                   ) : null}
 
-                  {viewMode === 'daily' ? (
-                    <input
-                      type="date"
-                      value={dailyDate}
-                      onChange={(e) => setDailyDate(e.target.value)}
-                      className="rounded-xl border px-3 py-3 md:py-2"
-                    />
-                  ) : null}
+{viewMode === 'daily' || viewMode === 'all' ? (
+  <input
+    type="date"
+    value={dailyDate}
+    onChange={(e) => setDailyDate(e.target.value)}
+    className="rounded-xl border px-3 py-2"
+  />
+) : null}
 
                   <div className="flex gap-2">
                     <button
@@ -2206,20 +2206,19 @@ export default function AdminPage() {
                                 </div>
                               </th>
                             ))
-                          : weekDates.flatMap((date, idx) =>
-                              employeeStaffs.map((staff) => (
-                                <th
-                                  key={`all-${toDateString(date)}-${staff.id}`}
-                                  className="min-w-[140px] border bg-slate-100 px-1 py-2"
-                                >
-                                  <div className="text-sm font-semibold leading-tight">
-                                    {['월', '화', '수', '목', '금', '토'][idx]} {toShortMonthDay(date)}
-                                  </div>
-                                  <div className="mt-1 text-xs font-normal leading-tight text-slate-500">
-                                    {staff.name}
-                                  </div>
-                                </th>
-                              ))
+   : employeeStaffs.map((staff) => (
+    <th
+      key={`all-${dailyDate}-${staff.id}`}
+      className="min-w-[120px] border bg-slate-100 px-1 py-1"
+    >
+      <div className="text-xs font-semibold leading-tight">
+        {staff.name}
+      </div>
+      <div className="mt-0.5 text-[10px] font-normal leading-tight text-slate-500">
+        {dailyDate}
+      </div>
+    </th>
+  ))
                             )}
                       </tr>
                     </thead>
@@ -2391,167 +2390,164 @@ export default function AdminPage() {
                                   </td>
                                 )
                               })
-                            : weekDates.flatMap((date) =>
-                                employeeStaffs.map((staff) => {
-                                  const dateStr = toDateString(date)
-                                  const items = buildDisplayItems(dateStr, hourSlot, Number(staff.id))
-                                  const isEditing =
-                                    editingCell?.date === dateStr &&
-                                    editingCell?.hour === hourSlot &&
-                                    Number(editingCell?.staffId) === Number(staff.id)
+  : employeeStaffs.map((staff) => {
+    const dateStr = dailyDate
+    const items = buildDisplayItems(dateStr, hourSlot, Number(staff.id))
+    const isEditing =
+      editingCell?.date === dateStr &&
+      editingCell?.hour === hourSlot &&
+      Number(editingCell?.staffId) === Number(staff.id)
 
-                                  return (
-                                    <td
-                                      key={`all-${staff.id}-${dateStr}-${hourSlot}`}
-                                      className="min-w-[140px] border px-1 py-1 align-top"
-                                    >
-                                      {isEditing ? (
-                                        <div className="min-h-[72px] space-y-2">
-                                          <label className="flex items-center gap-2 text-xs">
-                                            <input
-                                              type="checkbox"
-                                              checked={isGroupLesson}
-                                              onChange={(e) => {
-                                                setIsGroupLesson(e.target.checked)
-                                                setSelectedVoucher('')
-                                                setScheduleChildId('')
-                                                setSelectedGroupChildIds([])
-                                              }}
-                                            />
-                                            그룹수업
-                                          </label>
+    return (
+      <td
+        key={`all-${staff.id}-${dateStr}-${hourSlot}`}
+        className="min-w-[120px] border px-1 py-1 align-top"
+      >
+        {isEditing ? (
+          <div className="space-y-2">
+            <label className="flex items-center gap-2 text-xs">
+              <input
+                type="checkbox"
+                checked={isGroupLesson}
+                onChange={(e) => {
+                  setIsGroupLesson(e.target.checked)
+                  setSelectedVoucher('')
+                  setScheduleChildId('')
+                  setSelectedGroupChildIds([])
+                }}
+              />
+              그룹수업
+            </label>
 
-                                          {isGroupLesson ? (
-                                            <>
-                                              <input
-                                                value={groupName}
-                                                onChange={(e) => setGroupName(e.target.value)}
-                                                placeholder="그룹명"
-                                                className="w-full rounded border bg-white px-2 py-1 text-xs"
-                                              />
-                                              <input
-                                                value={groupSearch}
-                                                onChange={(e) => setGroupSearch(e.target.value)}
-                                                placeholder="학생 이름 검색"
-                                                className="w-full rounded border bg-white px-2 py-1 text-xs"
-                                              />
-                                              <div className="rounded border p-2">
-                                                <div className="mb-2 text-[11px] text-slate-500">
-                                                  학생 선택 ({selectedGroupChildIds.length}/8)
-                                                </div>
-                                                <div className="grid max-h-40 grid-cols-1 gap-1 overflow-y-auto">
-                                                  {filteredGroupChildren.map((c) => {
-                                                    const active = selectedGroupChildIds.includes(c.id)
-                                                    return (
-                                                      <button
-                                                        key={c.id}
-                                                        type="button"
-                                                        onClick={() => toggleGroupChild(c.id)}
-                                                        className={`rounded px-2 py-1 text-left text-[11px] ${
-                                                          active ? 'bg-rose-500 text-white' : 'bg-slate-100 text-slate-700'
-                                                        }`}
-                                                      >
-                                                        {getDisplayName(c)}
-                                                      </button>
-                                                    )
-                                                  })}
-                                                </div>
-                                              </div>
-                                            </>
-                                          ) : (
-                                            <>
-                                              <select
-                                                value={scheduleChildId}
-                                                onChange={(e) =>
-                                                  setScheduleChildId(e.target.value ? Number(e.target.value) : '')
-                                                }
-                                                className="w-full rounded border bg-white px-2 py-1 text-xs"
-                                              >
-                                                <option value="">학생 선택</option>
-                                                {children.filter((c) => c.is_active).map((c) => (
-                                                  <option key={c.id} value={c.id}>
-                                                    {getDisplayName(c)}
-                                                  </option>
-                                                ))}
-                                              </select>
+            {isGroupLesson ? (
+              <>
+                <input
+                  value={groupName}
+                  onChange={(e) => setGroupName(e.target.value)}
+                  placeholder="그룹명"
+                  className="w-full rounded border bg-white px-2 py-1 text-xs"
+                />
 
-                                              <select
-                                                value={selectedVoucher}
-                                                onChange={(e) => setSelectedVoucher(e.target.value)}
-                                                className="w-full rounded border bg-white px-2 py-1 text-xs"
-                                              >
-                                                <option value="">바우처 선택</option>
-                                                {getVoucherOptionsForChild(scheduleChildId).map((voucher) => (
-                                                  <option key={voucher} value={voucher}>
-                                                    {voucher}
-                                                  </option>
-                                                ))}
-                                              </select>
-                                            </>
-                                          )}
+                <input
+                  value={groupSearch}
+                  onChange={(e) => setGroupSearch(e.target.value)}
+                  placeholder="학생 이름 검색"
+                  className="w-full rounded border bg-white px-2 py-1 text-xs"
+                />
 
-                                          <select
-                                            value={selectedMinute}
-                                            onChange={(e) => setSelectedMinute(e.target.value)}
-                                            className="w-full rounded border bg-white px-2 py-1 text-xs"
-                                          >
-                                            {getMinutesOptions().map((m) => (
-                                              <option key={m} value={m}>
-                                                {m}분
-                                              </option>
-                                            ))}
-                                          </select>
+                <div className="rounded border p-2">
+                  <div className="mb-2 text-[11px] text-slate-500">
+                    학생 선택 ({selectedGroupChildIds.length}/8)
+                  </div>
 
-                                          <div className="flex gap-1">
-                                            <button
-                                              onClick={() =>
-                                                handleSaveSchedule(dateStr, hourSlot, Number(staff.id))
-                                              }
-                                              className="flex-1 rounded bg-indigo-600 px-2 py-1 text-xs text-white"
-                                            >
-                                              저장
-                                            </button>
-                                            <button
-                                              onClick={resetScheduleEditor}
-                                              className="flex-1 rounded bg-slate-300 px-2 py-1 text-xs"
-                                            >
-                                              취소
-                                            </button>
-                                          </div>
-                                        </div>
-                                      ) : (
-                                        <div className="space-y-1">
-                                          <button
-                                            type="button"
-                                            onClick={() => {
-                                              setEditingCell({
-                                                date: dateStr,
-                                                hour: hourSlot,
-                                                staffId: Number(staff.id),
-                                              })
-                                              setEditingEntryId(null)
-                                              setEditingGroupId(null)
-                                              setScheduleChildId('')
-                                              setSelectedMinute('00')
-                                              setSelectedVoucher('')
-                                              setIsGroupLesson(false)
-                                              setGroupName('')
-                                              setSelectedGroupChildIds([])
-                                              setGroupSearch('')
-                                            }}
-                                            className="min-h-[28px] w-full rounded border border-dashed border-slate-300 px-2 py-1 text-left text-xs text-slate-500 hover:bg-slate-100"
-                                          >
-                                            + 추가
-                                          </button>
+                  <div className="grid max-h-40 grid-cols-1 gap-1 overflow-y-auto">
+                    {filteredGroupChildren.map((c) => {
+                      const active = selectedGroupChildIds.includes(c.id)
 
-                                          {items.map((item) =>
-                                            renderScheduleCard(item, dateStr, Number(staff.id))
-                                          )}
-                                        </div>
-                                      )}
-                                    </td>
-                                  )
-                                })
+                      return (
+                        <button
+                          key={c.id}
+                          type="button"
+                          onClick={() => toggleGroupChild(c.id)}
+                          className={`rounded px-2 py-1 text-left text-[11px] ${
+                            active
+                              ? 'bg-rose-500 text-white'
+                              : 'bg-slate-100 text-slate-700'
+                          }`}
+                        >
+                          {getDisplayName(c)}
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+              </>
+            ) : (
+              <>
+                <select
+                  value={scheduleChildId}
+                  onChange={(e) => setScheduleChildId(e.target.value ? Number(e.target.value) : '')}
+                  className="w-full rounded border bg-white px-2 py-1 text-xs"
+                >
+                  <option value="">학생 선택</option>
+                  {children
+                    .filter((c) => c.is_active)
+                    .map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {getDisplayName(c)}
+                      </option>
+                    ))}
+                </select>
+
+                <select
+                  value={selectedVoucher}
+                  onChange={(e) => setSelectedVoucher(e.target.value)}
+                  className="w-full rounded border bg-white px-2 py-1 text-xs"
+                >
+                  <option value="">바우처 선택</option>
+                  {getVoucherOptionsForChild(scheduleChildId).map((voucher) => (
+                    <option key={voucher} value={voucher}>
+                      {voucher}
+                    </option>
+                  ))}
+                </select>
+              </>
+            )}
+
+            <select
+              value={selectedMinute}
+              onChange={(e) => setSelectedMinute(e.target.value)}
+              className="w-full rounded border bg-white px-2 py-1 text-xs"
+            >
+              {getMinutesOptions().map((m) => (
+                <option key={m} value={m}>
+                  {m}분
+                </option>
+              ))}
+            </select>
+
+            <div className="flex gap-1">
+              <button
+                onClick={() => handleSaveSchedule(dateStr, hourSlot, Number(staff.id))}
+                className="flex-1 rounded bg-indigo-600 px-2 py-1 text-xs text-white"
+              >
+                저장
+              </button>
+              <button
+                onClick={resetScheduleEditor}
+                className="flex-1 rounded bg-slate-300 px-2 py-1 text-xs"
+              >
+                취소
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-1">
+            <button
+              type="button"
+              onClick={() => {
+                setEditingCell({ date: dateStr, hour: hourSlot, staffId: Number(staff.id) })
+                setEditingEntryId(null)
+                setEditingGroupId(null)
+                setScheduleChildId('')
+                setSelectedMinute('00')
+                setSelectedVoucher('')
+                setIsGroupLesson(false)
+                setGroupName('')
+                setSelectedGroupChildIds([])
+                setGroupSearch('')
+              }}
+              className="w-full rounded border border-dashed border-slate-300 px-2 py-1 text-left text-xs text-slate-500"
+            >
+              + 추가
+            </button>
+
+            {items.map((item) => renderScheduleCard(item, dateStr, Number(staff.id)))}
+          </div>
+        )}
+      </td>
+    )
+  })
                               )}
                         </tr>
                       ))}
