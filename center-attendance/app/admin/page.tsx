@@ -491,16 +491,16 @@ const totalCount = dayEntries.length
         </div>
       ) : (
         <div className="overflow-x-auto">
-          <table className="min-w-[900px] border text-sm">
+          <table className="min-w-[850px] border text-xs">
             <thead>
               <tr>
-                <th className="w-[60px] border bg-slate-100 px-1 py-1 text-[10px]">
+                <th className="w-[50px] border bg-slate-100 px-1 py-1 text-[20px]">
   시간
 </th>
                 {teacherList.map((teacher) => (
-                  <th
+                                  <th
   key={teacher.id}
-  className="w-[90px] min-w-[90px] max-w-[90px] border bg-slate-100 px-1 py-1 text-[10px] leading-tight"
+  className="w-[70px] min-w-[70px] max-w-[70px] border bg-slate-100 px-1 py-1 text-[20px] leading-tight"
 >
                     {teacher.name}
                   </th>
@@ -509,17 +509,18 @@ const totalCount = dayEntries.length
             </thead>
             <tbody>
               {slots.map((slot) => (
-                <tr key={slot}>
-                  <td className="w-[52px] min-w-[52px] max-w-[52px] border bg-slate-50 px-1 py-1 text-[10px] font-medium leading-tight">
+                      <tr key={slot}>
+                  <td className="w-[40px] min-w-[40px] max-w-[40px] border bg-slate-50 px-1 py-1 text-[10px] font-medium leading-tight">
   {slot}
 </td>
                   {teacherList.map((teacher) => {
                     const items = buildItems(slot, teacher.id)
                     return (
-                      <td
+       <td
   key={`${slot}-${teacher.id}`}
-  className="w-[90px] min-w-[90px] max-w-[90px] border px-1 py-1 align-top"
+  className="w-[70px] min-w-[70px] max-w-[70px] border px-1 py-1 align-top"
 >
+
                         <div className="space-y-1">
                           {items.length === 0 ? (
                             <div className="min-h-[24px]" />
@@ -2211,7 +2212,7 @@ export default function AdminPage() {
                               employeeStaffs.map((staff) => (
                                 <th
                                   key={`all-${toDateString(date)}-${staff.id}`}
-                                  className="min-w-[120px] border bg-slate-100 px-1 py-2"
+                                  className="min-w-[140px] border bg-slate-100 px-1 py-2"
                                 >
                                   <div className="text-sm font-semibold leading-tight">
                                     {['월', '화', '수', '목', '금', '토'][idx]} {toShortMonthDay(date)}
@@ -2243,7 +2244,7 @@ export default function AdminPage() {
                                 return (
                                   <td
                                     key={`${selectedStaff.id}-${dateStr}-${hourSlot}`}
-                                    className="min-w-[120px] border px-1 py-1 align-top"
+                                    className="min-w-[140px] border px-1 py-1 align-top"
                                   >
                                     {isEditing ? (
                                       <div className="min-h-[72px] space-y-2">
@@ -2404,7 +2405,7 @@ export default function AdminPage() {
                                   return (
                                     <td
                                       key={`all-${staff.id}-${dateStr}-${hourSlot}`}
-                                      className="min-w-[120px] border px-1 py-1 align-top"
+                                      className="min-w-[140px] border px-1 py-1 align-top"
                                     >
                                       {isEditing ? (
                                         <div className="min-h-[72px] space-y-2">
