@@ -492,7 +492,7 @@ const totalCount = dayEntries.length
           <table className="min-w-[850px] border text-sm">
             <thead>
               <tr>
-                <th className="w-[45px] border bg-slate-100 px-1 py-1 text-[15px]">
+                <th className="w-[30px] border bg-slate-100 px-1 py-1 text-[15px]">
   시간
 </th>
                 {teacherList.map((teacher) => (
