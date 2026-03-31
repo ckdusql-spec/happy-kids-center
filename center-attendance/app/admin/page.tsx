@@ -475,9 +475,7 @@ const totalCount = dayEntries.length
     <div className="rounded-2xl bg-white p-4 shadow-sm">
       <div className="mb-4">
         <h2 className="text-xl font-bold">일별 보기</h2>
-        <p className="mt-1 text-sm text-slate-500">
-          가로는 선생님, 세로는 시간이며 시간표 입력 기준으로 표시됩니다.
-        </p>
+
         <div className="mt-3 flex flex-wrap gap-2 text-sm">
           <div className="rounded-full bg-slate-100 px-3 py-1">선생님 수 {teacherList.length}</div>
           <div className="rounded-full bg-slate-100 px-3 py-1">시간 수 {slots.length}</div>
@@ -491,16 +489,16 @@ const totalCount = dayEntries.length
         </div>
       ) : (
         <div className="overflow-x-auto">
-          <table className="min-w-[850px] border text-xs">
+          <table className="min-w-[850px] border text-sm">
             <thead>
               <tr>
-                <th className="w-[50px] border bg-slate-100 px-1 py-1 text-[20px]">
+                <th className="w-[45px] border bg-slate-100 px-1 py-1 text-[15px]">
   시간
 </th>
                 {teacherList.map((teacher) => (
                                   <th
   key={teacher.id}
-  className="w-[70px] min-w-[70px] max-w-[70px] border bg-slate-100 px-1 py-1 text-[20px] leading-tight"
+  className="w-[70px] min-w-[70px] max-w-[70px] border bg-slate-100 px-1 py-1 text-[15px] leading-tight"
 >
                     {teacher.name}
                   </th>
@@ -510,7 +508,7 @@ const totalCount = dayEntries.length
             <tbody>
               {slots.map((slot) => (
                       <tr key={slot}>
-                  <td className="w-[40px] min-w-[40px] max-w-[40px] border bg-slate-50 px-1 py-1 text-[10px] font-medium leading-tight">
+                  <td className="w-[40px] min-w-[40px] max-w-[40px] border bg-slate-50 px-1 py-1 text-[15px] font-medium leading-tight">
   {slot}
 </td>
                   {teacherList.map((teacher) => {
