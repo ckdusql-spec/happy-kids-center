@@ -2222,8 +2222,7 @@ export default function AdminPage() {
         </div>
       </th>
     ))}
-                              ))
-                            )}
+
                       </tr>
                     </thead>
                     <tbody>
