@@ -961,7 +961,7 @@ export default function AdminPage() {
         is_active: staffForm.isActive,
       }
 
-      if (staffForm.password.trim()) payload.password = staffForm.password
+      if (staffForm.password.trim()) payload.password_hash = staffForm.password
 
       if (staffForm.id) {
         const { error } = await supabase.from('staff_accounts').update(payload).eq('id', staffForm.id)
