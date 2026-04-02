@@ -1,50 +1,56 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
+import { supabase } from '@/lib/supabase'
+
+type MainTab = 'today' | 'schedule'
+type AttendanceStatus = 'attended' | 'absent' | 'makeup' | 'same_day_absent'
+type StaffRole = 'admin' | 'employee'
 
 type User = {
   id: number
-  loginId: string
   name: string
-  role: 'admin' | 'employee'
+  loginId: string
+  role: StaffRole
 }
 
-type VoucherType =
-  | 'none'
-  | 'edu_office'
-  | 'mental_health'
-  | 'after_school'
-  | 'gugu'
+type StaffRow = {
+  id: number
+  login_id: string
+  name: string
+  role: StaffRole
+  is_active: boolean
+}
 
-type Child = {
+type ChildRow = {
   id: number
   chart_no: string | null
   child_name: string
   birth_date: string | null
   phone: string | null
-  voucher_type: VoucherType
-  voucher_label: string
-  voucher_color: 'yellow' | 'purple' | 'green' | 'orange' | 'slate'
-  age_text: string
-  display_name: string
-  is_active: boolean
+  vouchers: string[] | null
+  base_price?: number | null
+  voucher_prices?: Record<string, number> | null
   notes: string | null
+  is_active: boolean
 }
 
-type Attendance = {
-  id: number
-  work_date: string
-  check_in_time: string | null
-  check_out_time: string | null
-} | null
-
-type ScheduleRow = {
-  id: number
-  staff_id: number
-  child_id: number
-  schedule_date: string
+type ScheduleEntryRow = {
+  id: string
+  date: string
   time_slot: string
-  memo: string | null
+  minute_slot: number | null
+  teacher_id: number
+  teacher_name: string | null
+  child_id: number | null
+  voucher_type: string | null
+  note: string | null
+  is_active: boolean | null
+  is_group: boolean | null
+  group_id: string | null
+  group_name: string | null
+  created_at?: string | null
+  updated_at?: string | null
 }
 
 type ClassLogRow = {
@@ -53,34 +59,37 @@ type ClassLogRow = {
   child_id: number
   class_date: string
   class_time: string
-  status: 'attended' | 'absent' | 'makeup' | 'same_day_absent'
+  status: AttendanceStatus
+  voucher_type?: string | null
+  is_group?: boolean | null
+  group_id?: string | null
+  group_name?: string | null
+  created_at?: string | null
+  updated_at?: string | null
 }
 
-type TodayOverviewRow = {
-  id: number
-  staff_id: number
-  child_id: number
-  schedule_date: string
-  time_slot: string
-  memo: string | null
-  input_status: 'attended' | 'absent' | 'makeup' | 'same_day_absent' | null
+type DisplayScheduleItem = {
+  key: string
+  date: string
+  hourSlot: string
+  minuteSlot: number
+  staffId: number
+  teacherName: string
+  voucherType: string
+  note: string
+  isGroup: boolean
+  groupId: string | null
+  groupName: string | null
+  rows: ScheduleEntryRow[]
 }
 
-function formatKSTDateTime(value: string | null) {
-  if (!value) return '-'
-  return new Date(value).toLocaleString('ko-KR', {
-    timeZone: 'Asia/Seoul',
-    hour12: false,
-  })
-}
+type EditingCell = {
+  date: string
+  hour: string
+} | null
 
-function getMonday(date: Date) {
-  const d = new Date(date)
-  const day = d.getDay()
-  const diff = day === 0 ? -6 : 1 - day
-  d.setDate(d.getDate() + diff)
-  return d
-}
+const VOUCHER_FALLBACK = ['일반']
+const STATUS_OPTIONS: AttendanceStatus[] = ['attended', 'absent', 'makeup', 'same_day_absent']
 
 function toDateString(date: Date) {
   const y = date.getFullYear()
@@ -90,14 +99,21 @@ function toDateString(date: Date) {
 }
 
 function toShortMonthDay(date: Date) {
-  return `${String(date.getMonth() + 1).padStart(2, '0')}/${String(
-    date.getDate()
-  ).padStart(2, '0')}`
+  return `${String(date.getMonth() + 1).padStart(2, '0')}/${String(date.getDate()).padStart(2, '0')}`
+}
+
+function getMonday(date: Date) {
+  const d = new Date(date)
+  const day = d.getDay()
+  const diff = day === 0 ? -6 : 1 - day
+  d.setDate(d.getDate() + diff)
+  d.setHours(0, 0, 0, 0)
+  return d
 }
 
 function getWeekDates(baseDate: Date) {
   const monday = getMonday(baseDate)
-  return Array.from({ length: 6 }).map((_, i) => {
+  return Array.from({ length: 6 }, (_, i) => {
     const d = new Date(monday)
     d.setDate(monday.getDate() + i)
     return d
@@ -120,81 +136,193 @@ function getMinutesOptions() {
   return ['00', '10', '20', '30', '40', '50']
 }
 
-function extractHour(timeSlot: string) {
-  return timeSlot.slice(0, 2)
+function getAgeText(birthDate: string | null | undefined) {
+  if (!birthDate) return ''
+  const birth = new Date(birthDate)
+  if (Number.isNaN(birth.getTime())) return ''
+  const now = new Date()
+  let age = now.getFullYear() - birth.getFullYear()
+  const monthDiff = now.getMonth() - birth.getMonth()
+  const dayDiff = now.getDate() - birth.getDate()
+  if (monthDiff < 0 || (monthDiff === 0 && dayDiff < 0)) age--
+  return String(age)
 }
 
-function getVoucherChipClass(color: Child['voucher_color']) {
-  switch (color) {
-    case 'yellow':
-      return 'bg-yellow-100 text-yellow-800'
-    case 'purple':
-      return 'bg-purple-100 text-purple-800'
-    case 'green':
-      return 'bg-green-100 text-green-800'
-    case 'orange':
-      return 'bg-orange-100 text-orange-800'
-    default:
-      return 'bg-slate-100 text-slate-700'
-  }
+function getDisplayName(child: ChildRow) {
+  const ageText = getAgeText(child.birth_date)
+  return ageText ? `${child.child_name} (${ageText})` : child.child_name
 }
 
-function getItemStyle(status?: 'attended' | 'absent' | 'makeup' | 'same_day_absent' | null) {
-  if (status === 'attended') return 'bg-blue-100 text-blue-700'
-  if (status === 'makeup') return 'bg-blue-100 text-blue-700'
-  if (status === 'absent') return 'bg-red-50 text-red-400'
-  if (status === 'same_day_absent') return 'bg-red-200 text-red-800'
-  return 'bg-slate-100 text-slate-700'
+function getVoucherLabel(vouchers: string[] | null | undefined) {
+  if (!vouchers || vouchers.length === 0) return '일반'
+  return vouchers.join(', ')
 }
 
-function getStatusText(status?: 'attended' | 'absent' | 'makeup' | 'same_day_absent' | null) {
+function getVoucherClass(voucher: string | null | undefined) {
+  if (voucher === '디딤') return 'border-blue-200 bg-blue-50 text-blue-700'
+  if (voucher === '아청심') return 'border-violet-200 bg-violet-50 text-violet-700'
+  if (voucher === '드림스타트') return 'border-emerald-200 bg-emerald-50 text-emerald-700'
+  if (voucher === '배움') return 'border-amber-200 bg-amber-50 text-amber-700'
+  if (voucher === '그룹수업') return 'border-rose-200 bg-rose-50 text-rose-700'
+  return 'border-slate-200 bg-slate-50 text-slate-700'
+}
+
+function getStatusLabel(status: AttendanceStatus) {
   if (status === 'attended') return '출석'
   if (status === 'absent') return '결석'
-  if (status === 'same_day_absent') return '당일결석'
   if (status === 'makeup') return '보강'
-  return '미입력'
+  return '당일결석'
+}
+
+function getStatusClass(status: AttendanceStatus) {
+  if (status === 'attended') return 'bg-blue-100 text-blue-700'
+  if (status === 'makeup') return 'bg-sky-100 text-sky-700'
+  if (status === 'absent') return 'bg-rose-50 text-rose-600'
+  return 'bg-red-100 text-red-700'
+}
+
+function getScheduleCardBgClass(item: DisplayScheduleItem, classLogs: ClassLogRow[]) {
+  const relatedLogs = classLogs.filter((log) => {
+    const minuteTotal = getLogMinuteTotal(log)
+    if (minuteTotal == null) return false
+
+    if (item.isGroup) {
+      return item.rows.some((row) => {
+        const rowMinute = getEntryMinuteTotal(row)
+        return (
+          log.class_date === row.date &&
+          Number(log.staff_id) === Number(row.teacher_id) &&
+          Number(log.child_id) === Number(row.child_id) &&
+          minuteTotal === rowMinute &&
+          Boolean(log.is_group) &&
+          (log.group_id ?? '') === (row.group_id ?? '')
+        )
+      })
+    }
+
+    const row = item.rows[0]
+    if (!row) return false
+
+    return (
+      log.class_date === row.date &&
+      Number(log.staff_id) === Number(row.teacher_id) &&
+      Number(log.child_id) === Number(row.child_id) &&
+      minuteTotal === getEntryMinuteTotal(row) &&
+      !log.is_group
+    )
+  })
+
+  if (relatedLogs.some((log) => log.status === 'attended' || log.status === 'makeup')) {
+    return 'bg-blue-50'
+  }
+
+  if (relatedLogs.some((log) => log.status === 'same_day_absent' || log.status === 'absent')) {
+    return 'bg-red-50'
+  }
+
+  return 'bg-white'
+}
+
+function getEntryMinuteTotal(entry: ScheduleEntryRow) {
+  return Number(entry.time_slot.slice(0, 2)) * 60 + Number(entry.minute_slot ?? 0)
+}
+
+function getKSTHourMinuteFromISO(value: string) {
+  const parts = new Intl.DateTimeFormat('ko-KR', {
+    timeZone: 'Asia/Seoul',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).formatToParts(new Date(value))
+
+  const hour = parts.find((p) => p.type === 'hour')?.value
+  const minute = parts.find((p) => p.type === 'minute')?.value
+
+  if (!hour || !minute) return null
+  return { hour: Number(hour), minute: Number(minute) }
+}
+
+function getLogMinuteTotal(log: ClassLogRow) {
+  if (!log.class_time) return null
+  const hm = getKSTHourMinuteFromISO(log.class_time)
+  if (!hm) return null
+  return hm.hour * 60 + hm.minute
+}
+
+function buildClassTimestamp(date: string, hourSlot: string, minute: number | null | undefined) {
+  const hour = hourSlot.slice(0, 2)
+  const mm = String(Number(minute ?? 0)).padStart(2, '0')
+  return `${date}T${hour}:${mm}:00+09:00`
+}
+
+function buildLogicalAttendanceKey(args: {
+  classDate: string
+  minuteTotal: number
+  staffId: number
+  childId: number
+  isGroup: boolean
+  groupId: string | null
+}) {
+  return [
+    args.classDate,
+    args.minuteTotal,
+    args.staffId,
+    args.childId,
+    args.isGroup ? 'group' : 'single',
+    args.groupId ?? '',
+  ].join('|')
+}
+
+function uniqueDateList(values: string[]) {
+  return Array.from(new Set(values)).sort().join(', ')
+}
+
+function getMonthStartEnd(base: Date) {
+  const start = new Date(base.getFullYear(), base.getMonth(), 1)
+  const end = new Date(base.getFullYear(), base.getMonth() + 1, 0)
+  return { start: toDateString(start), end: toDateString(end) }
 }
 
 export default function EmployeePage() {
-  const [tab, setTab] = useState<'today' | 'schedule'>('today')
+  const [tab, setTab] = useState<MainTab>('today')
   const [user, setUser] = useState<User | null>(null)
-  const [message, setMessage] = useState('사용자 확인 중...')
+  const [message, setMessage] = useState('')
   const [loading, setLoading] = useState(false)
-  const [time, setTime] = useState('')
-  const [children, setChildren] = useState<Child[]>([])
-  const [todayAttendance, setTodayAttendance] = useState<Attendance>(null)
+
+  const [children, setChildren] = useState<ChildRow[]>([])
+  const [staffs, setStaffs] = useState<StaffRow[]>([])
+  const [scheduleRows, setScheduleRows] = useState<ScheduleEntryRow[]>([])
+  const [classLogRows, setClassLogRows] = useState<ClassLogRow[]>([])
 
   const [weekBaseDate, setWeekBaseDate] = useState(new Date())
-  const [scheduleRows, setScheduleRows] = useState<ScheduleRow[]>([])
-  const [classLogRows, setClassLogRows] = useState<ClassLogRow[]>([])
-  const [todayMode, setTodayMode] = useState<'all' | 'missing'>('all')
-  const [todayRows, setTodayRows] = useState<TodayOverviewRow[]>([])
+  const [todayDate] = useState(() => toDateString(new Date()))
 
-  const [editingCell, setEditingCell] = useState<{ date: string; hour: string } | null>(null)
+  const [editingCell, setEditingCell] = useState<EditingCell>(null)
+  const [editingEntryId, setEditingEntryId] = useState<string | null>(null)
+  const [editingGroupId, setEditingGroupId] = useState<string | null>(null)
+
   const [scheduleChildId, setScheduleChildId] = useState<number | ''>('')
   const [selectedMinute, setSelectedMinute] = useState('00')
+  const [selectedVoucher, setSelectedVoucher] = useState('')
   const [scheduleMemo, setScheduleMemo] = useState('')
-  const [isDirty, setIsDirty] = useState(false)
+  const [isGroupLesson, setIsGroupLesson] = useState(false)
+  const [groupName, setGroupName] = useState('')
+  const [groupSearch, setGroupSearch] = useState('')
+  const [selectedGroupChildIds, setSelectedGroupChildIds] = useState<number[]>([])
 
   const [recordModal, setRecordModal] = useState<{
     open: boolean
-    scheduleId: number | null
-    childId: number | null
-    classDate: string
-    classTime: string
-    status: 'attended' | 'absent' | 'makeup' | 'same_day_absent'
+    entry: ScheduleEntryRow | null
+    status: AttendanceStatus
   }>({
     open: false,
-    scheduleId: null,
-    childId: null,
-    classDate: '',
-    classTime: '',
+    entry: null,
     status: 'attended',
   })
 
   const [childInfoModal, setChildInfoModal] = useState<{
     open: boolean
-    child: Child | null
+    child: ChildRow | null
   }>({
     open: false,
     child: null,
@@ -202,385 +330,744 @@ export default function EmployeePage() {
 
   const weekDates = useMemo(() => getWeekDates(weekBaseDate), [weekBaseDate])
   const hourSlots = useMemo(() => buildHourSlots(9, 20), [])
-
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setTime(
-        new Date().toLocaleTimeString('ko-KR', {
-          timeZone: 'Asia/Seoul',
-          hour12: false,
-        })
-      )
-    }, 1000)
-
-    return () => clearInterval(timer)
-  }, [])
-
-  useEffect(() => {
-    const handler = (e: BeforeUnloadEvent) => {
-      if (!isDirty) return
-      e.preventDefault()
-      e.returnValue = ''
+  const weekRange = useMemo(() => {
+    return {
+      start: toDateString(weekDates[0]),
+      end: toDateString(weekDates[weekDates.length - 1]),
     }
+  }, [weekDates])
 
-    window.addEventListener('beforeunload', handler)
-    return () => window.removeEventListener('beforeunload', handler)
-  }, [isDirty])
+  const filteredGroupChildren = useMemo(() => {
+    const keyword = groupSearch.trim()
+    return children.filter((c) => {
+      if (!c.is_active) return false
+      if (!keyword) return true
+      return c.child_name.includes(keyword) || getDisplayName(c).includes(keyword)
+    })
+  }, [children, groupSearch])
 
-  async function handleLogout() {
-    await fetch('/api/logout', { method: 'POST' })
-    localStorage.removeItem('savedLoginId')
-    window.location.href = '/'
-  }
+  const attendanceMap = useMemo(() => {
+    const map = new Map<string, ClassLogRow>()
 
-  async function loadChildren() {
-    const res = await fetch('/api/children')
-    const json = await res.json()
+    classLogRows.forEach((log) => {
+      const minuteTotal = getLogMinuteTotal(log)
+      if (minuteTotal == null) return
 
-    if (json.ok) {
-      setChildren(json.children)
-    } else {
-      setMessage(json.message ?? '아이 목록 조회 실패')
-    }
-  }
+      const key = buildLogicalAttendanceKey({
+        classDate: log.class_date,
+        minuteTotal,
+        staffId: Number(log.staff_id),
+        childId: Number(log.child_id),
+        isGroup: Boolean(log.is_group),
+        groupId: log.group_id ?? null,
+      })
 
-  async function loadTodayAttendance(staffId: number) {
-    const res = await fetch(`/api/today-attendance?staffId=${staffId}`)
-    const json = await res.json()
-
-    if (json.ok) {
-      setTodayAttendance(json.attendance)
-    }
-  }
-
-  async function loadWeekData(staffId: number, baseDate: Date) {
-    const weekDates = getWeekDates(baseDate)
-    const startDate = toDateString(weekDates[0])
-    const endDate = toDateString(weekDates[5])
-
-    const [scheduleRes, classRes] = await Promise.all([
-      fetch(`/api/schedule?staffId=${staffId}&startDate=${startDate}&endDate=${endDate}`),
-      fetch(`/api/class-log/by-range?staffId=${staffId}&startDate=${startDate}&endDate=${endDate}`),
-    ])
-
-    const scheduleJson = await scheduleRes.json()
-    const classJson = await classRes.json()
-
-    if (scheduleJson.ok) {
-      setScheduleRows(scheduleJson.rows)
-    } else {
-      setMessage(scheduleJson.message ?? '시간표 조회 실패')
-    }
-
-    if (classJson.ok) {
-      setClassLogRows(classJson.rows)
-    } else {
-      setMessage(classJson.message ?? '수업기록 조회 실패')
-    }
-  }
-
-  async function loadTodayOverview(staffId: number, mode: 'all' | 'missing') {
-    const res = await fetch(`/api/admin/today-overview?mode=${mode}`)
-    const json = await res.json()
-
-    if (!json.ok) {
-      setMessage(json.message ?? '오늘 수업 조회 실패')
-      return
-    }
-
-    const rows = (json.rows ?? []).filter((row: TodayOverviewRow) => row.staff_id === staffId)
-    setTodayRows(rows)
-  }
-
-  useEffect(() => {
-    async function init() {
-      const meRes = await fetch('/api/me')
-      const meJson = await meRes.json()
-
-      if (!meJson.ok) {
-        setMessage(meJson.message ?? '로그인 정보 없음')
+      const prev = map.get(key)
+      if (!prev) {
+        map.set(key, log)
         return
       }
 
-      setUser(meJson.user)
-      await loadChildren()
-      await loadTodayAttendance(meJson.user.id)
-      await loadWeekData(meJson.user.id, weekBaseDate)
-      await loadTodayOverview(meJson.user.id, todayMode)
-      setMessage('')
+      const prevTime = new Date(prev.updated_at ?? prev.created_at ?? 0).getTime()
+      const nextTime = new Date(log.updated_at ?? log.created_at ?? 0).getTime()
+
+      if (nextTime >= prevTime) {
+        map.set(key, log)
+      }
+    })
+
+    return map
+  }, [classLogRows])
+
+  const todayItems = useMemo(() => {
+    return scheduleRows
+      .filter((row) => row.date === todayDate && row.is_active)
+      .map((row) => {
+        const child = children.find((c) => Number(c.id) === Number(row.child_id))
+        const status = attendanceMap.get(getAttendanceKey(row))?.status ?? null
+        return { row, child, status }
+      })
+      .sort((a, b) => {
+        const aMinute = getEntryMinuteTotal(a.row)
+        const bMinute = getEntryMinuteTotal(b.row)
+        return aMinute - bMinute
+      })
+  }, [scheduleRows, children, attendanceMap, todayDate])
+
+  const selectedChildMonthlyLogs = useMemo(() => {
+    if (!childInfoModal.child) return []
+    const { start, end } = getMonthStartEnd(new Date())
+    return classLogRows.filter(
+      (log) =>
+        Number(log.child_id) === Number(childInfoModal.child?.id) &&
+        log.class_date >= start &&
+        log.class_date <= end
+    )
+  }, [childInfoModal.child, classLogRows])
+
+  const childInfoDates = useMemo(() => {
+    const individualRows = selectedChildMonthlyLogs.filter((r) => !r.is_group)
+    const groupRows = selectedChildMonthlyLogs.filter((r) => Boolean(r.is_group))
+
+    return {
+      attended: uniqueDateList(individualRows.filter((r) => r.status === 'attended').map((r) => r.class_date)),
+      makeup: uniqueDateList(individualRows.filter((r) => r.status === 'makeup').map((r) => r.class_date)),
+      absent: uniqueDateList(individualRows.filter((r) => r.status === 'absent').map((r) => r.class_date)),
+      sameDayAbsent: uniqueDateList(individualRows.filter((r) => r.status === 'same_day_absent').map((r) => r.class_date)),
+      groupAttended: uniqueDateList(
+        groupRows.filter((r) => r.status === 'attended' || r.status === 'makeup').map((r) => r.class_date)
+      ),
+      groupAbsent: uniqueDateList(
+        groupRows.filter((r) => r.status === 'absent' || r.status === 'same_day_absent').map((r) => r.class_date)
+      ),
+    }
+  }, [selectedChildMonthlyLogs])
+
+  function getAttendanceKey(entry: ScheduleEntryRow) {
+    return buildLogicalAttendanceKey({
+      classDate: entry.date,
+      minuteTotal: getEntryMinuteTotal(entry),
+      staffId: Number(entry.teacher_id),
+      childId: Number(entry.child_id),
+      isGroup: Boolean(entry.is_group),
+      groupId: entry.group_id ?? null,
+    })
+  }
+
+  function resetScheduleEditor() {
+    setEditingCell(null)
+    setEditingEntryId(null)
+    setEditingGroupId(null)
+    setScheduleChildId('')
+    setSelectedMinute('00')
+    setSelectedVoucher('')
+    setScheduleMemo('')
+    setIsGroupLesson(false)
+    setGroupName('')
+    setGroupSearch('')
+    setSelectedGroupChildIds([])
+  }
+
+  function buildDisplayItems(dateStr: string, hourSlot: string) {
+    const rows = scheduleRows.filter(
+      (entry) =>
+        entry.date === dateStr &&
+        entry.time_slot === hourSlot &&
+        Number(entry.teacher_id) === Number(user?.id) &&
+        entry.is_active
+    )
+
+    const groupMap = new Map<string, DisplayScheduleItem>()
+
+    rows.forEach((row) => {
+      const itemKey =
+        row.is_group && row.group_id
+          ? `group-${row.group_id}`
+          : `single-${row.id}`
+
+      if (!groupMap.has(itemKey)) {
+        groupMap.set(itemKey, {
+          key: itemKey,
+          date: row.date,
+          hourSlot: row.time_slot,
+          minuteSlot: Number(row.minute_slot ?? 0),
+          staffId: Number(row.teacher_id),
+          teacherName: row.teacher_name ?? '',
+          voucherType: row.voucher_type ?? '',
+          note: row.note ?? '',
+          isGroup: Boolean(row.is_group),
+          groupId: row.group_id ?? null,
+          groupName: row.group_name ?? null,
+          rows: [],
+        })
+      }
+
+      groupMap.get(itemKey)!.rows.push(row)
+    })
+
+    return Array.from(groupMap.values()).sort((a, b) => {
+      if (a.minuteSlot !== b.minuteSlot) return a.minuteSlot - b.minuteSlot
+      return (a.groupName ?? '').localeCompare(b.groupName ?? '', 'ko')
+    })
+  }
+
+  function getVoucherOptionsForChild(childId: number | '') {
+    if (!childId) return VOUCHER_FALLBACK
+    const child = children.find((c) => c.id === Number(childId))
+    if (!child) return VOUCHER_FALLBACK
+    if (Array.isArray(child.vouchers) && child.vouchers.length > 0) return child.vouchers
+    return VOUCHER_FALLBACK
+  }
+
+  function toggleGroupChild(childId: number) {
+    setSelectedGroupChildIds((prev) => {
+      const exists = prev.includes(childId)
+      if (exists) return prev.filter((id) => id !== childId)
+      if (prev.length >= 8) return prev
+      return [...prev, childId]
+    })
+  }
+
+  function handleEditSchedule(item: DisplayScheduleItem) {
+    setEditingCell({
+      date: item.date,
+      hour: item.hourSlot,
+    })
+
+    setScheduleMemo(item.note ?? '')
+
+    if (item.isGroup) {
+      setIsGroupLesson(true)
+      setEditingGroupId(item.groupId)
+      setEditingEntryId(null)
+      setSelectedGroupChildIds(item.rows.map((row) => Number(row.child_id)))
+      setGroupName(item.groupName || '')
+      setSelectedMinute(String(item.minuteSlot).padStart(2, '0'))
+      setScheduleChildId('')
+      setSelectedVoucher('')
+      setGroupSearch('')
+    } else {
+      const row = item.rows[0]
+      if (!row) return
+      setIsGroupLesson(false)
+      setEditingGroupId(null)
+      setEditingEntryId(row.id)
+      setScheduleChildId(row.child_id ? Number(row.child_id) : '')
+      setSelectedMinute(String(row.minute_slot ?? 0).padStart(2, '0'))
+      setSelectedVoucher(row.voucher_type ?? '')
+      setSelectedGroupChildIds([])
+      setGroupName('')
+      setGroupSearch('')
     }
 
-    init()
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
+  async function loadMe() {
+    const storedId = localStorage.getItem('staff_id')
+    const storedName = localStorage.getItem('staff_name')
+    const storedRole = localStorage.getItem('staff_role') as StaffRole | null
+
+    if (!storedId) {
+      setMessage('로그인 정보가 없습니다.')
+      return null
+    }
+
+    const nextUser: User = {
+      id: Number(storedId),
+      name: storedName ?? '',
+      loginId: '',
+      role: storedRole ?? 'employee',
+    }
+
+    setUser(nextUser)
+    return nextUser
+  }
+
+  async function loadStaffs() {
+    const { data, error } = await supabase
+      .from('staff_accounts')
+      .select('id, login_id, name, role, is_active')
+      .order('name', { ascending: true })
+
+    if (error) throw error
+    setStaffs((data ?? []) as StaffRow[])
+
+    if (user && !user.loginId) {
+      const mine = (data ?? []).find((s: any) => Number(s.id) === Number(user.id))
+      if (mine) {
+        setUser((prev) =>
+          prev
+            ? {
+                ...prev,
+                loginId: mine.login_id,
+                name: mine.name,
+                role: mine.role,
+              }
+            : prev
+        )
+      }
+    }
+  }
+
+  async function loadChildren() {
+    const { data, error } = await supabase
+      .from('children')
+      .select('*')
+      .eq('is_active', true)
+      .order('child_name', { ascending: true })
+
+    if (error) throw error
+    setChildren((data ?? []) as ChildRow[])
+  }
+
+  async function loadSchedules(staffId: number) {
+    const { data, error } = await supabase
+      .from('schedule_entries')
+      .select('*')
+      .eq('teacher_id', staffId)
+      .gte('date', weekRange.start)
+      .lte('date', weekRange.end)
+      .eq('is_active', true)
+      .order('date', { ascending: true })
+      .order('time_slot', { ascending: true })
+      .order('minute_slot', { ascending: true })
+
+    if (error) throw error
+    setScheduleRows((data ?? []) as ScheduleEntryRow[])
+  }
+
+  async function loadClassLogs(staffId: number) {
+    const { data, error } = await supabase
+      .from('class_logs')
+      .select('*')
+      .eq('staff_id', staffId)
+      .gte('class_date', weekRange.start)
+      .lte('class_date', weekRange.end)
+      .order('class_date', { ascending: true })
+      .order('created_at', { ascending: true })
+
+    if (error) throw error
+    setClassLogRows((data ?? []) as ClassLogRow[])
+  }
+
+  async function loadAll(staffId: number) {
+    try {
+      setLoading(true)
+      setMessage('')
+      await Promise.all([loadStaffs(), loadChildren(), loadSchedules(staffId), loadClassLogs(staffId)])
+    } catch (err: any) {
+      setMessage(err?.message ?? '데이터 불러오기 실패')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    let mounted = true
+
+    ;(async () => {
+      const me = await loadMe()
+      if (!mounted || !me) return
+      await loadAll(me.id)
+    })()
+
+    return () => {
+      mounted = false
+    }
   }, [])
 
-  // eslint-disable-next-line react-hooks/set-state-in-effect
-useEffect(() => {
-  if (!user) return
+  useEffect(() => {
+    if (!user?.id) return
+    Promise.all([loadSchedules(user.id), loadClassLogs(user.id)]).catch((err: any) =>
+      setMessage(err?.message ?? '주간 데이터 불러오기 실패')
+    )
+  }, [weekRange.start, weekRange.end, user?.id])
 
-  const run = async () => {
-    if (tab === 'schedule') {
-      await loadWeekData(user.id, weekBaseDate)
-    }
+  async function handleLogout() {
+    localStorage.removeItem('staff_id')
+    localStorage.removeItem('staff_name')
+    localStorage.removeItem('staff_role')
+    window.location.href = '/'
+  }
 
-    if (tab === 'today') {
-      await loadTodayOverview(user.id, todayMode)
+  async function handleSaveSchedule(dateStr: string, hourSlot: string) {
+    try {
+      if (!user) return
+
+      const staff = staffs.find((s) => Number(s.id) === Number(user.id))
+      const minute = Number(selectedMinute)
+
+      if (isGroupLesson) {
+        if (selectedGroupChildIds.length === 0) {
+          setMessage('그룹수업 학생을 1명 이상 선택하세요.')
+          return
+        }
+        if (selectedGroupChildIds.length > 8) {
+          setMessage('그룹수업은 최대 8명까지 가능합니다.')
+          return
+        }
+
+        const groupId = editingGroupId || crypto.randomUUID()
+        const rows = selectedGroupChildIds.map((childId) => ({
+          date: dateStr,
+          time_slot: hourSlot,
+          minute_slot: minute,
+          teacher_id: Number(user.id),
+          teacher_name: staff?.name ?? user.name,
+          child_id: Number(childId),
+          voucher_type: '그룹수업',
+          note: scheduleMemo || null,
+          is_active: true,
+          is_group: true,
+          group_id: groupId,
+          group_name: groupName || '그룹수업',
+        }))
+
+        if (editingGroupId) {
+          const { error: offError } = await supabase
+            .from('schedule_entries')
+            .update({ is_active: false })
+            .eq('group_id', editingGroupId)
+
+          if (offError) throw offError
+        }
+
+        const { error } = await supabase.from('schedule_entries').insert(rows)
+        if (error) throw error
+      } else {
+        if (!scheduleChildId) {
+          setMessage('학생을 선택하세요.')
+          return
+        }
+        if (!selectedVoucher) {
+          setMessage('바우처를 선택하세요.')
+          return
+        }
+
+        if (editingEntryId) {
+          const { error } = await supabase
+            .from('schedule_entries')
+            .update({
+              child_id: Number(scheduleChildId),
+              minute_slot: minute,
+              voucher_type: selectedVoucher,
+              note: scheduleMemo || null,
+              is_group: false,
+              group_id: null,
+              group_name: null,
+            })
+            .eq('id', editingEntryId)
+
+          if (error) throw error
+        } else {
+          const { error } = await supabase.from('schedule_entries').insert({
+            date: dateStr,
+            time_slot: hourSlot,
+            minute_slot: minute,
+            teacher_id: Number(user.id),
+            teacher_name: staff?.name ?? user.name,
+            child_id: Number(scheduleChildId),
+            voucher_type: selectedVoucher,
+            note: scheduleMemo || null,
+            is_active: true,
+            is_group: false,
+            group_id: null,
+            group_name: null,
+          })
+
+          if (error) throw error
+        }
+      }
+
+      resetScheduleEditor()
+      await loadSchedules(user.id)
+      setMessage('시간표가 저장되었습니다.')
+    } catch (err: any) {
+      setMessage(err?.message ?? '시간표 저장 실패')
     }
   }
 
-  void run()
-}, [weekBaseDate, user, tab, todayMode])
+  async function handleDeleteSchedule(item: DisplayScheduleItem) {
+    try {
+      if (!user) return
+      const ok = window.confirm('이 시간표를 삭제할까요?')
+      if (!ok) return
 
+      if (item.isGroup && item.groupId) {
+        const { error } = await supabase
+          .from('schedule_entries')
+          .update({ is_active: false })
+          .eq('group_id', item.groupId)
 
-  async function handleAttendance(type: 'check_in' | 'check_out') {
-    if (!user) return
+        if (error) throw error
+      } else {
+        const targetId = item.rows[0]?.id
+        if (!targetId) return
 
-    setLoading(true)
-    setMessage('')
+        const { error } = await supabase
+          .from('schedule_entries')
+          .update({ is_active: false })
+          .eq('id', targetId)
 
-    const res = await fetch('/api/attendance', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ staffId: user.id, type }),
-    })
+        if (error) throw error
+      }
 
-    const json = await res.json()
-    setLoading(false)
-    setMessage(json.message)
-
-    if (json.ok) {
-      await loadTodayAttendance(user.id)
+      await loadSchedules(user.id)
+      setMessage('시간표가 삭제되었습니다.')
+    } catch (err: any) {
+      setMessage(err?.message ?? '삭제 실패')
     }
   }
 
-  async function handleSaveSchedule(date: string, hourSlot: string) {
-    if (!user) return
-
-    if (!scheduleChildId) {
-      setMessage('학생을 선택하세요.')
-      return
-    }
-
-    const timeSlot = `${extractHour(hourSlot)}:${selectedMinute}`
-
-    const res = await fetch('/api/schedule/save', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        staffId: user.id,
-        childId: scheduleChildId,
-        scheduleDate: date,
-        timeSlot,
-        memo: scheduleMemo,
-        createdByStaffId: user.id,
-      }),
+  function openRecordModal(entry: ScheduleEntryRow) {
+    const existing = attendanceMap.get(getAttendanceKey(entry))
+    setRecordModal({
+      open: true,
+      entry,
+      status: existing?.status ?? 'attended',
     })
-
-    const json = await res.json()
-    setMessage(json.message)
-
-    if (json.ok) {
-      setEditingCell(null)
-      setScheduleChildId('')
-      setSelectedMinute('00')
-      setScheduleMemo('')
-      setIsDirty(false)
-      await loadWeekData(user.id, weekBaseDate)
-      await loadTodayOverview(user.id, todayMode)
-    }
-  }
-
-  async function handleDeleteSchedule(scheduleId: number) {
-    if (!user) return
-
-    const res = await fetch('/api/schedule/save', {
-      method: 'DELETE',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ scheduleId, actorStaffId: user.id }),
-    })
-
-    const json = await res.json()
-    setMessage(json.message)
-
-    if (json.ok) {
-      await loadChildren()
-      await loadWeekData(user.id, weekBaseDate)
-      await loadTodayOverview(user.id, todayMode)
-    }
-  }
-
-  async function handleEditMemo(scheduleId: number, currentMemo: string | null) {
-    if (!user) return
-
-    const nextMemo = window.prompt('메모 수정', currentMemo ?? '')
-    if (nextMemo === null) return
-
-    const res = await fetch('/api/schedule/save', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        scheduleId,
-        memo: nextMemo,
-        actorStaffId: user.id,
-      }),
-    })
-
-    const json = await res.json()
-    setMessage(json.message)
-
-    if (json.ok) {
-      await loadWeekData(user.id, weekBaseDate)
-      await loadTodayOverview(user.id, todayMode)
-    }
   }
 
   async function handleSaveRecordStatus() {
-    if (!user || !recordModal.childId) return
+    try {
+      if (!user || !recordModal.entry) return
 
-    const res = await fetch('/api/class-log/upsert', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        staffId: user.id,
-        childId: recordModal.childId,
-        classDate: recordModal.classDate,
-        classTime: recordModal.classTime,
-        status: recordModal.status,
-        note: '',
-        actorStaffId: user.id,
-      }),
-    })
+      const entry = recordModal.entry
+      const classTime = buildClassTimestamp(entry.date, entry.time_slot, entry.minute_slot)
+      const existing = attendanceMap.get(getAttendanceKey(entry))
 
-    const json = await res.json()
-    setMessage(json.message)
+      if (existing?.id) {
+        const { error } = await supabase
+          .from('class_logs')
+          .update({
+            status: recordModal.status,
+            voucher_type: entry.voucher_type ?? null,
+            is_group: Boolean(entry.is_group),
+            group_id: entry.group_id ?? null,
+            group_name: entry.group_name ?? null,
+          })
+          .eq('id', existing.id)
 
-    if (json.ok) {
+        if (error) throw error
+      } else {
+        const { error } = await supabase.from('class_logs').insert({
+          staff_id: Number(entry.teacher_id),
+          child_id: Number(entry.child_id),
+          class_date: entry.date,
+          class_time: classTime,
+          status: recordModal.status,
+          voucher_type: entry.voucher_type ?? null,
+          is_group: Boolean(entry.is_group),
+          group_id: entry.group_id ?? null,
+          group_name: entry.group_name ?? null,
+        })
+
+        if (error) throw error
+      }
+
+      await loadClassLogs(user.id)
       setRecordModal({
         open: false,
-        scheduleId: null,
-        childId: null,
-        classDate: '',
-        classTime: '',
+        entry: null,
         status: 'attended',
       })
-
-      await loadChildren()
-      await loadWeekData(user.id, weekBaseDate)
-      await loadTodayOverview(user.id, todayMode)
+      setMessage('출결이 저장되었습니다.')
+    } catch (err: any) {
+      setMessage(err?.message ?? '출결 저장 실패')
     }
   }
 
-  function getScheduleEntries(date: string, hourSlot: string) {
-    const hour = extractHour(hourSlot)
-    return scheduleRows
-      .filter((row) => row.schedule_date === date && extractHour(row.time_slot) === hour)
-      .sort((a, b) => a.time_slot.localeCompare(b.time_slot))
-  }
+  function renderScheduleCard(item: DisplayScheduleItem, dateStr: string) {
+    const firstChild = children.find((c) => c.id === Number(item.rows[0]?.child_id))
+    const title = item.isGroup
+      ? `${item.hourSlot.slice(0, 2)}:${String(item.minuteSlot).padStart(2, '0')}, ${item.groupName || '그룹수업'}`
+      : `${item.hourSlot.slice(0, 2)}:${String(item.minuteSlot).padStart(2, '0')}, ${firstChild?.child_name ?? ''} (${getAgeText(firstChild?.birth_date ?? null)})`
 
-  function getClassLogStatus(date: string, timeSlot: string, childId: number) {
-    const matched = classLogRows.find((row) => {
-      const t = new Date(row.class_time).toLocaleTimeString('ko-KR', {
-        timeZone: 'Asia/Seoul',
-        hour12: false,
-        hour: '2-digit',
-        minute: '2-digit',
-      })
-      return row.class_date === date && t === timeSlot && row.child_id === childId
-    })
-
-    return matched?.status
-  }
-
-  function getDefaultStatus(date: string, timeSlot: string, childId: number) {
-    return getClassLogStatus(date, timeSlot, childId) ?? 'attended'
-  }
-
-  function renderScheduleEntry(entry: ScheduleRow, dateStr: string) {
-    const child = children.find((c) => c.id === entry.child_id) ?? null
-    const status = child ? getClassLogStatus(dateStr, entry.time_slot, child.id) : undefined
-    const defaultStatus = child ? getDefaultStatus(dateStr, entry.time_slot, child.id) : 'attended'
-    const hasRecordedStatus = !!status
+    const isEditing =
+      editingCell?.date === dateStr &&
+      editingCell?.hour === item.hourSlot &&
+      (editingEntryId === item.rows[0]?.id || editingGroupId === item.groupId)
 
     return (
       <div
-        key={entry.id}
-        className={`rounded-xl p-3 text-sm ${getItemStyle(status)}`}
+        key={item.key}
+        className={`rounded-xl border border-slate-200 px-3 py-3 text-xs shadow-sm ${getScheduleCardBgClass(item, classLogRows)}`}
       >
-        <button
-          type="button"
-          onClick={() => {
-            if (!child) return
-            setRecordModal({
-              open: true,
-              scheduleId: entry.id,
-              childId: child.id,
-              classDate: dateStr,
-              classTime: entry.time_slot,
-              status: defaultStatus,
-            })
-          }}
-          className="w-full text-left"
-        >
-          <div className="font-medium">
-            {entry.time_slot} {child ? child.display_name : '이름없음'}
-          </div>
+        {isEditing ? (
+          <div className="space-y-2">
+            <label className="flex items-center gap-2 text-xs">
+              <input
+                type="checkbox"
+                checked={isGroupLesson}
+                onChange={(e) => {
+                  setIsGroupLesson(e.target.checked)
+                  setSelectedVoucher('')
+                  setScheduleChildId('')
+                  setSelectedGroupChildIds([])
+                }}
+              />
+              그룹수업
+            </label>
 
-          {entry.memo ? (
-            <div className="mt-1 text-[11px] leading-tight text-slate-500">
-              {entry.memo}
-            </div>
-          ) : null}
+            {isGroupLesson ? (
+              <>
+                <input
+                  value={groupName}
+                  onChange={(e) => setGroupName(e.target.value)}
+                  placeholder="그룹명"
+                  className="w-full rounded border bg-white px-2 py-1 text-xs"
+                />
+                <input
+                  value={groupSearch}
+                  onChange={(e) => setGroupSearch(e.target.value)}
+                  placeholder="학생 이름 검색"
+                  className="w-full rounded border bg-white px-2 py-1 text-xs"
+                />
+                <div className="rounded border bg-white p-2">
+                  <div className="mb-2 text-[11px] text-slate-500">
+                    학생 선택 ({selectedGroupChildIds.length}/8)
+                  </div>
+                  <div className="grid max-h-40 grid-cols-1 gap-1 overflow-y-auto">
+                    {filteredGroupChildren.map((c) => {
+                      const active = selectedGroupChildIds.includes(c.id)
+                      return (
+                        <button
+                          key={c.id}
+                          type="button"
+                          onClick={() => toggleGroupChild(c.id)}
+                          className={`rounded px-2 py-1 text-left text-[11px] ${
+                            active ? 'bg-rose-500 text-white' : 'bg-slate-100 text-slate-700'
+                          }`}
+                        >
+                          {getDisplayName(c)}
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+              </>
+            ) : (
+              <>
+                <select
+                  value={scheduleChildId}
+                  onChange={(e) => setScheduleChildId(e.target.value ? Number(e.target.value) : '')}
+                  className="w-full rounded border bg-white px-2 py-1 text-xs"
+                >
+                  <option value="">학생 선택</option>
+                  {children.filter((c) => c.is_active).map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {getDisplayName(c)}
+                    </option>
+                  ))}
+                </select>
 
-          {child ? (
-            <div className="mt-2 flex flex-wrap gap-1">
-              <span
-                className={`rounded-full px-2 py-0.5 text-xs ${getVoucherChipClass(
-                  child.voucher_color
-                )}`}
+                <select
+                  value={selectedVoucher}
+                  onChange={(e) => setSelectedVoucher(e.target.value)}
+                  className="w-full rounded border bg-white px-2 py-1 text-xs"
+                >
+                  <option value="">바우처 선택</option>
+                  {getVoucherOptionsForChild(scheduleChildId).map((voucher) => (
+                    <option key={voucher} value={voucher}>
+                      {voucher}
+                    </option>
+                  ))}
+                </select>
+              </>
+            )}
+
+            <select
+              value={selectedMinute}
+              onChange={(e) => setSelectedMinute(e.target.value)}
+              className="w-full rounded border bg-white px-2 py-1 text-xs"
+            >
+              {getMinutesOptions().map((m) => (
+                <option key={m} value={m}>
+                  {m}분
+                </option>
+              ))}
+            </select>
+
+            <input
+              value={scheduleMemo}
+              onChange={(e) => setScheduleMemo(e.target.value)}
+              placeholder="메모 입력"
+              className="w-full rounded border bg-white px-2 py-1 text-xs"
+            />
+
+            <div className="flex gap-1">
+              <button
+                onClick={() => handleSaveSchedule(dateStr, item.hourSlot)}
+                className="flex-1 rounded bg-indigo-600 px-2 py-1 text-xs text-white"
               >
-                {child.voucher_label}
-              </span>
+                저장
+              </button>
+              <button
+                onClick={resetScheduleEditor}
+                className="flex-1 rounded bg-slate-300 px-2 py-1 text-xs"
+              >
+                취소
+              </button>
             </div>
-          ) : null}
-        </button>
-
-        <div className="mt-2 flex flex-wrap gap-1">
-          {child ? (
+          </div>
+        ) : (
+          <>
             <button
               type="button"
-              onClick={() =>
-                setChildInfoModal({
-                  open: true,
-                  child,
-                })
-              }
-              className="rounded bg-white/70 px-2 py-1 text-xs"
+              onClick={() => {
+                const firstEntry = item.rows[0]
+                if (firstEntry) openRecordModal(firstEntry)
+              }}
+              className="w-full text-left"
             >
-              아이정보
+              <div className="font-medium text-slate-800">{title}</div>
             </button>
-          ) : null}
 
-          <button
-            type="button"
-            onClick={() => handleEditMemo(entry.id, entry.memo)}
-            className="rounded bg-white/70 px-2 py-1 text-xs"
-          >
-            메모수정
-          </button>
+            <div className="mt-1 flex flex-wrap gap-1">
+              <span className={`rounded-full border px-2 py-0.5 text-[11px] ${getVoucherClass(item.voucherType)}`}>
+                {item.voucherType || '일반'}
+              </span>
+              {item.isGroup ? (
+                <span className="rounded-full border border-rose-200 bg-rose-50 px-2 py-0.5 text-[11px] text-rose-700">
+                  그룹
+                </span>
+              ) : null}
+            </div>
 
-          {hasRecordedStatus ? (
-            <span className="rounded bg-white/70 px-2 py-1 text-xs text-slate-600">
-              관리자만 삭제 가능
-            </span>
-          ) : (
-            <button
-              type="button"
-              onClick={() => handleDeleteSchedule(entry.id)}
-              className="rounded bg-white/70 px-2 py-1 text-xs"
-            >
-              삭제
-            </button>
-          )}
-        </div>
+            {item.note ? (
+              <div className="mt-1 text-[11px] text-slate-500">
+                {item.note}
+              </div>
+            ) : null}
+
+            {item.isGroup ? (
+              <div className="mt-2 space-y-1 text-[11px] text-slate-600">
+                {item.rows.map((r) => {
+                  const child = children.find((c) => c.id === Number(r.child_id))
+                  const log = attendanceMap.get(getAttendanceKey(r))
+
+                  return (
+                    <button
+                      key={r.id}
+                      type="button"
+                      onClick={() => openRecordModal(r)}
+                      className="block w-full rounded bg-white/70 px-2 py-1 text-left hover:bg-white"
+                    >
+                      {child?.child_name ?? `학생(${r.child_id})`}
+                      {log?.status ? ` (${getStatusLabel(log.status)})` : ' (미입력)'}
+                    </button>
+                  )
+                })}
+              </div>
+            ) : null}
+
+            <div className="mt-2 flex flex-wrap gap-1">
+              {!item.isGroup && firstChild ? (
+                <button
+                  onClick={() => setChildInfoModal({ open: true, child: firstChild })}
+                  className="rounded bg-slate-100 px-2 py-0.5 text-[11px] text-slate-700"
+                >
+                  아이정보
+                </button>
+              ) : null}
+
+              <button
+                onClick={() => handleEditSchedule(item)}
+                className="rounded bg-blue-50 px-2 py-0.5 text-[11px] text-blue-700"
+              >
+                수정
+              </button>
+
+              <button
+                onClick={() => handleDeleteSchedule(item)}
+                className="rounded bg-rose-50 px-2 py-0.5 text-[11px] text-rose-700"
+              >
+                삭제
+              </button>
+            </div>
+          </>
+        )}
       </div>
     )
   }
@@ -594,7 +1081,7 @@ useEffect(() => {
 
         <div className="space-y-3">
           {hourSlots.map((hourSlot) => {
-            const entries = getScheduleEntries(dateStr, hourSlot)
+            const items = buildDisplayItems(dateStr, hourSlot)
             const isEditing =
               editingCell?.date === dateStr && editingCell?.hour === hourSlot
 
@@ -604,31 +1091,86 @@ useEffect(() => {
 
                 {isEditing ? (
                   <div className="space-y-2">
-                    <select
-                      value={scheduleChildId}
-                      onChange={(e) => {
-                        setScheduleChildId(e.target.value ? Number(e.target.value) : '')
-                        setIsDirty(true)
-                      }}
-                      className="w-full rounded-xl border bg-white px-3 py-3 text-sm"
-                    >
-                      <option value="">학생 선택</option>
-                      {children
-                        .filter((c) => c.is_active)
-                        .map((c) => (
-                          <option key={c.id} value={c.id}>
-                            {c.display_name}
-                          </option>
-                        ))}
-                    </select>
+                    <label className="flex items-center gap-2 text-xs">
+                      <input
+                        type="checkbox"
+                        checked={isGroupLesson}
+                        onChange={(e) => {
+                          setIsGroupLesson(e.target.checked)
+                          setSelectedVoucher('')
+                          setScheduleChildId('')
+                          setSelectedGroupChildIds([])
+                        }}
+                      />
+                      그룹수업
+                    </label>
+
+                    {isGroupLesson ? (
+                      <>
+                        <input
+                          value={groupName}
+                          onChange={(e) => setGroupName(e.target.value)}
+                          placeholder="그룹명"
+                          className="w-full rounded border bg-white px-2 py-2 text-sm"
+                        />
+                        <input
+                          value={groupSearch}
+                          onChange={(e) => setGroupSearch(e.target.value)}
+                          placeholder="학생 이름 검색"
+                          className="w-full rounded border bg-white px-2 py-2 text-sm"
+                        />
+                        <div className="grid max-h-40 grid-cols-1 gap-1 overflow-y-auto rounded border p-2">
+                          {filteredGroupChildren.map((c) => {
+                            const active = selectedGroupChildIds.includes(c.id)
+                            return (
+                              <button
+                                key={c.id}
+                                type="button"
+                                onClick={() => toggleGroupChild(c.id)}
+                                className={`rounded px-2 py-2 text-left text-sm ${
+                                  active ? 'bg-rose-500 text-white' : 'bg-slate-100 text-slate-700'
+                                }`}
+                              >
+                                {getDisplayName(c)}
+                              </button>
+                            )
+                          })}
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <select
+                          value={scheduleChildId}
+                          onChange={(e) => setScheduleChildId(e.target.value ? Number(e.target.value) : '')}
+                          className="w-full rounded border bg-white px-2 py-2 text-sm"
+                        >
+                          <option value="">학생 선택</option>
+                          {children.filter((c) => c.is_active).map((c) => (
+                            <option key={c.id} value={c.id}>
+                              {getDisplayName(c)}
+                            </option>
+                          ))}
+                        </select>
+
+                        <select
+                          value={selectedVoucher}
+                          onChange={(e) => setSelectedVoucher(e.target.value)}
+                          className="w-full rounded border bg-white px-2 py-2 text-sm"
+                        >
+                          <option value="">바우처 선택</option>
+                          {getVoucherOptionsForChild(scheduleChildId).map((voucher) => (
+                            <option key={voucher} value={voucher}>
+                              {voucher}
+                            </option>
+                          ))}
+                        </select>
+                      </>
+                    )}
 
                     <select
                       value={selectedMinute}
-                      onChange={(e) => {
-                        setSelectedMinute(e.target.value)
-                        setIsDirty(true)
-                      }}
-                      className="w-full rounded-xl border bg-white px-3 py-3 text-sm"
+                      onChange={(e) => setSelectedMinute(e.target.value)}
+                      className="w-full rounded border bg-white px-2 py-2 text-sm"
                     >
                       {getMinutesOptions().map((m) => (
                         <option key={m} value={m}>
@@ -639,30 +1181,21 @@ useEffect(() => {
 
                     <input
                       value={scheduleMemo}
-                      onChange={(e) => {
-                        setScheduleMemo(e.target.value)
-                        setIsDirty(true)
-                      }}
+                      onChange={(e) => setScheduleMemo(e.target.value)}
                       placeholder="메모 입력"
-                      className="w-full rounded-xl border bg-white px-3 py-3 text-sm"
+                      className="w-full rounded border bg-white px-2 py-2 text-sm"
                     />
 
                     <div className="flex gap-2">
                       <button
                         onClick={() => handleSaveSchedule(dateStr, hourSlot)}
-                        className="flex-1 rounded-xl bg-indigo-600 px-3 py-3 text-sm text-white"
+                        className="flex-1 rounded bg-indigo-600 px-3 py-2 text-sm text-white"
                       >
-                        추가
+                        저장
                       </button>
                       <button
-                        onClick={() => {
-                          setEditingCell(null)
-                          setScheduleChildId('')
-                          setSelectedMinute('00')
-                          setScheduleMemo('')
-                          setIsDirty(false)
-                        }}
-                        className="flex-1 rounded-xl bg-slate-300 px-3 py-3 text-sm"
+                        onClick={resetScheduleEditor}
+                        className="flex-1 rounded bg-slate-300 px-3 py-2 text-sm"
                       >
                         취소
                       </button>
@@ -674,21 +1207,27 @@ useEffect(() => {
                       type="button"
                       onClick={() => {
                         setEditingCell({ date: dateStr, hour: hourSlot })
+                        setEditingEntryId(null)
+                        setEditingGroupId(null)
                         setScheduleChildId('')
                         setSelectedMinute('00')
+                        setSelectedVoucher('')
                         setScheduleMemo('')
-                        setIsDirty(false)
+                        setIsGroupLesson(false)
+                        setGroupName('')
+                        setSelectedGroupChildIds([])
+                        setGroupSearch('')
                       }}
                       className="mb-2 w-full rounded-xl border border-dashed border-slate-300 px-3 py-3 text-left text-sm text-slate-500"
                     >
                       + 추가
                     </button>
 
-                    {entries.length === 0 ? (
+                    {items.length === 0 ? (
                       <div className="text-xs text-slate-400">등록 없음</div>
                     ) : (
                       <div className="space-y-2">
-                        {entries.map((entry) => renderScheduleEntry(entry, dateStr))}
+                        {items.map((item) => renderScheduleCard(item, dateStr))}
                       </div>
                     )}
                   </>
@@ -701,41 +1240,37 @@ useEffect(() => {
     )
   }
 
-  function renderTodayCard(row: TodayOverviewRow) {
+  function renderTodayCard(row: ScheduleEntryRow) {
     const child = children.find((c) => c.id === row.child_id)
+    const status = attendanceMap.get(getAttendanceKey(row))?.status ?? null
+    const timeText = `${row.time_slot.slice(0, 2)}:${String(row.minute_slot ?? 0).padStart(2, '0')}`
 
     return (
       <div key={row.id} className="rounded-2xl border bg-white p-4">
         <div className="flex items-start justify-between gap-3">
           <div>
-            <div className="font-semibold">{row.time_slot}</div>
-            <div className="text-sm text-slate-700">{child?.display_name ?? '이름없음'}</div>
+            <div className="font-semibold">{timeText}</div>
+            <div className="text-sm text-slate-700">
+              {row.is_group ? row.group_name || '그룹수업' : child?.child_name ?? '이름없음'}
+            </div>
           </div>
-          <span className={`rounded-full px-2 py-1 text-xs ${getItemStyle(row.input_status)}`}>
-            {getStatusText(row.input_status)}
-          </span>
+          {status ? (
+            <span className={`rounded-full px-2 py-1 text-xs ${getStatusClass(status)}`}>
+              {getStatusLabel(status)}
+            </span>
+          ) : (
+            <span className="rounded-full bg-slate-100 px-2 py-1 text-xs text-slate-600">
+              미입력
+            </span>
+          )}
         </div>
 
-        {row.memo ? <div className="mt-2 text-xs text-slate-500">{row.memo}</div> : null}
+        {row.note ? <div className="mt-2 text-xs text-slate-500">{row.note}</div> : null}
 
         <div className="mt-3">
           <button
             type="button"
-            onClick={() => {
-              if (!child) return
-              setRecordModal({
-                open: true,
-                scheduleId: row.id,
-                childId: child.id,
-                classDate: row.schedule_date,
-                classTime: row.time_slot,
-                status: (row.input_status ?? 'attended') as
-                  | 'attended'
-                  | 'absent'
-                  | 'makeup'
-                  | 'same_day_absent',
-              })
-            }}
+            onClick={() => openRecordModal(row)}
             className="rounded-lg bg-slate-200 px-3 py-2 text-xs"
           >
             상태입력
@@ -755,10 +1290,9 @@ useEffect(() => {
       <div className="relative mx-auto max-w-7xl rounded-[28px] border border-white/70 bg-white/85 p-4 shadow-[0_20px_60px_rgba(0,0,0,0.08)] backdrop-blur md:p-6">
         <div className="mb-4 flex items-start justify-between gap-3">
           <div>
-            <div className="text-3xl font-bold text-blue-600">{time}</div>
-            <h1 className="mt-2 text-xl font-bold">직원 화면</h1>
-            <p className="text-sm text-slate-500">
-              {user ? `${user.name} (${user.loginId})` : '사용자 없음'}
+            <h1 className="text-xl font-bold">직원 화면</h1>
+            <p className="mt-1 text-sm text-slate-500">
+              {user ? `${user.name} (${user.loginId || 'employee'})` : '사용자 없음'}
             </p>
           </div>
 
@@ -768,30 +1302,6 @@ useEffect(() => {
           >
             로그아웃
           </button>
-        </div>
-
-        <div className="mb-4 grid gap-3 md:grid-cols-2">
-          <button
-            onClick={() => handleAttendance('check_in')}
-            disabled={loading || !user}
-            className="rounded-xl bg-green-500 py-3 text-white disabled:opacity-50"
-          >
-            출근
-          </button>
-
-          <button
-            onClick={() => handleAttendance('check_out')}
-            disabled={loading || !user}
-            className="rounded-xl bg-blue-500 py-3 text-white disabled:opacity-50"
-          >
-            퇴근
-          </button>
-        </div>
-
-        <div className="mb-6 rounded-2xl bg-slate-50 p-4 text-sm">
-          <div className="mb-2 font-semibold">오늘 출퇴근</div>
-          <div>출근 시간: {formatKSTDateTime(todayAttendance?.check_in_time ?? null)}</div>
-          <div>퇴근 시간: {formatKSTDateTime(todayAttendance?.check_out_time ?? null)}</div>
         </div>
 
         <div className="mb-4 flex flex-wrap gap-2">
@@ -814,39 +1324,21 @@ useEffect(() => {
         {tab === 'today' ? (
           <div>
             <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-              <h2 className="text-lg font-bold">오늘 수업 / 미입력</h2>
-
-              <div className="flex gap-2">
-                <button
-                  onClick={() => setTodayMode('all')}
-                  className={`rounded-xl px-4 py-2 text-sm ${
-                    todayMode === 'all' ? 'bg-emerald-500 text-white' : 'bg-slate-200'
-                  }`}
-                >
-                  전체
-                </button>
-                <button
-                  onClick={() => setTodayMode('missing')}
-                  className={`rounded-xl px-4 py-2 text-sm ${
-                    todayMode === 'missing' ? 'bg-rose-500 text-white' : 'bg-slate-200'
-                  }`}
-                >
-                  미입력만
-                </button>
-              </div>
+              <h2 className="text-lg font-bold">오늘 수업</h2>
+              <div className="text-sm text-slate-500">{todayDate}</div>
             </div>
 
             {loading ? (
               <div className="rounded-xl border bg-slate-50 p-6 text-center text-slate-500">
                 조회 중...
               </div>
-            ) : todayRows.length === 0 ? (
+            ) : todayItems.length === 0 ? (
               <div className="rounded-xl border bg-slate-50 p-6 text-center text-slate-500">
                 오늘 데이터 없음
               </div>
             ) : (
               <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-                {todayRows.map((row) => renderTodayCard(row))}
+                {todayItems.map(({ row }) => renderTodayCard(row))}
               </div>
             )}
           </div>
@@ -905,7 +1397,7 @@ useEffect(() => {
 
                       {weekDates.map((date) => {
                         const dateStr = toDateString(date)
-                        const entries = getScheduleEntries(dateStr, hourSlot)
+                        const items = buildDisplayItems(dateStr, hourSlot)
                         const isEditing =
                           editingCell?.date === dateStr && editingCell?.hour === hourSlot
 
@@ -916,32 +1408,87 @@ useEffect(() => {
                           >
                             {isEditing ? (
                               <div className="min-h-[88px] space-y-2">
-                                <select
-                                  value={scheduleChildId}
-                                  onChange={(e) => {
-                                    setScheduleChildId(
-                                      e.target.value ? Number(e.target.value) : ''
-                                    )
-                                    setIsDirty(true)
-                                  }}
-                                  className="w-full rounded border bg-white px-2 py-2 text-sm"
-                                >
-                                  <option value="">학생 선택</option>
-                                  {children
-                                    .filter((c) => c.is_active)
-                                    .map((c) => (
-                                      <option key={c.id} value={c.id}>
-                                        {c.display_name}
-                                      </option>
-                                    ))}
-                                </select>
+                                <label className="flex items-center gap-2 text-xs">
+                                  <input
+                                    type="checkbox"
+                                    checked={isGroupLesson}
+                                    onChange={(e) => {
+                                      setIsGroupLesson(e.target.checked)
+                                      setSelectedVoucher('')
+                                      setScheduleChildId('')
+                                      setSelectedGroupChildIds([])
+                                    }}
+                                  />
+                                  그룹수업
+                                </label>
+
+                                {isGroupLesson ? (
+                                  <>
+                                    <input
+                                      value={groupName}
+                                      onChange={(e) => setGroupName(e.target.value)}
+                                      placeholder="그룹명"
+                                      className="w-full rounded border bg-white px-2 py-2 text-sm"
+                                    />
+                                    <input
+                                      value={groupSearch}
+                                      onChange={(e) => setGroupSearch(e.target.value)}
+                                      placeholder="학생 이름 검색"
+                                      className="w-full rounded border bg-white px-2 py-2 text-sm"
+                                    />
+                                    <div className="grid max-h-40 grid-cols-1 gap-1 overflow-y-auto rounded border p-2">
+                                      {filteredGroupChildren.map((c) => {
+                                        const active = selectedGroupChildIds.includes(c.id)
+                                        return (
+                                          <button
+                                            key={c.id}
+                                            type="button"
+                                            onClick={() => toggleGroupChild(c.id)}
+                                            className={`rounded px-2 py-2 text-left text-sm ${
+                                              active ? 'bg-rose-500 text-white' : 'bg-slate-100 text-slate-700'
+                                            }`}
+                                          >
+                                            {getDisplayName(c)}
+                                          </button>
+                                        )
+                                      })}
+                                    </div>
+                                  </>
+                                ) : (
+                                  <>
+                                    <select
+                                      value={scheduleChildId}
+                                      onChange={(e) => setScheduleChildId(e.target.value ? Number(e.target.value) : '')}
+                                      className="w-full rounded border bg-white px-2 py-2 text-sm"
+                                    >
+                                      <option value="">학생 선택</option>
+                                      {children
+                                        .filter((c) => c.is_active)
+                                        .map((c) => (
+                                          <option key={c.id} value={c.id}>
+                                            {getDisplayName(c)}
+                                          </option>
+                                        ))}
+                                    </select>
+
+                                    <select
+                                      value={selectedVoucher}
+                                      onChange={(e) => setSelectedVoucher(e.target.value)}
+                                      className="w-full rounded border bg-white px-2 py-2 text-sm"
+                                    >
+                                      <option value="">바우처 선택</option>
+                                      {getVoucherOptionsForChild(scheduleChildId).map((voucher) => (
+                                        <option key={voucher} value={voucher}>
+                                          {voucher}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </>
+                                )}
 
                                 <select
                                   value={selectedMinute}
-                                  onChange={(e) => {
-                                    setSelectedMinute(e.target.value)
-                                    setIsDirty(true)
-                                  }}
+                                  onChange={(e) => setSelectedMinute(e.target.value)}
                                   className="w-full rounded border bg-white px-2 py-2 text-sm"
                                 >
                                   {getMinutesOptions().map((m) => (
@@ -953,10 +1500,7 @@ useEffect(() => {
 
                                 <input
                                   value={scheduleMemo}
-                                  onChange={(e) => {
-                                    setScheduleMemo(e.target.value)
-                                    setIsDirty(true)
-                                  }}
+                                  onChange={(e) => setScheduleMemo(e.target.value)}
                                   placeholder="메모 입력"
                                   className="w-full rounded border bg-white px-2 py-2 text-sm"
                                 />
@@ -966,16 +1510,10 @@ useEffect(() => {
                                     onClick={() => handleSaveSchedule(dateStr, hourSlot)}
                                     className="flex-1 rounded bg-indigo-600 px-2 py-2 text-white"
                                   >
-                                    추가
+                                    저장
                                   </button>
                                   <button
-                                    onClick={() => {
-                                      setEditingCell(null)
-                                      setScheduleChildId('')
-                                      setSelectedMinute('00')
-                                      setScheduleMemo('')
-                                      setIsDirty(false)
-                                    }}
+                                    onClick={resetScheduleEditor}
                                     className="flex-1 rounded bg-slate-300 px-2 py-2"
                                   >
                                     취소
@@ -988,17 +1526,23 @@ useEffect(() => {
                                   type="button"
                                   onClick={() => {
                                     setEditingCell({ date: dateStr, hour: hourSlot })
+                                    setEditingEntryId(null)
+                                    setEditingGroupId(null)
                                     setScheduleChildId('')
                                     setSelectedMinute('00')
+                                    setSelectedVoucher('')
                                     setScheduleMemo('')
-                                    setIsDirty(false)
+                                    setIsGroupLesson(false)
+                                    setGroupName('')
+                                    setSelectedGroupChildIds([])
+                                    setGroupSearch('')
                                   }}
                                   className="min-h-[36px] w-full rounded border border-dashed border-slate-300 p-2 text-left text-slate-500 hover:bg-slate-100"
                                 >
                                   + 추가
                                 </button>
 
-                                {entries.map((entry) => renderScheduleEntry(entry, dateStr))}
+                                {items.length === 0 ? null : items.map((item) => renderScheduleCard(item, dateStr))}
                               </div>
                             )}
                           </td>
@@ -1015,18 +1559,19 @@ useEffect(() => {
             </div>
 
             <div className="mt-3 text-sm text-slate-500">
-              파랑=출석/보강, 연빨강=결석, 빨강=당일결석
+              파랑=출석/보강, 연빨강=결석/당일결석
             </div>
           </div>
         ) : null}
 
-        {recordModal.open ? (
-          <div className="fixed inset-0 flex items-center justify-center bg-black/30 p-4">
+        {recordModal.open && recordModal.entry ? (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
             <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow">
               <h3 className="mb-3 text-lg font-bold">수업 상태 선택</h3>
 
               <div className="mb-3 text-sm text-slate-600">
-                {recordModal.classDate} / {recordModal.classTime}
+                {recordModal.entry.date} / {recordModal.entry.time_slot.slice(0, 2)}:
+                {String(recordModal.entry.minute_slot ?? 0).padStart(2, '0')}
               </div>
 
               <select
@@ -1034,19 +1579,16 @@ useEffect(() => {
                 onChange={(e) =>
                   setRecordModal((prev) => ({
                     ...prev,
-                    status: e.target.value as
-                      | 'attended'
-                      | 'absent'
-                      | 'makeup'
-                      | 'same_day_absent',
+                    status: e.target.value as AttendanceStatus,
                   }))
                 }
                 className="mb-4 w-full rounded-xl border px-3 py-3 md:py-2"
               >
-                <option value="attended">출석</option>
-                <option value="absent">결석</option>
-                <option value="makeup">보강</option>
-                <option value="same_day_absent">당일결석</option>
+                {STATUS_OPTIONS.map((status) => (
+                  <option key={status} value={status}>
+                    {getStatusLabel(status)}
+                  </option>
+                ))}
               </select>
 
               <div className="flex gap-2">
@@ -1060,10 +1602,7 @@ useEffect(() => {
                   onClick={() =>
                     setRecordModal({
                       open: false,
-                      scheduleId: null,
-                      childId: null,
-                      classDate: '',
-                      classTime: '',
+                      entry: null,
                       status: 'attended',
                     })
                   }
@@ -1077,7 +1616,7 @@ useEffect(() => {
         ) : null}
 
         {childInfoModal.open && childInfoModal.child ? (
-          <div className="fixed inset-0 flex items-center justify-center bg-black/30 p-4">
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
             <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow">
               <h3 className="mb-4 text-lg font-bold">아이 정보</h3>
 
@@ -1086,7 +1625,7 @@ useEffect(() => {
                   <span className="font-semibold">이름:</span> {childInfoModal.child.child_name}
                 </div>
                 <div>
-                  <span className="font-semibold">나이:</span> {childInfoModal.child.age_text || '-'}
+                  <span className="font-semibold">나이:</span> {getAgeText(childInfoModal.child.birth_date) || '-'}
                 </div>
                 <div>
                   <span className="font-semibold">차트번호:</span> {childInfoModal.child.chart_no || '-'}
@@ -1098,10 +1637,20 @@ useEffect(() => {
                   <span className="font-semibold">핸드폰:</span> {childInfoModal.child.phone || '-'}
                 </div>
                 <div>
-                  <span className="font-semibold">바우처:</span> {childInfoModal.child.voucher_label}
+                  <span className="font-semibold">바우처:</span> {getVoucherLabel(childInfoModal.child.vouchers)}
                 </div>
                 <div>
                   <span className="font-semibold">메모:</span> {childInfoModal.child.notes || '-'}
+                </div>
+
+                <div className="border-t pt-3">
+                  <div className="mb-2 font-semibold">이번 달 출결</div>
+                  <div><span className="font-medium">출석:</span> {childInfoDates.attended || '-'}</div>
+                  <div><span className="font-medium">보강:</span> {childInfoDates.makeup || '-'}</div>
+                  <div><span className="font-medium">결석:</span> {childInfoDates.absent || '-'}</div>
+                  <div><span className="font-medium">당일결석:</span> {childInfoDates.sameDayAbsent || '-'}</div>
+                  <div><span className="font-medium">그룹출석/보강:</span> {childInfoDates.groupAttended || '-'}</div>
+                  <div><span className="font-medium">그룹결석/당일결석:</span> {childInfoDates.groupAbsent || '-'}</div>
                 </div>
               </div>
 
