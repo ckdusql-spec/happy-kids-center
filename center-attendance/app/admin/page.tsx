@@ -964,18 +964,22 @@ export default function AdminPage() {
     }
 
     const res = await fetch('/admin/staff/manage', {
-      method: staffForm.id ? 'PUT' : 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(body),
-    })
+  method: staffForm.id ? 'PUT' : 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+  },
+  body: JSON.stringify(body),
+})
 
-    const json = await res.json()
+const json = await res.json()
 
-    if (!json.ok) {
-      throw new Error(json.message ?? '선생님 저장 실패')
-    }
+console.log('staff save status:', res.status)
+console.log('staff save response:', json)
+
+if (!json.ok) {
+  setMessage(`${res.status} / ${json.message ?? '선생님 저장 실패'}`)
+  return
+}
 
     await loadStaffs()
     setMessage(json.message ?? '선생님 정보가 저장되었습니다.')
