@@ -1,18 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabaseAdmin'
-import { getSessionUser } from '@/lib/getSessionUser'
 
 export async function POST(req: NextRequest) {
   try {
-    const user = await getSessionUser()
-
-    if (!user || user.role !== 'admin') {
-      return NextResponse.json(
-        { ok: false, message: '관리자만 접근 가능합니다.' },
-        { status: 403 }
-      )
-    }
-
     const body = await req.json()
     const {
       loginId,
@@ -67,9 +57,9 @@ export async function POST(req: NextRequest) {
       ok: true,
       message: '선생님 등록 완료',
     })
-  } catch {
+  } catch (err: any) {
     return NextResponse.json(
-      { ok: false, message: '서버 오류' },
+      { ok: false, message: err?.message ?? '서버 오류' },
       { status: 500 }
     )
   }
@@ -77,15 +67,6 @@ export async function POST(req: NextRequest) {
 
 export async function PUT(req: NextRequest) {
   try {
-    const user = await getSessionUser()
-
-    if (!user || user.role !== 'admin') {
-      return NextResponse.json(
-        { ok: false, message: '관리자만 접근 가능합니다.' },
-        { status: 403 }
-      )
-    }
-
     const body = await req.json()
     const {
       id,
@@ -154,9 +135,9 @@ export async function PUT(req: NextRequest) {
       ok: true,
       message: '선생님 수정 완료',
     })
-  } catch {
+  } catch (err: any) {
     return NextResponse.json(
-      { ok: false, message: '서버 오류' },
+      { ok: false, message: err?.message ?? '서버 오류' },
       { status: 500 }
     )
   }
