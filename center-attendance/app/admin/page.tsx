@@ -965,13 +965,46 @@ export default function AdminPage() {
   payload.password = staffForm.password
 }
 
-      if (staffForm.id) {
-        const { error } = await supabase.from('staff_accounts').update(payload).eq('id', staffForm.id)
-        if (error) throw error
-      } else {
-        const { error } = await supabase.from('staff_accounts').insert(payload)
-        if (error) throw error
-      }
+let res
+
+if (staffForm.id) {
+  // 수정
+  res = await fetch('/api/admin/staff/manage', {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      id: staffForm.id,
+      loginId: staffForm.loginId,
+      password: staffForm.password,
+      name: staffForm.name,
+      role: staffForm.role,
+      isActive: staffForm.isActive,
+    }),
+  })
+} else {
+  // 신규
+  res = await fetch('/api/admin/staff/manage', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      loginId: staffForm.loginId,
+      password: staffForm.password,
+      name: staffForm.name,
+      role: staffForm.role,
+      isActive: staffForm.isActive,
+    }),
+  })
+}
+
+const json = await res.json()
+
+if (!json.ok) {
+  throw new Error(json.message)
+}
 
       await loadStaffs()
       setMessage('선생님 정보가 저장되었습니다.')
