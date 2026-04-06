@@ -969,7 +969,7 @@ let res
 
 if (staffForm.id) {
   // 수정
-  res = await fetch('/api/admin/staff/manage', {
+  res = await fetch('/admin/staff/manage', {
     method: 'PUT',
     headers: {
       'Content-Type': 'application/json',
@@ -985,7 +985,7 @@ if (staffForm.id) {
   })
 } else {
   // 신규
-  res = await fetch('/api/admin/staff/manage', {
+  res = await fetch('/admin/staff/manage', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
