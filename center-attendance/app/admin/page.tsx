@@ -939,87 +939,58 @@ export default function AdminPage() {
     }
   }
 
-  async function handleSaveStaff() {
-    try {
-      if (!staffForm.loginId.trim()) {
-        setMessage('로그인 ID를 입력하세요.')
-        return
-      }
-      if (!staffForm.name.trim()) {
-        setMessage('이름을 입력하세요.')
-        return
-      }
-      if (!staffForm.id && !staffForm.password.trim()) {
-        setMessage('비밀번호를 입력하세요.')
-        return
-      }
+ async function handleSaveStaff() {
+  try {
+    if (!staffForm.loginId.trim()) {
+      setMessage('로그인 ID를 입력하세요.')
+      return
+    }
+    if (!staffForm.name.trim()) {
+      setMessage('이름을 입력하세요.')
+      return
+    }
+    if (!staffForm.id && !staffForm.password.trim()) {
+      setMessage('비밀번호를 입력하세요.')
+      return
+    }
 
-      const payload: any = {
-        login_id: staffForm.loginId,
-        name: staffForm.name,
-        role: staffForm.role,
-        is_active: staffForm.isActive,
-      }
-
- if (staffForm.password.trim()) {
-  payload.password = staffForm.password
-}
-
-let res
-
-if (staffForm.id) {
-  // 수정
-  res = await fetch('/admin/staff/manage', {
-    method: 'PUT',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
+    const body = {
       id: staffForm.id,
       loginId: staffForm.loginId,
       password: staffForm.password,
       name: staffForm.name,
       role: staffForm.role,
       isActive: staffForm.isActive,
-    }),
-  })
-} else {
-  // 신규
-  res = await fetch('/admin/staff/manage', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      loginId: staffForm.loginId,
-      password: staffForm.password,
-      name: staffForm.name,
-      role: staffForm.role,
-      isActive: staffForm.isActive,
-    }),
-  })
-}
-
-const json = await res.json()
-
-if (!json.ok) {
-  throw new Error(json.message)
-}
-
-      await loadStaffs()
-      setMessage('선생님 정보가 저장되었습니다.')
-      setStaffForm({
-        id: null,
-        loginId: '',
-        password: '',
-        name: '',
-        role: 'employee',
-        isActive: true,
-      })
-    } catch (err: any) {
-      setMessage(err?.message ?? '선생님 저장 실패')
     }
+
+    const res = await fetch('/admin/staff/manage', {
+      method: staffForm.id ? 'PUT' : 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    })
+
+    const json = await res.json()
+
+    if (!json.ok) {
+      throw new Error(json.message ?? '선생님 저장 실패')
+    }
+
+    await loadStaffs()
+    setMessage(json.message ?? '선생님 정보가 저장되었습니다.')
+    setStaffForm({
+      id: null,
+      loginId: '',
+      password: '',
+      name: '',
+      role: 'employee',
+      isActive: true,
+    })
+  } catch (err: any) {
+    setMessage(err?.message ?? '선생님 저장 실패')
   }
+}
 
   async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: number) {
     try {
