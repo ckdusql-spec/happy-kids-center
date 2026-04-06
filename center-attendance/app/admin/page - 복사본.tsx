@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react'
 
 type Staff = {
-  id: number111
+  id: number
   login_id: string
   name: string
   role: string
