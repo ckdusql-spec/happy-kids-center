@@ -991,6 +991,47 @@ export default function AdminPage() {
     setMessage(err?.message ?? '선생님 저장 실패')
   }
 }
+async function handleDeleteStaff() {
+  try {
+    if (!staffForm.id) {
+      setMessage('삭제할 선생님을 먼저 선택하세요.')
+      return
+    }
+
+    const ok = window.confirm('이 선생님을 삭제할까요?')
+    if (!ok) return
+
+    const res = await fetch('/admin/staff/manage', {
+      method: 'DELETE',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        id: staffForm.id,
+      }),
+    })
+
+    const json = await res.json()
+
+    if (!json.ok) {
+      throw new Error(json.message ?? '선생님 삭제 실패')
+    }
+
+    await loadStaffs()
+    setMessage(json.message ?? '선생님 삭제 완료')
+
+    setStaffForm({
+      id: null,
+      loginId: '',
+      password: '',
+      name: '',
+      role: 'employee',
+      isActive: true,
+    })
+  } catch (err: any) {
+    setMessage(err?.message ?? '선생님 삭제 실패')
+  }
+}
 
   async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: number) {
     try {
@@ -2814,12 +2855,23 @@ export default function AdminPage() {
                   />
                   사용중
                 </label>
-                <button
-                  onClick={handleSaveStaff}
-                  className="w-full rounded-xl bg-black py-3 text-white md:py-2"
-                >
-                  {staffForm.id ? '선생님 수정' : '선생님 등록'}
-                </button>
+               <div className="flex gap-2">
+  <button
+    onClick={handleSaveStaff}
+    className="flex-1 rounded-xl bg-black py-3 text-white md:py-2"
+  >
+    {staffForm.id ? '선생님 수정' : '선생님 등록'}
+  </button>
+
+  {staffForm.id ? (
+    <button
+      onClick={handleDeleteStaff}
+      className="flex-1 rounded-xl bg-rose-500 py-3 text-white md:py-2"
+    >
+      삭제
+    </button>
+  ) : null}
+</div>
               </div>
             </div>
 
