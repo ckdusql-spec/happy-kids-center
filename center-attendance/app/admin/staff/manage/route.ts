@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabaseAdmin'
 
+type StaffRole = 'admin' | 'employee'
+
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json()
@@ -14,7 +16,7 @@ export async function POST(req: NextRequest) {
       loginId?: string
       password?: string
       name?: string
-      role?: 'admin' | 'employee'
+      role?: StaffRole
       isActive?: boolean
     }
 
@@ -48,7 +50,7 @@ export async function POST(req: NextRequest) {
 
     if (error) {
       return NextResponse.json(
-        { ok: false, message: '선생님 등록 실패', error: error.message },
+        { ok: false, message: `선생님 등록 실패: ${error.message}` },
         { status: 500 }
       )
     }
@@ -80,7 +82,7 @@ export async function PUT(req: NextRequest) {
       loginId?: string
       password?: string
       name?: string
-      role?: 'admin' | 'employee'
+      role?: StaffRole
       isActive?: boolean
     }
 
@@ -94,7 +96,7 @@ export async function PUT(req: NextRequest) {
     const updatePayload: {
       login_id: string
       name: string
-      role: 'admin' | 'employee'
+      role: StaffRole
       is_active: boolean
       password_hash?: string
     } = {
@@ -126,7 +128,7 @@ export async function PUT(req: NextRequest) {
 
     if (error) {
       return NextResponse.json(
-        { ok: false, message: '선생님 수정 실패', error: error.message },
+        { ok: false, message: `선생님 수정 실패: ${error.message}` },
         { status: 500 }
       )
     }
@@ -134,6 +136,42 @@ export async function PUT(req: NextRequest) {
     return NextResponse.json({
       ok: true,
       message: '선생님 수정 완료',
+    })
+  } catch (err: any) {
+    return NextResponse.json(
+      { ok: false, message: err?.message ?? '서버 오류' },
+      { status: 500 }
+    )
+  }
+}
+
+export async function DELETE(req: NextRequest) {
+  try {
+    const body = await req.json()
+    const { id } = body as { id?: number }
+
+    if (!id) {
+      return NextResponse.json(
+        { ok: false, message: '삭제할 선생님 id가 없습니다.' },
+        { status: 400 }
+      )
+    }
+
+    const { error } = await supabaseAdmin
+      .from('staff_accounts')
+      .update({ is_active: false })
+      .eq('id', id)
+
+    if (error) {
+      return NextResponse.json(
+        { ok: false, message: `선생님 삭제 실패: ${error.message}` },
+        { status: 500 }
+      )
+    }
+
+    return NextResponse.json({
+      ok: true,
+      message: '선생님 삭제 완료',
     })
   } catch (err: any) {
     return NextResponse.json(
