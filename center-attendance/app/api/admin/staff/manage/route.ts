@@ -18,20 +18,20 @@ export async function POST(req: NextRequest) {
       isActive?: boolean
     }
 
-    if (!loginId?.trim() || !password?.trim() || !name?.trim() || !role) {
+    if (!loginId || !password || !name || !role) {
       return NextResponse.json(
-        { ok: false, message: '로그인ID, 비밀번호, 이름, 권한이 필요합니다.' },
+        { ok: false, message: '필수값이 누락되었습니다.' },
         { status: 400 }
       )
     }
 
     const { data: hashed, error: hashError } = await supabaseAdmin.rpc('hash_password', {
-      plain_password: password.trim(),
+      plain_password: password,
     })
 
     if (hashError || !hashed) {
       return NextResponse.json(
-        { ok: false, message: '비밀번호 해시 실패', error: hashError?.message },
+        { ok: false, message: '비밀번호 해시 실패' },
         { status: 500 }
       )
     }
@@ -39,9 +39,9 @@ export async function POST(req: NextRequest) {
     const { error } = await supabaseAdmin
       .from('staff_accounts')
       .insert({
-        login_id: loginId.trim(),
+        login_id: loginId,
         password_hash: hashed,
-        name: name.trim(),
+        name,
         role,
         is_active: isActive ?? true,
       })
@@ -57,13 +57,9 @@ export async function POST(req: NextRequest) {
       ok: true,
       message: '선생님 등록 완료',
     })
-  } catch (e) {
+  } catch (err: any) {
     return NextResponse.json(
-      {
-        ok: false,
-        message: '서버 오류',
-        error: e instanceof Error ? e.message : 'unknown error',
-      },
+      { ok: false, message: err?.message ?? '서버 오류' },
       { status: 500 }
     )
   }
@@ -88,9 +84,9 @@ export async function PUT(req: NextRequest) {
       isActive?: boolean
     }
 
-    if (!id || !loginId?.trim() || !name?.trim() || !role) {
+    if (!id || !loginId || !name || !role) {
       return NextResponse.json(
-        { ok: false, message: 'id, 로그인ID, 이름, 권한이 필요합니다.' },
+        { ok: false, message: '필수값이 누락되었습니다.' },
         { status: 400 }
       )
     }
@@ -102,20 +98,20 @@ export async function PUT(req: NextRequest) {
       is_active: boolean
       password_hash?: string
     } = {
-      login_id: loginId.trim(),
-      name: name.trim(),
+      login_id: loginId,
+      name,
       role,
       is_active: isActive ?? true,
     }
 
     if (password && password.trim()) {
       const { data: hashed, error: hashError } = await supabaseAdmin.rpc('hash_password', {
-        plain_password: password.trim(),
+        plain_password: password,
       })
 
       if (hashError || !hashed) {
         return NextResponse.json(
-          { ok: false, message: '비밀번호 해시 실패', error: hashError?.message },
+          { ok: false, message: '비밀번호 해시 실패' },
           { status: 500 }
         )
       }
@@ -139,13 +135,9 @@ export async function PUT(req: NextRequest) {
       ok: true,
       message: '선생님 수정 완료',
     })
-  } catch (e) {
+  } catch (err: any) {
     return NextResponse.json(
-      {
-        ok: false,
-        message: '서버 오류',
-        error: e instanceof Error ? e.message : 'unknown error',
-      },
+      { ok: false, message: err?.message ?? '서버 오류' },
       { status: 500 }
     )
   }
