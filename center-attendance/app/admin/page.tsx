@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 
-type MainTab = 'schedule' | 'children' | 'staff' | 'summary'
+type MainTab = 'schedule' | 'children' | 'staff' | 'summary' | 'regular'
 type ViewMode = 'all' | 'staff' | 'daily'
 type SummarySubTab = 'attendance' | 'teacher' | 'settlement'
 type StaffRole = 'admin' | 'employee'
@@ -76,6 +76,34 @@ type MonthlyGroupPriceRow = {
   child_id: number
   month_key: string
   unit_price: number
+}
+
+type RegularClassRow = {
+  id: number
+  child_id: number
+  teacher_id: number
+  weekday: number
+  time_slot: string
+  minute_slot: number
+  start_date: string
+  end_date: string | null
+  voucher_type: string | null
+  note?: string | null
+  is_active: boolean
+}
+
+type RegularClassForm = {
+  id: number | null
+  childId: number | ''
+  teacherId: number | ''
+  weekday: number | ''
+  timeSlot: string
+  minuteSlot: string
+  startDate: string
+  endDate: string
+  voucherType: string
+  note: string
+  isActive: boolean
 }
 
 type ChildForm = {
@@ -235,10 +263,10 @@ function getVoucherLabel(vouchers?: string[] | null) {
 }
 
 function getVoucherClass(voucher?: string | null) {
-  if (voucher === '디딤') return 'border-amber-200 bg-amber-50 text-amber-700'
+  if (voucher === '디딤') return 'border-blue-200 bg-blue-50 text-blue-700'
   if (voucher === '아청심') return 'border-violet-200 bg-violet-50 text-violet-700'
   if (voucher === '드림스타트') return 'border-emerald-200 bg-emerald-50 text-emerald-700'
-  if (voucher === '배움') return 'border-blue-200 bg-blue-50 text-blue-700'
+  if (voucher === '배움') return 'border-amber-200 bg-amber-50 text-amber-700'
   if (voucher === '그룹수업') return 'border-rose-200 bg-rose-50 text-rose-700'
   return 'border-slate-200 bg-slate-50 text-slate-700'
 }
@@ -282,6 +310,31 @@ function buildClassTimestamp(
 
 function uniqueDateList(values: string[]) {
   return Array.from(new Set(values.filter(Boolean))).sort().join(', ')
+}
+
+
+function getWeekdayLabel(weekday: number) {
+  return ['일', '월', '화', '수', '목', '금', '토'][weekday] ?? ''
+}
+
+function getDateRangeMatchingWeekday(startDate: string, endDate: string, weekday: number) {
+  const result: string[] = []
+  const start = new Date(startDate)
+  const end = new Date(endDate)
+  start.setHours(0, 0, 0, 0)
+  end.setHours(0, 0, 0, 0)
+
+  for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+    if (d.getDay() === weekday) {
+      result.push(toDateString(new Date(d)))
+    }
+  }
+
+  return result
+}
+
+function buildRegularNoteTag(ruleId: number) {
+  return `[정기수업:${ruleId}]`
 }
 
 function getVoucherPrices(child: ChildRow) {
@@ -412,17 +465,8 @@ function AdminDailySchedule({
   attendanceMap: Map<string, ClassLogRow>
   onOpenRecord: (entry: ScheduleEntryRow) => void
 }) {
-const dayEntries = entries.filter((e) => e.date === selectedDate && e.is_active)
-
-const activeTeacherIds = new Set(dayEntries.map((e) => Number(e.teacher_id)))
-
-const teacherList = staffs.filter(
-  (s) => s.role === 'employee' && s.is_active && activeTeacherIds.has(Number(s.id))
-)
-
-const slots = Array.from(new Set(dayEntries.map((e) => e.time_slot))).sort((a, b) =>
-  a.localeCompare(b)
-)
+  const teacherList = staffs.filter((s) => s.role === 'employee' && s.is_active)
+  const slots = getHourSlots()
 
   function getAttendanceKey(entry: ScheduleEntryRow) {
     return buildLogicalAttendanceKey({
@@ -470,12 +514,15 @@ const slots = Array.from(new Set(dayEntries.map((e) => e.time_slot))).sort((a, b
     return Array.from(groupMap.values()).sort((a, b) => a.minuteSlot - b.minuteSlot)
   }
 
-const totalCount = dayEntries.length
+  const totalCount = entries.filter((v) => v.date === selectedDate && v.is_active).length
+
   return (
     <div className="rounded-2xl bg-white p-4 shadow-sm">
       <div className="mb-4">
         <h2 className="text-xl font-bold">일별 보기</h2>
-
+        <p className="mt-1 text-sm text-slate-500">
+          가로는 선생님, 세로는 시간이며 시간표 입력 기준으로 표시됩니다.
+        </p>
         <div className="mt-3 flex flex-wrap gap-2 text-sm">
           <div className="rounded-full bg-slate-100 px-3 py-1">선생님 수 {teacherList.length}</div>
           <div className="rounded-full bg-slate-100 px-3 py-1">시간 수 {slots.length}</div>
@@ -492,14 +539,9 @@ const totalCount = dayEntries.length
           <table className="min-w-[900px] border text-sm">
             <thead>
               <tr>
-                <th className="w-[30px] border bg-slate-100 px-1 py-1 text-[15px]">
-  시간
-</th>
+                <th className="border bg-slate-100 px-2 py-2">시간</th>
                 {teacherList.map((teacher) => (
-                                  <th
-  key={teacher.id}
-  className="w-[60px] min-w-[60px] max-w-[60px] border bg-slate-100 px-1 py-1 text-[15px] leading-tight"
->
+                  <th key={teacher.id} className="min-w-[220px] border bg-slate-100 px-2 py-2">
                     {teacher.name}
                   </th>
                 ))}
@@ -507,21 +549,15 @@ const totalCount = dayEntries.length
             </thead>
             <tbody>
               {slots.map((slot) => (
-                      <tr key={slot}>
-                  <td className="w-[40px] min-w-[40px] max-w-[40px] border bg-slate-50 px-2 py-2 text-[15px] font-medium leading-tight">
-  {slot}
-</td>
+                <tr key={slot}>
+                  <td className="border bg-slate-50 px-2 py-2 font-medium">{slot}</td>
                   {teacherList.map((teacher) => {
                     const items = buildItems(slot, teacher.id)
                     return (
-       <td
-  key={`${slot}-${teacher.id}`}
-  className="w-[60px] min-w-[60px] max-w-[60px] border px-1 py-1 align-top"
->
-
-                        <div className="space-y-1">
+                      <td key={`${slot}-${teacher.id}`} className="border px-2 py-2 align-top">
+                        <div className="space-y-2">
                           {items.length === 0 ? (
-                            <div className="min-h-[24px]" />
+                            <div className="min-h-[40px]" />
                           ) : (
                             items.map((item) => {
                               const firstChild = children.find(
@@ -539,7 +575,7 @@ const totalCount = dayEntries.length
                                     const firstEntry = item.rows[0]
                                     if (firstEntry) onOpenRecord(firstEntry)
                                   }}
-                                  className={`block w-full rounded-lg border px-1 py-1 text-left shadow-sm ${getScheduleCardBgClass(
+                                  className={`block w-full rounded-lg border px-2 py-2 text-left shadow-sm ${getScheduleCardBgClass(
                                     item,
                                     classLogs
                                   )}`}
@@ -561,7 +597,7 @@ const totalCount = dayEntries.length
                                             key={r.id}
                                             type="button"
                                             onClick={() => onOpenRecord(r)}
-                                            className="block w-full rounded bg-white/70 px-1 py-1 text-left hover:bg-white"
+                                            className="block w-full rounded bg-white/70 px-2 py-1 text-left hover:bg-white"
                                           >
                                             {child?.child_name ?? `학생(${r.child_id})`}
                                             {log?.status ? ` (${getStatusLabel(log.status)})` : ' (미입력)'}
@@ -663,6 +699,23 @@ export default function AdminPage() {
     isActive: true,
   })
 
+
+  const [regularClasses, setRegularClasses] = useState<RegularClassRow[]>([])
+  const [regularSearch, setRegularSearch] = useState('')
+  const [regularForm, setRegularForm] = useState<RegularClassForm>({
+    id: null,
+    childId: '',
+    teacherId: '',
+    weekday: '',
+    timeSlot: '09:00',
+    minuteSlot: '00',
+    startDate: toDateString(new Date()),
+    endDate: '',
+    voucherType: '일반',
+    note: '',
+    isActive: true,
+  })
+
   const weekDates = useMemo(() => buildWeekDates(weekBaseDate), [weekBaseDate])
   const hourSlots = useMemo(() => getHourSlots(), [])
   const employeeStaffs = useMemo(
@@ -688,10 +741,36 @@ export default function AdminPage() {
     return base.filter((c) => c.child_name.includes(q))
   }, [children, groupSearch])
 
+
+  const filteredRegularClasses = useMemo(() => {
+    return regularClasses
+      .filter((row) => {
+        if (!row.is_active) return false
+        const child = children.find((c) => Number(c.id) === Number(row.child_id))
+        const staff = staffs.find((s) => Number(s.id) === Number(row.teacher_id))
+        const keyword = regularSearch.trim()
+        if (!keyword) return true
+        return (
+          child?.child_name.includes(keyword) ||
+          staff?.name.includes(keyword)
+        )
+      })
+      .sort((a, b) => {
+        const childA = children.find((c) => Number(c.id) === Number(a.child_id))?.child_name ?? ''
+        const childB = children.find((c) => Number(c.id) === Number(b.child_id))?.child_name ?? ''
+        const nameCompare = childA.localeCompare(childB, 'ko')
+        if (nameCompare !== 0) return nameCompare
+        if (a.weekday !== b.weekday) return a.weekday - b.weekday
+        if (a.time_slot !== b.time_slot) return a.time_slot.localeCompare(b.time_slot)
+        return Number(a.minute_slot ?? 0) - Number(b.minute_slot ?? 0)
+      })
+  }, [regularClasses, children, staffs, regularSearch])
+
   async function loadStaffs() {
     const { data, error } = await supabase
       .from('staff_accounts')
       .select('*')
+      .eq('is_active', true)
       .order('name', { ascending: true })
     if (error) throw error
     setStaffs((data ?? []) as StaffRow[])
@@ -704,6 +783,20 @@ export default function AdminPage() {
       .order('child_name', { ascending: true })
     if (error) throw error
     setChildren((data ?? []) as ChildRow[])
+  }
+
+
+  async function loadRegularClasses() {
+    const { data, error } = await supabase
+      .from('regular_classes')
+      .select('*')
+      .order('child_id', { ascending: true })
+      .order('weekday', { ascending: true })
+      .order('time_slot', { ascending: true })
+      .order('minute_slot', { ascending: true })
+
+    if (error) throw error
+    setRegularClasses((data ?? []) as RegularClassRow[])
   }
 
   async function loadSchedules() {
@@ -939,101 +1032,302 @@ export default function AdminPage() {
     }
   }
 
- async function handleSaveStaff() {
-  try {
-    if (!staffForm.loginId.trim()) {
-      setMessage('로그인 ID를 입력하세요.')
-      return
-    }
-    if (!staffForm.name.trim()) {
-      setMessage('이름을 입력하세요.')
-      return
-    }
-    if (!staffForm.id && !staffForm.password.trim()) {
-      setMessage('비밀번호를 입력하세요.')
-      return
-    }
+  async function handleSaveStaff() {
+    try {
+      if (!staffForm.loginId.trim()) {
+        setMessage('로그인 ID를 입력하세요.')
+        return
+      }
+      if (!staffForm.name.trim()) {
+        setMessage('이름을 입력하세요.')
+        return
+      }
+      if (!staffForm.id && !staffForm.password.trim()) {
+        setMessage('비밀번호를 입력하세요.')
+        return
+      }
 
-    const body = {
-      id: staffForm.id,
-      loginId: staffForm.loginId,
-      password: staffForm.password,
-      name: staffForm.name,
-      role: staffForm.role,
-      isActive: staffForm.isActive,
+      const res = await fetch('/admin/staff/manage', {
+        method: staffForm.id ? 'PUT' : 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          id: staffForm.id,
+          loginId: staffForm.loginId,
+          password: staffForm.password,
+          name: staffForm.name,
+          role: staffForm.role,
+          isActive: staffForm.isActive,
+        }),
+      })
+
+      const json = await res.json()
+
+      if (!json.ok) {
+        throw new Error(json.message ?? '선생님 저장 실패')
+      }
+
+      await loadStaffs()
+      setMessage(json.message ?? '선생님 정보가 저장되었습니다.')
+      setStaffForm({
+        id: null,
+        loginId: '',
+        password: '',
+        name: '',
+        role: 'employee',
+        isActive: true,
+      })
+    } catch (err: any) {
+      setMessage(err?.message ?? '선생님 저장 실패')
     }
-
-    const res = await fetch('/admin/staff/manage', {
-      method: staffForm.id ? 'PUT' : 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(body),
-    })
-
-    const json = await res.json()
-
-    if (!json.ok) {
-      throw new Error(json.message ?? '선생님 저장 실패')
-    }
-
-    await loadStaffs()
-    setMessage(json.message ?? '선생님 정보가 저장되었습니다.')
-    setStaffForm({
-      id: null,
-      loginId: '',
-      password: '',
-      name: '',
-      role: 'employee',
-      isActive: true,
-    })
-  } catch (err: any) {
-    setMessage(err?.message ?? '선생님 저장 실패')
   }
-}
-async function handleDeleteStaff() {
-  try {
-    if (!staffForm.id) {
-      setMessage('삭제할 선생님을 먼저 선택하세요.')
-      return
+
+  async function handleDeleteStaff() {
+    try {
+      if (!staffForm.id) {
+        setMessage('삭제할 선생님을 먼저 선택하세요.')
+        return
+      }
+
+      const ok = window.confirm('이 선생님을 삭제할까요?')
+      if (!ok) return
+
+      const res = await fetch('/admin/staff/manage', {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ id: staffForm.id }),
+      })
+
+      const json = await res.json()
+      if (!json.ok) {
+        throw new Error(json.message ?? '선생님 삭제 실패')
+      }
+
+      await loadStaffs()
+      setMessage(json.message ?? '선생님 삭제 완료')
+      setStaffForm({
+        id: null,
+        loginId: '',
+        password: '',
+        name: '',
+        role: 'employee',
+        isActive: true,
+      })
+    } catch (err: any) {
+      setMessage(err?.message ?? '선생님 삭제 실패')
     }
-
-    const ok = window.confirm('이 선생님을 삭제할까요?')
-    if (!ok) return
-
-    const res = await fetch('/admin/staff/manage', {
-      method: 'DELETE',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        id: staffForm.id,
-      }),
-    })
-
-    const json = await res.json()
-
-    if (!json.ok) {
-      throw new Error(json.message ?? '선생님 삭제 실패')
-    }
-
-    await loadStaffs()
-    setMessage(json.message ?? '선생님 삭제 완료')
-
-    setStaffForm({
-      id: null,
-      loginId: '',
-      password: '',
-      name: '',
-      role: 'employee',
-      isActive: true,
-    })
-  } catch (err: any) {
-    setMessage(err?.message ?? '선생님 삭제 실패')
   }
-}
 
-  async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: number) {
+  async function handleSaveRegularClass() {
+    try {
+      if (!regularForm.childId) {
+        setMessage('학생을 선택하세요.')
+        return
+      }
+      if (!regularForm.teacherId) {
+        setMessage('선생님을 선택하세요.')
+        return
+      }
+      if (regularForm.weekday === '') {
+        setMessage('요일을 선택하세요.')
+        return
+      }
+      if (!regularForm.startDate) {
+        setMessage('시작일을 선택하세요.')
+        return
+      }
+
+      const endDate = regularForm.endDate || null
+      const payload = {
+        child_id: Number(regularForm.childId),
+        teacher_id: Number(regularForm.teacherId),
+        weekday: Number(regularForm.weekday),
+        time_slot: regularForm.timeSlot,
+        minute_slot: Number(regularForm.minuteSlot),
+        start_date: regularForm.startDate,
+        end_date: endDate,
+        voucher_type: regularForm.voucherType || null,
+        note: regularForm.note || null,
+        is_active: regularForm.isActive,
+      }
+
+      let ruleId = regularForm.id
+
+      if (regularForm.id) {
+        const { error } = await supabase
+          .from('regular_classes')
+          .update(payload)
+          .eq('id', regularForm.id)
+
+        if (error) throw error
+
+        const endForDelete = endDate || '2099-12-31'
+        const { error: deactivateError } = await supabase
+          .from('schedule_entries')
+          .update({ is_active: false })
+          .eq('teacher_id', Number(regularForm.teacherId))
+          .eq('child_id', Number(regularForm.childId))
+          .like('note', `${buildRegularNoteTag(regularForm.id)}%`)
+          .gte('date', regularForm.startDate)
+          .lte('date', endForDelete)
+
+        if (deactivateError) throw deactivateError
+      } else {
+        const { data, error } = await supabase
+          .from('regular_classes')
+          .insert(payload)
+          .select('id')
+          .single()
+
+        if (error) throw error
+        ruleId = data?.id ?? null
+      }
+
+      if (!ruleId) {
+        setMessage('정기수업 저장 후 rule id를 찾지 못했습니다.')
+        return
+      }
+
+      const teacher = staffs.find((s) => Number(s.id) === Number(regularForm.teacherId))
+      const teacherName = teacher?.name ?? ''
+      const generatedDates = getDateRangeMatchingWeekday(
+        regularForm.startDate,
+        endDate || '2099-12-31',
+        Number(regularForm.weekday)
+      )
+
+      if (generatedDates.length > 0) {
+        const { data: existingRows, error: existingError } = await supabase
+          .from('schedule_entries')
+          .select('date,time_slot,minute_slot,teacher_id,child_id,voucher_type')
+          .eq('teacher_id', Number(regularForm.teacherId))
+          .eq('child_id', Number(regularForm.childId))
+          .gte('date', generatedDates[0])
+          .lte('date', generatedDates[generatedDates.length - 1])
+          .eq('is_active', true)
+
+        if (existingError) throw existingError
+
+        const existingKeySet = new Set(
+          (existingRows ?? []).map((row: any) =>
+            [
+              row.date,
+              row.time_slot,
+              Number(row.minute_slot ?? 0),
+              Number(row.teacher_id),
+              Number(row.child_id),
+              row.voucher_type ?? '',
+            ].join('|')
+          )
+        )
+
+        const rowsToInsert = generatedDates
+          .map((date) => ({
+            date,
+            time_slot: regularForm.timeSlot,
+            minute_slot: Number(regularForm.minuteSlot),
+            teacher_id: Number(regularForm.teacherId),
+            teacher_name: teacherName,
+            child_id: Number(regularForm.childId),
+            voucher_type: regularForm.voucherType || null,
+            note: `${buildRegularNoteTag(ruleId)}${regularForm.note ? ` ${regularForm.note}` : ''}`,
+            is_active: true,
+          }))
+          .filter((row) => {
+            const key = [
+              row.date,
+              row.time_slot,
+              Number(row.minute_slot ?? 0),
+              Number(row.teacher_id),
+              Number(row.child_id),
+              row.voucher_type ?? '',
+            ].join('|')
+            return !existingKeySet.has(key)
+          })
+
+        if (rowsToInsert.length > 0) {
+          const { error: insertError } = await supabase
+            .from('schedule_entries')
+            .insert(rowsToInsert)
+
+          if (insertError) throw insertError
+        }
+      }
+
+      await Promise.all([loadRegularClasses(), loadSchedules()])
+      setRegularForm({
+        id: null,
+        childId: '',
+        teacherId: '',
+        weekday: '',
+        timeSlot: '09:00',
+        minuteSlot: '00',
+        startDate: toDateString(new Date()),
+        endDate: '',
+        voucherType: '일반',
+        note: '',
+        isActive: true,
+      })
+      setMessage('정기수업이 저장되었습니다.')
+    } catch (err: any) {
+      setMessage(err?.message ?? '정기수업 저장 실패')
+    }
+  }
+
+  async function handleDeleteRegularClass(id: number) {
+    try {
+      const ok = window.confirm('이 정기수업을 삭제할까요?')
+      if (!ok) return
+
+      const rule = regularClasses.find((row) => Number(row.id) === Number(id))
+      if (!rule) {
+        setMessage('정기수업 정보를 찾을 수 없습니다.')
+        return
+      }
+
+      const { error } = await supabase
+        .from('regular_classes')
+        .update({ is_active: false })
+        .eq('id', id)
+
+      if (error) throw error
+
+      const endForDelete = rule.end_date || '2099-12-31'
+      const { error: scheduleError } = await supabase
+        .from('schedule_entries')
+        .update({ is_active: false })
+        .like('note', `${buildRegularNoteTag(id)}%`)
+        .gte('date', rule.start_date)
+        .lte('date', endForDelete)
+
+      if (scheduleError) throw scheduleError
+
+      await Promise.all([loadRegularClasses(), loadSchedules()])
+      if (Number(regularForm.id) === Number(id)) {
+        setRegularForm({
+          id: null,
+          childId: '',
+          teacherId: '',
+          weekday: '',
+          timeSlot: '09:00',
+          minuteSlot: '00',
+          startDate: toDateString(new Date()),
+          endDate: '',
+          voucherType: '일반',
+          note: '',
+          isActive: true,
+        })
+      }
+      setMessage('정기수업이 삭제되었습니다.')
+    } catch (err: any) {
+      setMessage(err?.message ?? '정기수업 삭제 실패')
+    }
+  }
+
+  async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: number) {(dateStr: string, hourSlot: string, staffId: number) {
     try {
       const staff = employeeStaffs.find((s) => Number(s.id) === Number(staffId))
       const minute = Number(selectedMinute)
@@ -2095,6 +2389,12 @@ async function handleDeleteStaff() {
             >
               월정산
             </button>
+            <button
+              onClick={() => setTab('regular')}
+              className={`rounded-xl px-4 py-2 ${tab === 'regular' ? 'bg-black text-white' : 'bg-slate-200'}`}
+            >
+              정기수업관리
+            </button>
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
@@ -2136,34 +2436,35 @@ async function handleDeleteStaff() {
               <h1 className="text-xl font-bold md:text-2xl">관리자 시간표</h1>
 
               <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-<div className="flex flex-wrap gap-2">
-  <button
-    onClick={() => setViewMode('daily')}
-    className={`rounded-xl px-4 py-2 text-sm font-medium ${
-      viewMode === 'daily' ? 'bg-orange-500 text-white' : 'bg-slate-200 text-slate-700'
-    }`}
-  >
-    일별 보기
-  </button>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    onClick={() => setViewMode('all')}
+                    className={`rounded-xl px-4 py-2 text-sm font-medium ${
+                      viewMode === 'all' ? 'bg-emerald-500 text-white' : 'bg-slate-200 text-slate-700'
+                    }`}
+                  >
+                    전체보기
+                  </button>
 
-  <button
-    onClick={() => setViewMode('all')}
-    className={`rounded-xl px-4 py-2 text-sm font-medium ${
-      viewMode === 'all' ? 'bg-emerald-500 text-white' : 'bg-slate-200 text-slate-700'
-    }`}
-  >
-    전체보기
-  </button>
+                  <button
+                    onClick={() => setViewMode('staff')}
+                    className={`rounded-xl px-4 py-2 text-sm font-medium ${
+                      viewMode === 'staff' ? 'bg-indigo-500 text-white' : 'bg-slate-200 text-slate-700'
+                    }`}
+                  >
+                    선생님별 보기
+                  </button>
 
-  <button
-    onClick={() => setViewMode('staff')}
-    className={`rounded-xl px-4 py-2 text-sm font-medium ${
-      viewMode === 'staff' ? 'bg-indigo-500 text-white' : 'bg-slate-200 text-slate-700'
-    }`}
-  >
-    선생님별 보기
-  </button>
-</div>
+                  <button
+                    onClick={() => setViewMode('daily')}
+                    className={`rounded-xl px-4 py-2 text-sm font-medium ${
+                      viewMode === 'daily' ? 'bg-orange-500 text-white' : 'bg-slate-200 text-slate-700'
+                    }`}
+                  >
+                    일별 보기
+                  </button>
+                </div>
+
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                   {viewMode === 'staff' ? (
                     <select
@@ -2180,14 +2481,14 @@ async function handleDeleteStaff() {
                     </select>
                   ) : null}
 
-  {viewMode === 'daily' || viewMode === 'all' ? (
-  <input
-    type="date"
-    value={dailyDate}
-    onChange={(e) => setDailyDate(e.target.value)}
-    className="rounded-xl border px-3 py-2"
-  />
-) : null}
+                  {viewMode === 'daily' ? (
+                    <input
+                      type="date"
+                      value={dailyDate}
+                      onChange={(e) => setDailyDate(e.target.value)}
+                      className="rounded-xl border px-3 py-3 md:py-2"
+                    />
+                  ) : null}
 
                   <div className="flex gap-2">
                     <button
@@ -2236,403 +2537,375 @@ async function handleDeleteStaff() {
               </div>
             ) : (
               <>
-             <div className="hidden overflow-x-auto md:block">
-  {viewMode === 'all' ? (
-    <table className="border text-xs">
-      <thead>
-        <tr>
-          <th className="border bg-slate-100 px-1 py-2">시간</th>
+                <div className="hidden overflow-x-auto md:block">
+                  <table className="min-w-full border text-sm">
+                    <thead>
+                      <tr>
+                        <th className="border bg-slate-100 px-1 py-2">시간</th>
 
-          {employeeStaffs.map((staff) => (
-            <th
-              key={`all-head-${dailyDate}-${staff.id}`}
-              className="min-w-[120px] border bg-slate-100 px-1 py-1"
-            >
-              <div className="text-xs font-semibold leading-tight">{staff.name}</div>
-              <div className="mt-0.5 text-[10px] font-normal leading-tight text-slate-500">
-                {dailyDate}
-              </div>
-            </th>
-          ))}
-        </tr>
-      </thead>
+                        {viewMode === 'staff'
+                          ? weekDates.map((date, idx) => (
+                              <th key={`staff-${idx}`} className="min-w-[170px] border bg-slate-100 px-1 py-2">
+                                <div className="text-sm font-semibold leading-tight">
+                                  {['월', '화', '수', '목', '금', '토'][idx]} {toShortMonthDay(date)}
+                                </div>
+                                <div className="mt-1 text-xs font-normal leading-tight text-slate-500">
+                                  {selectedStaff?.name}
+                                </div>
+                              </th>
+                            ))
+                          : weekDates.flatMap((date, idx) =>
+                              employeeStaffs.map((staff) => (
+                                <th
+                                  key={`all-${toDateString(date)}-${staff.id}`}
+                                  className="min-w-[170px] border bg-slate-100 px-1 py-2"
+                                >
+                                  <div className="text-sm font-semibold leading-tight">
+                                    {['월', '화', '수', '목', '금', '토'][idx]} {toShortMonthDay(date)}
+                                  </div>
+                                  <div className="mt-1 text-xs font-normal leading-tight text-slate-500">
+                                    {staff.name}
+                                  </div>
+                                </th>
+                              ))
+                            )}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {hourSlots.map((hourSlot) => (
+                        <tr key={hourSlot}>
+                          <td className="whitespace-nowrap border bg-slate-50 px-1 py-1 font-medium">
+                            {hourSlot}
+                          </td>
 
-      <tbody>
-        {hourSlots.map((hourSlot) => (
-          <tr key={`all-row-${hourSlot}`}>
-            <td className="whitespace-nowrap border bg-slate-50 px-1 py-1 font-medium">
-              {hourSlot}
-            </td>
-
-            {employeeStaffs.map((staff) => {
-              const dateStr = dailyDate
-              const items = buildDisplayItems(dateStr, hourSlot, Number(staff.id))
-              const isEditing =
-                editingCell?.date === dateStr &&
-                editingCell?.hour === hourSlot &&
-                Number(editingCell?.staffId) === Number(staff.id)
-
-              return (
-                <td
-                  key={`all-${staff.id}-${dateStr}-${hourSlot}`}
-                  className="min-w-[120px] border px-1 py-1 align-top"
-                >
-                  {isEditing ? (
-                    <div className="space-y-1">
-                      <label className="flex items-center gap-2 text-xs">
-                        <input
-                          type="checkbox"
-                          checked={isGroupLesson}
-                          onChange={(e) => {
-                            setIsGroupLesson(e.target.checked)
-                            setSelectedVoucher('')
-                            setScheduleChildId('')
-                            setSelectedGroupChildIds([])
-                          }}
-                        />
-                        그룹수업
-                      </label>
-
-                      {isGroupLesson ? (
-                        <>
-                          <input
-                            value={groupName}
-                            onChange={(e) => setGroupName(e.target.value)}
-                            placeholder="그룹명"
-                            className="w-full rounded border bg-white px-2 py-1 text-xs"
-                          />
-
-                          <input
-                            value={groupSearch}
-                            onChange={(e) => setGroupSearch(e.target.value)}
-                            placeholder="학생 이름 검색"
-                            className="w-full rounded border bg-white px-2 py-1 text-xs"
-                          />
-
-                          <div className="rounded border p-2">
-                            <div className="mb-2 text-[11px] text-slate-500">
-                              학생 선택 ({selectedGroupChildIds.length}/8)
-                            </div>
-
-                            <div className="grid max-h-40 grid-cols-1 gap-1 overflow-y-auto">
-                              {filteredGroupChildren.map((c) => {
-                                const active = selectedGroupChildIds.includes(c.id)
+                          {viewMode === 'staff' && selectedStaff
+                            ? weekDates.map((date) => {
+                                const dateStr = toDateString(date)
+                                const items = buildDisplayItems(dateStr, hourSlot, Number(selectedStaff.id))
+                                const isEditing =
+                                  editingCell?.date === dateStr &&
+                                  editingCell?.hour === hourSlot &&
+                                  Number(editingCell?.staffId) === Number(selectedStaff.id)
 
                                 return (
-                                  <button
-                                    key={c.id}
-                                    type="button"
-                                    onClick={() => toggleGroupChild(c.id)}
-                                    className={`rounded px-2 py-1 text-left text-[11px] ${
-                                      active
-                                        ? 'bg-rose-500 text-white'
-                                        : 'bg-slate-100 text-slate-700'
-                                    }`}
+                                  <td
+                                    key={`${selectedStaff.id}-${dateStr}-${hourSlot}`}
+                                    className="min-w-[170px] border px-1 py-1 align-top"
                                   >
-                                    {getDisplayName(c)}
-                                  </button>
+                                    {isEditing ? (
+                                      <div className="min-h-[72px] space-y-2">
+                                        <label className="flex items-center gap-2 text-xs">
+                                          <input
+                                            type="checkbox"
+                                            checked={isGroupLesson}
+                                            onChange={(e) => {
+                                              setIsGroupLesson(e.target.checked)
+                                              setSelectedVoucher('')
+                                              setScheduleChildId('')
+                                              setSelectedGroupChildIds([])
+                                            }}
+                                          />
+                                          그룹수업
+                                        </label>
+
+                                        {isGroupLesson ? (
+                                          <>
+                                            <input
+                                              value={groupName}
+                                              onChange={(e) => setGroupName(e.target.value)}
+                                              placeholder="그룹명"
+                                              className="w-full rounded border bg-white px-2 py-1 text-xs"
+                                            />
+                                            <input
+                                              value={groupSearch}
+                                              onChange={(e) => setGroupSearch(e.target.value)}
+                                              placeholder="학생 이름 검색"
+                                              className="w-full rounded border bg-white px-2 py-1 text-xs"
+                                            />
+                                            <div className="rounded border p-2">
+                                              <div className="mb-2 text-[11px] text-slate-500">
+                                                학생 선택 ({selectedGroupChildIds.length}/8)
+                                              </div>
+                                              <div className="grid max-h-40 grid-cols-1 gap-1 overflow-y-auto">
+                                                {filteredGroupChildren.map((c) => {
+                                                  const active = selectedGroupChildIds.includes(c.id)
+                                                  return (
+                                                    <button
+                                                      key={c.id}
+                                                      type="button"
+                                                      onClick={() => toggleGroupChild(c.id)}
+                                                      className={`rounded px-2 py-1 text-left text-[11px] ${
+                                                        active ? 'bg-rose-500 text-white' : 'bg-slate-100 text-slate-700'
+                                                      }`}
+                                                    >
+                                                      {getDisplayName(c)}
+                                                    </button>
+                                                  )
+                                                })}
+                                              </div>
+                                            </div>
+                                          </>
+                                        ) : (
+                                          <>
+                                            <select
+                                              value={scheduleChildId}
+                                              onChange={(e) =>
+                                                setScheduleChildId(e.target.value ? Number(e.target.value) : '')
+                                              }
+                                              className="w-full rounded border bg-white px-2 py-1 text-xs"
+                                            >
+                                              <option value="">학생 선택</option>
+                                              {children.filter((c) => c.is_active).map((c) => (
+                                                <option key={c.id} value={c.id}>
+                                                  {getDisplayName(c)}
+                                                </option>
+                                              ))}
+                                            </select>
+
+                                            <select
+                                              value={selectedVoucher}
+                                              onChange={(e) => setSelectedVoucher(e.target.value)}
+                                              className="w-full rounded border bg-white px-2 py-1 text-xs"
+                                            >
+                                              <option value="">바우처 선택</option>
+                                              {getVoucherOptionsForChild(scheduleChildId).map((voucher) => (
+                                                <option key={voucher} value={voucher}>
+                                                  {voucher}
+                                                </option>
+                                              ))}
+                                            </select>
+                                          </>
+                                        )}
+
+                                        <select
+                                          value={selectedMinute}
+                                          onChange={(e) => setSelectedMinute(e.target.value)}
+                                          className="w-full rounded border bg-white px-2 py-1 text-xs"
+                                        >
+                                          {getMinutesOptions().map((m) => (
+                                            <option key={m} value={m}>
+                                              {m}분
+                                            </option>
+                                          ))}
+                                        </select>
+
+                                        <div className="flex gap-1">
+                                          <button
+                                            onClick={() =>
+                                              handleSaveSchedule(dateStr, hourSlot, Number(selectedStaff.id))
+                                            }
+                                            className="flex-1 rounded bg-indigo-600 px-2 py-1 text-xs text-white"
+                                          >
+                                            저장
+                                          </button>
+                                          <button
+                                            onClick={resetScheduleEditor}
+                                            className="flex-1 rounded bg-slate-300 px-2 py-1 text-xs"
+                                          >
+                                            취소
+                                          </button>
+                                        </div>
+                                      </div>
+                                    ) : (
+                                      <div className="space-y-1">
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            setEditingCell({
+                                              date: dateStr,
+                                              hour: hourSlot,
+                                              staffId: Number(selectedStaff.id),
+                                            })
+                                            setEditingEntryId(null)
+                                            setEditingGroupId(null)
+                                            setScheduleChildId('')
+                                            setSelectedMinute('00')
+                                            setSelectedVoucher('')
+                                            setIsGroupLesson(false)
+                                            setGroupName('')
+                                            setSelectedGroupChildIds([])
+                                            setGroupSearch('')
+                                          }}
+                                          className="min-h-[28px] w-full rounded border border-dashed border-slate-300 px-2 py-1 text-left text-xs text-slate-500 hover:bg-slate-100"
+                                        >
+                                          + 추가
+                                        </button>
+
+                                        {items.map((item) =>
+                                          renderScheduleCard(item, dateStr, Number(selectedStaff.id))
+                                        )}
+                                      </div>
+                                    )}
+                                  </td>
                                 )
-                              })}
-                            </div>
-                          </div>
-                        </>
-                      ) : (
-                        <>
-                          <select
-                            value={scheduleChildId}
-                            onChange={(e) =>
-                              setScheduleChildId(e.target.value ? Number(e.target.value) : '')
-                            }
-                            className="w-full rounded border bg-white px-2 py-1 text-xs"
-                          >
-                            <option value="">학생 선택</option>
-                            {children
-                              .filter((c) => c.is_active)
-                              .map((c) => (
-                                <option key={c.id} value={c.id}>
-                                  {getDisplayName(c)}
-                                </option>
-                              ))}
-                          </select>
+                              })
+                            : weekDates.flatMap((date) =>
+                                employeeStaffs.map((staff) => {
+                                  const dateStr = toDateString(date)
+                                  const items = buildDisplayItems(dateStr, hourSlot, Number(staff.id))
+                                  const isEditing =
+                                    editingCell?.date === dateStr &&
+                                    editingCell?.hour === hourSlot &&
+                                    Number(editingCell?.staffId) === Number(staff.id)
 
-                          <select
-                            value={selectedVoucher}
-                            onChange={(e) => setSelectedVoucher(e.target.value)}
-                            className="w-full rounded border bg-white px-2 py-1 text-xs"
-                          >
-                            <option value="">바우처 선택</option>
-                            {getVoucherOptionsForChild(scheduleChildId).map((voucher) => (
-                              <option key={voucher} value={voucher}>
-                                {voucher}
-                              </option>
-                            ))}
-                          </select>
-                        </>
-                      )}
+                                  return (
+                                    <td
+                                      key={`all-${staff.id}-${dateStr}-${hourSlot}`}
+                                      className="min-w-[170px] border px-1 py-1 align-top"
+                                    >
+                                      {isEditing ? (
+                                        <div className="min-h-[72px] space-y-2">
+                                          <label className="flex items-center gap-2 text-xs">
+                                            <input
+                                              type="checkbox"
+                                              checked={isGroupLesson}
+                                              onChange={(e) => {
+                                                setIsGroupLesson(e.target.checked)
+                                                setSelectedVoucher('')
+                                                setScheduleChildId('')
+                                                setSelectedGroupChildIds([])
+                                              }}
+                                            />
+                                            그룹수업
+                                          </label>
 
-                      <select
-                        value={selectedMinute}
-                        onChange={(e) => setSelectedMinute(e.target.value)}
-                        className="w-full rounded border bg-white px-2 py-1 text-xs"
-                      >
-                        {getMinutesOptions().map((m) => (
-                          <option key={m} value={m}>
-                            {m}분
-                          </option>
-                        ))}
-                      </select>
+                                          {isGroupLesson ? (
+                                            <>
+                                              <input
+                                                value={groupName}
+                                                onChange={(e) => setGroupName(e.target.value)}
+                                                placeholder="그룹명"
+                                                className="w-full rounded border bg-white px-2 py-1 text-xs"
+                                              />
+                                              <input
+                                                value={groupSearch}
+                                                onChange={(e) => setGroupSearch(e.target.value)}
+                                                placeholder="학생 이름 검색"
+                                                className="w-full rounded border bg-white px-2 py-1 text-xs"
+                                              />
+                                              <div className="rounded border p-2">
+                                                <div className="mb-2 text-[11px] text-slate-500">
+                                                  학생 선택 ({selectedGroupChildIds.length}/8)
+                                                </div>
+                                                <div className="grid max-h-40 grid-cols-1 gap-1 overflow-y-auto">
+                                                  {filteredGroupChildren.map((c) => {
+                                                    const active = selectedGroupChildIds.includes(c.id)
+                                                    return (
+                                                      <button
+                                                        key={c.id}
+                                                        type="button"
+                                                        onClick={() => toggleGroupChild(c.id)}
+                                                        className={`rounded px-2 py-1 text-left text-[11px] ${
+                                                          active ? 'bg-rose-500 text-white' : 'bg-slate-100 text-slate-700'
+                                                        }`}
+                                                      >
+                                                        {getDisplayName(c)}
+                                                      </button>
+                                                    )
+                                                  })}
+                                                </div>
+                                              </div>
+                                            </>
+                                          ) : (
+                                            <>
+                                              <select
+                                                value={scheduleChildId}
+                                                onChange={(e) =>
+                                                  setScheduleChildId(e.target.value ? Number(e.target.value) : '')
+                                                }
+                                                className="w-full rounded border bg-white px-2 py-1 text-xs"
+                                              >
+                                                <option value="">학생 선택</option>
+                                                {children.filter((c) => c.is_active).map((c) => (
+                                                  <option key={c.id} value={c.id}>
+                                                    {getDisplayName(c)}
+                                                  </option>
+                                                ))}
+                                              </select>
 
-                      <div className="flex gap-1">
-                        <button
-                          onClick={() => handleSaveSchedule(dateStr, hourSlot, Number(staff.id))}
-                          className="flex-1 rounded bg-indigo-600 px-2 py-1 text-xs text-white"
-                        >
-                          저장
-                        </button>
-                        <button
-                          onClick={resetScheduleEditor}
-                          className="flex-1 rounded bg-slate-300 px-2 py-1 text-xs"
-                        >
-                          취소
-                        </button>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="space-y-1">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setEditingCell({
-                            date: dateStr,
-                            hour: hourSlot,
-                            staffId: Number(staff.id),
-                          })
-                          setEditingEntryId(null)
-                          setEditingGroupId(null)
-                          setScheduleChildId('')
-                          setSelectedMinute('00')
-                          setSelectedVoucher('')
-                          setIsGroupLesson(false)
-                          setGroupName('')
-                          setSelectedGroupChildIds([])
-                          setGroupSearch('')
-                        }}
-                        className="min-h-[28px] w-full rounded border border-dashed border-slate-300 px-2 py-1 text-left text-xs text-slate-500 hover:bg-slate-100"
-                      >
-                        + 추가
-                      </button>
+                                              <select
+                                                value={selectedVoucher}
+                                                onChange={(e) => setSelectedVoucher(e.target.value)}
+                                                className="w-full rounded border bg-white px-2 py-1 text-xs"
+                                              >
+                                                <option value="">바우처 선택</option>
+                                                {getVoucherOptionsForChild(scheduleChildId).map((voucher) => (
+                                                  <option key={voucher} value={voucher}>
+                                                    {voucher}
+                                                  </option>
+                                                ))}
+                                              </select>
+                                            </>
+                                          )}
 
-                      {items.map((item) =>
-                        renderScheduleCard(item, dateStr, Number(staff.id))
-                      )}
-                    </div>
-                  )}
-                </td>
-              )
-            })}
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  ) : (
-    <table className="min-w-full border text-xs">
-      <thead>
-        <tr>
-          <th className="border bg-slate-100 px-1 py-2">시간</th>
+                                          <select
+                                            value={selectedMinute}
+                                            onChange={(e) => setSelectedMinute(e.target.value)}
+                                            className="w-full rounded border bg-white px-2 py-1 text-xs"
+                                          >
+                                            {getMinutesOptions().map((m) => (
+                                              <option key={m} value={m}>
+                                                {m}분
+                                              </option>
+                                            ))}
+                                          </select>
 
-          {weekDates.map((date, idx) => (
-            <th
-              key={`staff-${idx}`}
-              className="w-[120px] min-w-[120px] max-w-[120px] border bg-slate-100 px-1 py-1.5 text-[10px] leading-none"
-            >
-              <div className="text-sm font-semibold leading-tight">
-                {['월', '화', '수', '목', '금', '토'][idx]} {toShortMonthDay(date)}
-              </div>
-              <div className="mt-1 text-xs font-normal leading-tight text-slate-500">
-                {selectedStaff?.name}
-              </div>
-            </th>
-          ))}
-        </tr>
-      </thead>
+                                          <div className="flex gap-1">
+                                            <button
+                                              onClick={() =>
+                                                handleSaveSchedule(dateStr, hourSlot, Number(staff.id))
+                                              }
+                                              className="flex-1 rounded bg-indigo-600 px-2 py-1 text-xs text-white"
+                                            >
+                                              저장
+                                            </button>
+                                            <button
+                                              onClick={resetScheduleEditor}
+                                              className="flex-1 rounded bg-slate-300 px-2 py-1 text-xs"
+                                            >
+                                              취소
+                                            </button>
+                                          </div>
+                                        </div>
+                                      ) : (
+                                        <div className="space-y-1">
+                                          <button
+                                            type="button"
+                                            onClick={() => {
+                                              setEditingCell({
+                                                date: dateStr,
+                                                hour: hourSlot,
+                                                staffId: Number(staff.id),
+                                              })
+                                              setEditingEntryId(null)
+                                              setEditingGroupId(null)
+                                              setScheduleChildId('')
+                                              setSelectedMinute('00')
+                                              setSelectedVoucher('')
+                                              setIsGroupLesson(false)
+                                              setGroupName('')
+                                              setSelectedGroupChildIds([])
+                                              setGroupSearch('')
+                                            }}
+                                            className="min-h-[28px] w-full rounded border border-dashed border-slate-300 px-2 py-1 text-left text-xs text-slate-500 hover:bg-slate-100"
+                                          >
+                                            + 추가
+                                          </button>
 
-      <tbody>
-        {hourSlots.map((hourSlot) => (
-          <tr key={hourSlot}>
-            <td className="whitespace-nowrap border bg-slate-50 px-1 py-1 font-medium">
-              {hourSlot}
-            </td>
-
-            {weekDates.map((date) => {
-              const dateStr = toDateString(date)
-              const items = buildDisplayItems(dateStr, hourSlot, Number(selectedStaff?.id))
-              const isEditing =
-                editingCell?.date === dateStr &&
-                editingCell?.hour === hourSlot &&
-                Number(editingCell?.staffId) === Number(selectedStaff?.id)
-
-              return (
-                <td
-                  key={`${selectedStaff?.id}-${dateStr}-${hourSlot}`}
-                  className="min-w-[140px] border px-1 py-1 align-top"
-                >
-                  {isEditing ? (
-                    <div className="min-h-[72px] space-y-2">
-                      <label className="flex items-center gap-2 text-xs">
-                        <input
-                          type="checkbox"
-                          checked={isGroupLesson}
-                          onChange={(e) => {
-                            setIsGroupLesson(e.target.checked)
-                            setSelectedVoucher('')
-                            setScheduleChildId('')
-                            setSelectedGroupChildIds([])
-                          }}
-                        />
-                        그룹수업
-                      </label>
-
-                      {isGroupLesson ? (
-                        <>
-                          <input
-                            value={groupName}
-                            onChange={(e) => setGroupName(e.target.value)}
-                            placeholder="그룹명"
-                            className="w-full rounded border bg-white px-2 py-1 text-xs"
-                          />
-                          <input
-                            value={groupSearch}
-                            onChange={(e) => setGroupSearch(e.target.value)}
-                            placeholder="학생 이름 검색"
-                            className="w-full rounded border bg-white px-2 py-1 text-xs"
-                          />
-                          <div className="rounded border p-2">
-                            <div className="mb-2 text-[11px] text-slate-500">
-                              학생 선택 ({selectedGroupChildIds.length}/8)
-                            </div>
-                            <div className="grid max-h-40 grid-cols-1 gap-1 overflow-y-auto">
-                              {filteredGroupChildren.map((c) => {
-                                const active = selectedGroupChildIds.includes(c.id)
-                                return (
-                                  <button
-                                    key={c.id}
-                                    type="button"
-                                    onClick={() => toggleGroupChild(c.id)}
-                                    className={`rounded px-2 py-1 text-left text-[11px] ${
-                                      active
-                                        ? 'bg-rose-500 text-white'
-                                        : 'bg-slate-100 text-slate-700'
-                                    }`}
-                                  >
-                                    {getDisplayName(c)}
-                                  </button>
-                                )
-                              })}
-                            </div>
-                          </div>
-                        </>
-                      ) : (
-                        <>
-                          <select
-                            value={scheduleChildId}
-                            onChange={(e) =>
-                              setScheduleChildId(e.target.value ? Number(e.target.value) : '')
-                            }
-                            className="w-full rounded border bg-white px-2 py-1 text-xs"
-                          >
-                            <option value="">학생 선택</option>
-                            {children
-                              .filter((c) => c.is_active)
-                              .map((c) => (
-                                <option key={c.id} value={c.id}>
-                                  {getDisplayName(c)}
-                                </option>
-                              ))}
-                          </select>
-
-                          <select
-                            value={selectedVoucher}
-                            onChange={(e) => setSelectedVoucher(e.target.value)}
-                            className="w-full rounded border bg-white px-2 py-1 text-xs"
-                          >
-                            <option value="">바우처 선택</option>
-                            {getVoucherOptionsForChild(scheduleChildId).map((voucher) => (
-                              <option key={voucher} value={voucher}>
-                                {voucher}
-                              </option>
-                            ))}
-                          </select>
-                        </>
-                      )}
-
-                      <select
-                        value={selectedMinute}
-                        onChange={(e) => setSelectedMinute(e.target.value)}
-                        className="w-full rounded border bg-white px-2 py-1 text-xs"
-                      >
-                        {getMinutesOptions().map((m) => (
-                          <option key={m} value={m}>
-                            {m}분
-                          </option>
-                        ))}
-                      </select>
-
-                      <div className="flex gap-1">
-                        <button
-                          onClick={() =>
-                            handleSaveSchedule(dateStr, hourSlot, Number(selectedStaff?.id))
-                          }
-                          className="flex-1 rounded bg-indigo-600 px-2 py-1 text-xs text-white"
-                        >
-                          저장
-                        </button>
-                        <button
-                          onClick={resetScheduleEditor}
-                          className="flex-1 rounded bg-slate-300 px-2 py-1 text-xs"
-                        >
-                          취소
-                        </button>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="space-y-1">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setEditingCell({
-                            date: dateStr,
-                            hour: hourSlot,
-                            staffId: Number(selectedStaff?.id),
-                          })
-                          setEditingEntryId(null)
-                          setEditingGroupId(null)
-                          setScheduleChildId('')
-                          setSelectedMinute('00')
-                          setSelectedVoucher('')
-                          setIsGroupLesson(false)
-                          setGroupName('')
-                          setSelectedGroupChildIds([])
-                          setGroupSearch('')
-                        }}
-                        className="min-h-[28px] w-full rounded border border-dashed border-slate-300 px-2 py-1 text-left text-xs text-slate-500 hover:bg-slate-100"
-                      >
-                        + 추가
-                      </button>
-
-                      {items.map((item) =>
-                        renderScheduleCard(item, dateStr, Number(selectedStaff?.id))
-                      )}
-                    </div>
-                  )}
-                </td>
-              )
-            })}
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  )}
-</div>
+                                          {items.map((item) =>
+                                            renderScheduleCard(item, dateStr, Number(staff.id))
+                                          )}
+                                        </div>
+                                      )}
+                                    </td>
+                                  )
+                                })
+                              )}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
 
                 <div className="space-y-4 md:hidden">
                   {viewMode === 'staff' && selectedStaff
@@ -2805,6 +3078,7 @@ async function handleDeleteStaff() {
                         <div className="mt-1 text-sm text-slate-500">
                           {child.chart_no ? `차트번호 ${child.chart_no}` : '차트번호 없음'}
                           {child.phone ? ` / ${child.phone}` : ''}
+                          {` / 일반단가 ${child.base_price ?? child.monthly_limit ?? 60000}`}
                         </div>
                       </button>
                     )
@@ -2855,23 +3129,22 @@ async function handleDeleteStaff() {
                   />
                   사용중
                 </label>
-               <div className="flex gap-2">
-  <button
-    onClick={handleSaveStaff}
-    className="flex-1 rounded-xl bg-black py-3 text-white md:py-2"
-  >
-    {staffForm.id ? '선생님 수정' : '선생님 등록'}
-  </button>
-
-  {staffForm.id ? (
-    <button
-      onClick={handleDeleteStaff}
-      className="flex-1 rounded-xl bg-rose-500 py-3 text-white md:py-2"
-    >
-      삭제
-    </button>
-  ) : null}
-</div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={handleSaveStaff}
+                    className="flex-1 rounded-xl bg-black py-3 text-white md:py-2"
+                  >
+                    {staffForm.id ? '선생님 수정' : '선생님 등록'}
+                  </button>
+                  {staffForm.id ? (
+                    <button
+                      onClick={handleDeleteStaff}
+                      className="flex-1 rounded-xl bg-rose-500 py-3 text-white md:py-2"
+                    >
+                      삭제
+                    </button>
+                  ) : null}
+                </div>
               </div>
             </div>
 
@@ -2904,6 +3177,197 @@ async function handleDeleteStaff() {
                       </div>
                     </button>
                   ))
+                )}
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+
+        {tab === 'regular' ? (
+          <div className="grid gap-6 md:grid-cols-2">
+            <div className="rounded-2xl border p-4">
+              <h2 className="mb-3 text-xl font-bold">정기수업 등록 / 수정</h2>
+              <div className="space-y-3">
+                <select
+                  value={regularForm.childId}
+                  onChange={(e) => setRegularForm((p) => ({ ...p, childId: e.target.value ? Number(e.target.value) : '' }))}
+                  className="w-full rounded-xl border px-3 py-3 md:py-2"
+                >
+                  <option value="">학생 선택</option>
+                  {children.filter((c) => c.is_active).map((child) => (
+                    <option key={child.id} value={child.id}>
+                      {getDisplayName(child)}
+                    </option>
+                  ))}
+                </select>
+
+                <select
+                  value={regularForm.teacherId}
+                  onChange={(e) => setRegularForm((p) => ({ ...p, teacherId: e.target.value ? Number(e.target.value) : '' }))}
+                  className="w-full rounded-xl border px-3 py-3 md:py-2"
+                >
+                  <option value="">선생님 선택</option>
+                  {employeeStaffs.map((staff) => (
+                    <option key={staff.id} value={staff.id}>
+                      {staff.name}
+                    </option>
+                  ))}
+                </select>
+
+                <div className="grid gap-3 md:grid-cols-2">
+                  <select
+                    value={regularForm.weekday}
+                    onChange={(e) => setRegularForm((p) => ({ ...p, weekday: e.target.value === '' ? '' : Number(e.target.value) }))}
+                    className="w-full rounded-xl border px-3 py-3 md:py-2"
+                  >
+                    <option value="">요일 선택</option>
+                    {[1, 2, 3, 4, 5, 6].map((weekday) => (
+                      <option key={weekday} value={weekday}>
+                        {getWeekdayLabel(weekday)}
+                      </option>
+                    ))}
+                  </select>
+
+                  <select
+                    value={regularForm.timeSlot}
+                    onChange={(e) => setRegularForm((p) => ({ ...p, timeSlot: e.target.value }))}
+                    className="w-full rounded-xl border px-3 py-3 md:py-2"
+                  >
+                    {hourSlots.map((slot) => (
+                      <option key={slot} value={slot}>
+                        {slot}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="grid gap-3 md:grid-cols-2">
+                  <select
+                    value={regularForm.minuteSlot}
+                    onChange={(e) => setRegularForm((p) => ({ ...p, minuteSlot: e.target.value }))}
+                    className="w-full rounded-xl border px-3 py-3 md:py-2"
+                  >
+                    {getMinutesOptions().map((m) => (
+                      <option key={m} value={m}>
+                        {m}분
+                      </option>
+                    ))}
+                  </select>
+
+                  <select
+                    value={regularForm.voucherType}
+                    onChange={(e) => setRegularForm((p) => ({ ...p, voucherType: e.target.value }))}
+                    className="w-full rounded-xl border px-3 py-3 md:py-2"
+                  >
+                    {getVoucherOptionsForChild(regularForm.childId).map((voucher) => (
+                      <option key={voucher} value={voucher}>
+                        {voucher}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="grid gap-3 md:grid-cols-2">
+                  <input
+                    type="date"
+                    value={regularForm.startDate}
+                    onChange={(e) => setRegularForm((p) => ({ ...p, startDate: e.target.value }))}
+                    className="w-full rounded-xl border px-3 py-3 md:py-2"
+                  />
+                  <input
+                    type="date"
+                    value={regularForm.endDate}
+                    onChange={(e) => setRegularForm((p) => ({ ...p, endDate: e.target.value }))}
+                    className="w-full rounded-xl border px-3 py-3 md:py-2"
+                  />
+                </div>
+
+                <input
+                  value={regularForm.note}
+                  onChange={(e) => setRegularForm((p) => ({ ...p, note: e.target.value }))}
+                  placeholder="메모"
+                  className="w-full rounded-xl border px-3 py-3 md:py-2"
+                />
+
+                <label className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={regularForm.isActive}
+                    onChange={(e) => setRegularForm((p) => ({ ...p, isActive: e.target.checked }))}
+                  />
+                  사용중
+                </label>
+
+                <button
+                  onClick={handleSaveRegularClass}
+                  className="w-full rounded-xl bg-black py-3 text-white md:py-2"
+                >
+                  {regularForm.id ? '정기수업 수정' : '정기수업 등록'}
+                </button>
+              </div>
+            </div>
+
+            <div className="rounded-2xl border p-4">
+              <h2 className="mb-3 text-xl font-bold">정기수업 목록</h2>
+              <input
+                value={regularSearch}
+                onChange={(e) => setRegularSearch(e.target.value)}
+                placeholder="학생 / 선생님 검색"
+                className="mb-3 w-full rounded-xl border px-3 py-3 md:py-2"
+              />
+              <div className="space-y-2">
+                {filteredRegularClasses.length === 0 ? (
+                  <div className="rounded-xl border p-3 text-slate-500">등록된 정기수업이 없습니다.</div>
+                ) : (
+                  filteredRegularClasses.map((row) => {
+                    const child = children.find((c) => Number(c.id) === Number(row.child_id))
+                    const staff = staffs.find((s) => Number(s.id) === Number(row.teacher_id))
+                    return (
+                      <div
+                        key={row.id}
+                        className="w-full rounded-xl border p-3 text-left hover:bg-slate-50"
+                      >
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setRegularForm({
+                              id: row.id,
+                              childId: row.child_id,
+                              teacherId: row.teacher_id,
+                              weekday: row.weekday,
+                              timeSlot: row.time_slot,
+                              minuteSlot: String(row.minute_slot ?? 0).padStart(2, '0'),
+                              startDate: row.start_date,
+                              endDate: row.end_date ?? '',
+                              voucherType: row.voucher_type ?? '일반',
+                              note: row.note ?? '',
+                              isActive: row.is_active,
+                            })
+                          }
+                          className="w-full text-left"
+                        >
+                          <div className="font-medium">
+                            {child?.child_name ?? `학생(${row.child_id})`} / {staff?.name ?? `선생님(${row.teacher_id})`}
+                          </div>
+                          <div className="mt-1 text-sm text-slate-500">
+                            {getWeekdayLabel(row.weekday)} {row.time_slot}:{String(row.minute_slot ?? 0).padStart(2, '0')} / {row.start_date} ~ {row.end_date || '종료없음'}
+                          </div>
+                          <div className="mt-1 text-sm text-slate-500">
+                            바우처: {row.voucher_type ?? '일반'}
+                          </div>
+                        </button>
+                        <div className="mt-2 flex gap-2">
+                          <button
+                            onClick={() => handleDeleteRegularClass(row.id)}
+                            className="rounded bg-rose-50 px-2 py-1 text-xs text-rose-700"
+                          >
+                            삭제
+                          </button>
+                        </div>
+                      </div>
+                    )
+                  })
                 )}
               </div>
             </div>
