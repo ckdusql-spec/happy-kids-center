@@ -1141,6 +1141,12 @@ export default function AdminPage() {
       }
 
       const endDate = regularForm.endDate || null
+      const voucherOptions = getVoucherOptionsForChild(regularForm.childId)
+      const effectiveVoucherType =
+        regularForm.voucherType && voucherOptions.includes(regularForm.voucherType)
+          ? regularForm.voucherType
+          : voucherOptions[0] || '일반'
+
       const payload = {
         child_id: Number(regularForm.childId),
         teacher_id: Number(regularForm.teacherId),
@@ -1149,7 +1155,7 @@ export default function AdminPage() {
         minute_slot: Number(regularForm.minuteSlot),
         start_date: regularForm.startDate,
         end_date: endDate,
-        voucher_type: regularForm.voucherType || null,
+        voucher_type: effectiveVoucherType,
         note: regularForm.note || null,
         is_active: regularForm.isActive,
       }
@@ -1193,6 +1199,7 @@ export default function AdminPage() {
 
       const teacher = staffs.find((s) => Number(s.id) === Number(regularForm.teacherId))
       const teacherName = teacher?.name ?? ''
+
       const generatedDates = getDateRangeMatchingWeekday(
         regularForm.startDate,
         endDate || '2099-12-31',
@@ -1229,12 +1236,18 @@ export default function AdminPage() {
             date,
             time_slot: regularForm.timeSlot,
             minute_slot: Number(regularForm.minuteSlot),
+            room_number: 1,
             teacher_id: Number(regularForm.teacherId),
             teacher_name: teacherName,
+            class_type: 'individual',
             child_id: Number(regularForm.childId),
-            voucher_type: regularForm.voucherType || null,
+            voucher_type: effectiveVoucherType,
+            status: 'scheduled',
             note: `${buildRegularNoteTag(ruleId)}${regularForm.note ? ` ${regularForm.note}` : ''}`,
             is_active: true,
+            is_group: false,
+            group_id: null,
+            group_name: null,
           }))
           .filter((row) => {
             const key = [
@@ -1327,7 +1340,8 @@ export default function AdminPage() {
     }
   }
 
-  async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: number) {
+  
+async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: number) {(dateStr: string, hourSlot: string, staffId: number) {
     try {
       const staff = employeeStaffs.find((s) => Number(s.id) === Number(staffId))
       const minute = Number(selectedMinute)
@@ -3191,7 +3205,16 @@ export default function AdminPage() {
               <div className="space-y-3">
                 <select
                   value={regularForm.childId}
-                  onChange={(e) => setRegularForm((p) => ({ ...p, childId: e.target.value ? Number(e.target.value) : '' }))}
+                  onChange={(e) => {
+                    const nextChildId = e.target.value ? Number(e.target.value) : ''
+                    const nextOptions = getVoucherOptionsForChild(nextChildId)
+                    setRegularForm((p) => ({
+                      ...p,
+                      childId: nextChildId,
+                      voucherType:
+                        nextOptions.includes(p.voucherType) ? p.voucherType : (nextOptions[0] || '일반'),
+                    }))
+                  }}
                   className="w-full rounded-xl border px-3 py-3 md:py-2"
                 >
                   <option value="">학생 선택</option>
@@ -3260,6 +3283,7 @@ export default function AdminPage() {
                     onChange={(e) => setRegularForm((p) => ({ ...p, voucherType: e.target.value }))}
                     className="w-full rounded-xl border px-3 py-3 md:py-2"
                   >
+                    <option value="">바우처 선택</option>
                     {getVoucherOptionsForChild(regularForm.childId).map((voucher) => (
                       <option key={voucher} value={voucher}>
                         {voucher}
