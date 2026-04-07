@@ -711,7 +711,7 @@ export default function AdminPage() {
     minuteSlot: '00',
     startDate: toDateString(new Date()),
     endDate: '',
-    voucherType: '일반',
+    voucherType: '',
     note: '',
     isActive: true,
   })
@@ -1139,13 +1139,17 @@ export default function AdminPage() {
         setMessage('시작일을 선택하세요.')
         return
       }
+      if (!regularForm.voucherType) {
+        setMessage('바우처를 선택하세요.')
+        return
+      }
 
       const endDate = regularForm.endDate || null
       const voucherOptions = getVoucherOptionsForChild(regularForm.childId)
       const effectiveVoucherType =
         regularForm.voucherType && voucherOptions.includes(regularForm.voucherType)
           ? regularForm.voucherType
-          : voucherOptions[0] || '일반'
+          : ''
 
       const payload = {
         child_id: Number(regularForm.childId),
@@ -1280,7 +1284,7 @@ export default function AdminPage() {
         minuteSlot: '00',
         startDate: toDateString(new Date()),
         endDate: '',
-        voucherType: '일반',
+        voucherType: '',
         note: '',
         isActive: true,
       })
@@ -1329,7 +1333,7 @@ export default function AdminPage() {
           minuteSlot: '00',
           startDate: toDateString(new Date()),
           endDate: '',
-          voucherType: '일반',
+          voucherType: '',
           note: '',
           isActive: true,
         })
@@ -3212,7 +3216,7 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
                       ...p,
                       childId: nextChildId,
                       voucherType:
-                        nextOptions.includes(p.voucherType) ? p.voucherType : (nextOptions[0] || '일반'),
+                        nextOptions.includes(p.voucherType) ? p.voucherType : '',
                     }))
                   }}
                   className="w-full rounded-xl border px-3 py-3 md:py-2"
