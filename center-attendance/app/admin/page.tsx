@@ -1149,7 +1149,7 @@ export default function AdminPage() {
         minute_slot: Number(regularForm.minuteSlot),
         start_date: regularForm.startDate,
         end_date: endDate,
-        voucher_type: regularForm.voucherType || '일반',
+        voucher_type: regularForm.voucherType || null,
         note: regularForm.note || null,
         is_active: regularForm.isActive,
       }
@@ -1193,7 +1193,6 @@ export default function AdminPage() {
 
       const teacher = staffs.find((s) => Number(s.id) === Number(regularForm.teacherId))
       const teacherName = teacher?.name ?? ''
-
       const generatedDates = getDateRangeMatchingWeekday(
         regularForm.startDate,
         endDate || '2099-12-31',
@@ -1230,18 +1229,12 @@ export default function AdminPage() {
             date,
             time_slot: regularForm.timeSlot,
             minute_slot: Number(regularForm.minuteSlot),
-            room_number: 1,
             teacher_id: Number(regularForm.teacherId),
             teacher_name: teacherName,
-            class_type: 'individual',
             child_id: Number(regularForm.childId),
-            voucher_type: regularForm.voucherType || '일반',
-            status: 'scheduled',
+            voucher_type: regularForm.voucherType || null,
             note: `${buildRegularNoteTag(ruleId)}${regularForm.note ? ` ${regularForm.note}` : ''}`,
             is_active: true,
-            is_group: false,
-            group_id: null,
-            group_name: null,
           }))
           .filter((row) => {
             const key = [
@@ -1334,8 +1327,7 @@ export default function AdminPage() {
     }
   }
 
-  
-async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: number) {(dateStr: string, hourSlot: string, staffId: number) {
+  async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: number) {(dateStr: string, hourSlot: string, staffId: number) {
     try {
       const staff = employeeStaffs.find((s) => Number(s.id) === Number(staffId))
       const minute = Number(selectedMinute)
