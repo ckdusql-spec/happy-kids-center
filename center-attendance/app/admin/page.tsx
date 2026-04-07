@@ -3560,7 +3560,8 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
 
 
         {tab === 'regular' ? (
-          <div className="grid gap-6 md:grid-cols-2">
+          <>
+            <div className="grid gap-6 md:grid-cols-2">
             <div className="rounded-2xl border p-4">
               <h2 className="mb-3 text-xl font-bold">정기수업 등록 / 수정</h2>
               <div className="space-y-3">
@@ -3967,6 +3968,7 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
                 </div>
               </div>
             </div>
+          </>
         ) : null}
 
         {tab === 'summary' ? (
