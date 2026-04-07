@@ -106,6 +106,42 @@ type RegularClassForm = {
   isActive: boolean
 }
 
+type RegularGroupClassRow = {
+  id: number
+  teacher_id: number
+  weekday: number
+  time_slot: string
+  minute_slot: number
+  start_date: string
+  end_date: string | null
+  voucher_type: string | null
+  group_name: string
+  note?: string | null
+  is_active: boolean
+}
+
+type RegularGroupClassMemberRow = {
+  id: number
+  regular_group_class_id: number
+  child_id: number
+  is_active: boolean
+}
+
+type RegularGroupClassForm = {
+  id: number | null
+  teacherId: number | ''
+  weekday: number | ''
+  timeSlot: string
+  minuteSlot: string
+  startDate: string
+  endDate: string
+  voucherType: string
+  groupName: string
+  note: string
+  isActive: boolean
+  childIds: number[]
+}
+
 type ChildForm = {
   id: number | null
   childName: string
@@ -335,6 +371,10 @@ function getDateRangeMatchingWeekday(startDate: string, endDate: string, weekday
 
 function buildRegularNoteTag(ruleId: number) {
   return `[정기수업:${ruleId}]`
+}
+
+function buildRegularGroupNoteTag(ruleId: number) {
+  return `[정기그룹:${ruleId}]`
 }
 
 function getVoucherPrices(child: ChildRow) {
@@ -716,6 +756,25 @@ export default function AdminPage() {
     isActive: true,
   })
 
+
+  const [regularGroupClasses, setRegularGroupClasses] = useState<RegularGroupClassRow[]>([])
+  const [regularGroupMembers, setRegularGroupMembers] = useState<RegularGroupClassMemberRow[]>([])
+  const [regularGroupSearch, setRegularGroupSearch] = useState('')
+  const [regularGroupForm, setRegularGroupForm] = useState<RegularGroupClassForm>({
+    id: null,
+    teacherId: '',
+    weekday: '',
+    timeSlot: '09:00',
+    minuteSlot: '00',
+    startDate: toDateString(new Date()),
+    endDate: '',
+    voucherType: '',
+    groupName: '',
+    note: '',
+    isActive: true,
+    childIds: [],
+  })
+
   const weekDates = useMemo(() => buildWeekDates(weekBaseDate), [weekBaseDate])
   const hourSlots = useMemo(() => getHourSlots(), [])
   const employeeStaffs = useMemo(
@@ -766,6 +825,28 @@ export default function AdminPage() {
       })
   }, [regularClasses, children, staffs, regularSearch])
 
+  const filteredRegularGroupClasses = useMemo(() => {
+    return regularGroupClasses
+      .filter((row) => {
+        if (!row.is_active) return false
+        const staff = staffs.find((s) => Number(s.id) === Number(row.teacher_id))
+        const memberNames = regularGroupMembers
+          .filter((m) => Number(m.regular_group_class_id) === Number(row.id) && m.is_active)
+          .map((m) => children.find((c) => Number(c.id) === Number(m.child_id))?.child_name ?? '')
+          .join(', ')
+        const keyword = regularGroupSearch.trim()
+        if (!keyword) return true
+        return row.group_name.includes(keyword) || staff?.name.includes(keyword) || memberNames.includes(keyword)
+      })
+      .sort((a, b) => {
+        const nameCompare = a.group_name.localeCompare(b.group_name, 'ko')
+        if (nameCompare !== 0) return nameCompare
+        if (a.weekday !== b.weekday) return a.weekday - b.weekday
+        if (a.time_slot !== b.time_slot) return a.time_slot.localeCompare(b.time_slot)
+        return Number(a.minute_slot ?? 0) - Number(b.minute_slot ?? 0)
+      })
+  }, [regularGroupClasses, regularGroupMembers, children, staffs, regularGroupSearch])
+
   async function loadStaffs() {
     const { data, error } = await supabase
       .from('staff_accounts')
@@ -797,6 +878,30 @@ export default function AdminPage() {
 
     if (error) throw error
     setRegularClasses((data ?? []) as RegularClassRow[])
+  }
+
+  async function loadRegularGroupClasses() {
+    const { data, error } = await supabase
+      .from('regular_group_classes')
+      .select('*')
+      .order('group_name', { ascending: true })
+      .order('weekday', { ascending: true })
+      .order('time_slot', { ascending: true })
+      .order('minute_slot', { ascending: true })
+
+    if (error) throw error
+    setRegularGroupClasses((data ?? []) as RegularGroupClassRow[])
+  }
+
+  async function loadRegularGroupMembers() {
+    const { data, error } = await supabase
+      .from('regular_group_class_members')
+      .select('*')
+      .order('regular_group_class_id', { ascending: true })
+      .order('child_id', { ascending: true })
+
+    if (error) throw error
+    setRegularGroupMembers((data ?? []) as RegularGroupClassMemberRow[])
   }
 
   async function loadSchedules() {
@@ -865,6 +970,9 @@ export default function AdminPage() {
         loadSchedules(),
         loadClassLogsForMonth(),
         loadMonthlyGroupPrices(),
+        loadRegularClasses(),
+        loadRegularGroupClasses(),
+        loadRegularGroupMembers(),
       ])
     } catch (err: any) {
       setMessage(err?.message ?? '데이터 불러오기 실패')
@@ -1121,6 +1229,16 @@ export default function AdminPage() {
     }
   }
 
+  function toggleRegularGroupChild(childId: number) {
+    setRegularGroupForm((prev) => {
+      const exists = prev.childIds.includes(childId)
+      return {
+        ...prev,
+        childIds: exists ? prev.childIds.filter((id) => id !== childId) : [...prev.childIds, childId],
+      }
+    })
+  }
+
   async function handleSaveRegularClass() {
     try {
       if (!regularForm.childId) {
@@ -1291,6 +1409,245 @@ export default function AdminPage() {
       setMessage('정기수업이 저장되었습니다.')
     } catch (err: any) {
       setMessage(err?.message ?? '정기수업 저장 실패')
+    }
+  }
+
+  async function handleSaveRegularGroupClass() {
+    try {
+      if (!regularGroupForm.teacherId) {
+        setMessage('선생님을 선택하세요.')
+        return
+      }
+      if (regularGroupForm.weekday === '') {
+        setMessage('요일을 선택하세요.')
+        return
+      }
+      if (!regularGroupForm.startDate) {
+        setMessage('시작일을 선택하세요.')
+        return
+      }
+      if (!regularGroupForm.groupName.trim()) {
+        setMessage('그룹명을 입력하세요.')
+        return
+      }
+      if (!regularGroupForm.voucherType) {
+        setMessage('바우처를 선택하세요.')
+        return
+      }
+      if (regularGroupForm.childIds.length === 0) {
+        setMessage('그룹 학생을 1명 이상 선택하세요.')
+        return
+      }
+
+      const endDate = regularGroupForm.endDate || null
+      const payload = {
+        teacher_id: Number(regularGroupForm.teacherId),
+        weekday: Number(regularGroupForm.weekday),
+        time_slot: regularGroupForm.timeSlot,
+        minute_slot: Number(regularGroupForm.minuteSlot),
+        start_date: regularGroupForm.startDate,
+        end_date: endDate,
+        voucher_type: regularGroupForm.voucherType,
+        group_name: regularGroupForm.groupName,
+        note: regularGroupForm.note || null,
+        is_active: regularGroupForm.isActive,
+      }
+
+      let ruleId = regularGroupForm.id
+
+      if (regularGroupForm.id) {
+        const { error } = await supabase
+          .from('regular_group_classes')
+          .update(payload)
+          .eq('id', regularGroupForm.id)
+
+        if (error) throw error
+
+        const { error: memberOffError } = await supabase
+          .from('regular_group_class_members')
+          .update({ is_active: false })
+          .eq('regular_group_class_id', regularGroupForm.id)
+
+        if (memberOffError) throw memberOffError
+
+        const { error: scheduleOffError } = await supabase
+          .from('schedule_entries')
+          .update({ is_active: false })
+          .eq('is_group', true)
+          .eq('group_id', String(regularGroupForm.id))
+
+        if (scheduleOffError) throw scheduleOffError
+      } else {
+        const { data, error } = await supabase
+          .from('regular_group_classes')
+          .insert(payload)
+          .select('id')
+          .single()
+
+        if (error) throw error
+        ruleId = data?.id ?? null
+      }
+
+      if (!ruleId) {
+        setMessage('정기 그룹수업 저장 후 rule id를 찾지 못했습니다.')
+        return
+      }
+
+      const memberRows = regularGroupForm.childIds.map((childId) => ({
+        regular_group_class_id: Number(ruleId),
+        child_id: Number(childId),
+        is_active: true,
+      }))
+
+      const { error: memberInsertError } = await supabase
+        .from('regular_group_class_members')
+        .insert(memberRows)
+
+      if (memberInsertError) throw memberInsertError
+
+      const teacher = staffs.find((s) => Number(s.id) === Number(regularGroupForm.teacherId))
+      const teacherName = teacher?.name ?? ''
+
+      const generatedDates = getDateRangeMatchingWeekday(
+        regularGroupForm.startDate,
+        endDate || '2099-12-31',
+        Number(regularGroupForm.weekday)
+      )
+
+      if (generatedDates.length > 0) {
+        const { data: existingRows, error: existingError } = await supabase
+          .from('schedule_entries')
+          .select('date,time_slot,minute_slot,teacher_id,child_id,group_id')
+          .eq('teacher_id', Number(regularGroupForm.teacherId))
+          .eq('is_group', true)
+          .gte('date', generatedDates[0])
+          .lte('date', generatedDates[generatedDates.length - 1])
+          .eq('is_active', true)
+
+        if (existingError) throw existingError
+
+        const existingKeySet = new Set(
+          (existingRows ?? []).map((row: any) =>
+            [
+              row.date,
+              row.time_slot,
+              Number(row.minute_slot ?? 0),
+              Number(row.teacher_id),
+              Number(row.child_id),
+              row.group_id ?? '',
+            ].join('|')
+          )
+        )
+
+        const rowsToInsert = generatedDates.flatMap((date) =>
+          regularGroupForm.childIds
+            .map((childId) => ({
+              date,
+              time_slot: regularGroupForm.timeSlot,
+              minute_slot: Number(regularGroupForm.minuteSlot),
+              room_number: 1,
+              teacher_id: Number(regularGroupForm.teacherId),
+              teacher_name: teacherName,
+              class_type: 'group',
+              child_id: Number(childId),
+              voucher_type: regularGroupForm.voucherType,
+              status: 'scheduled',
+              note: `${buildRegularGroupNoteTag(Number(ruleId))}${regularGroupForm.note ? ` ${regularGroupForm.note}` : ''}`,
+              is_active: true,
+              is_group: true,
+              group_id: String(ruleId),
+              group_name: regularGroupForm.groupName,
+            }))
+            .filter((row) => {
+              const key = [
+                row.date,
+                row.time_slot,
+                Number(row.minute_slot ?? 0),
+                Number(row.teacher_id),
+                Number(row.child_id),
+                row.group_id ?? '',
+              ].join('|')
+              return !existingKeySet.has(key)
+            })
+        )
+
+        if (rowsToInsert.length > 0) {
+          const { error: insertError } = await supabase
+            .from('schedule_entries')
+            .insert(rowsToInsert)
+
+          if (insertError) throw insertError
+        }
+      }
+
+      await Promise.all([loadRegularGroupClasses(), loadRegularGroupMembers(), loadSchedules()])
+      setRegularGroupForm({
+        id: null,
+        teacherId: '',
+        weekday: '',
+        timeSlot: '09:00',
+        minuteSlot: '00',
+        startDate: toDateString(new Date()),
+        endDate: '',
+        voucherType: '',
+        groupName: '',
+        note: '',
+        isActive: true,
+        childIds: [],
+      })
+      setMessage('정기 그룹수업이 저장되었습니다.')
+    } catch (err: any) {
+      setMessage(err?.message ?? '정기 그룹수업 저장 실패')
+    }
+  }
+
+  async function handleDeleteRegularGroupClass(id: number) {
+    try {
+      const ok = window.confirm('정기 그룹수업을 삭제할까요?')
+      if (!ok) return
+
+      const { error } = await supabase
+        .from('regular_group_classes')
+        .update({ is_active: false })
+        .eq('id', id)
+
+      if (error) throw error
+
+      const { error: memberError } = await supabase
+        .from('regular_group_class_members')
+        .update({ is_active: false })
+        .eq('regular_group_class_id', id)
+
+      if (memberError) throw memberError
+
+      const { error: scheduleError } = await supabase
+        .from('schedule_entries')
+        .update({ is_active: false })
+        .eq('is_group', true)
+        .eq('group_id', String(id))
+
+      if (scheduleError) throw scheduleError
+
+      await Promise.all([loadRegularGroupClasses(), loadRegularGroupMembers(), loadSchedules()])
+      if (Number(regularGroupForm.id) === Number(id)) {
+        setRegularGroupForm({
+          id: null,
+          teacherId: '',
+          weekday: '',
+          timeSlot: '09:00',
+          minuteSlot: '00',
+          startDate: toDateString(new Date()),
+          endDate: '',
+          voucherType: '',
+          groupName: '',
+          note: '',
+          isActive: true,
+          childIds: [],
+        })
+      }
+      setMessage('정기 그룹수업이 삭제되었습니다.')
+    } catch (err: any) {
+      setMessage(err?.message ?? '정기 그룹수업 삭제 실패')
     }
   }
 
@@ -3400,6 +3757,216 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
               </div>
             </div>
           </div>
+
+
+            <div className="mt-8 grid gap-6 md:grid-cols-2">
+              <div className="rounded-2xl border p-4">
+                <h2 className="mb-3 text-xl font-bold">정기 그룹수업 등록 / 수정</h2>
+                <div className="space-y-3">
+                  <input
+                    value={regularGroupForm.groupName}
+                    onChange={(e) => setRegularGroupForm((p) => ({ ...p, groupName: e.target.value }))}
+                    placeholder="그룹명"
+                    className="w-full rounded-xl border px-3 py-3 md:py-2"
+                  />
+
+                  <select
+                    value={regularGroupForm.teacherId}
+                    onChange={(e) => setRegularGroupForm((p) => ({ ...p, teacherId: e.target.value ? Number(e.target.value) : '' }))}
+                    className="w-full rounded-xl border px-3 py-3 md:py-2"
+                  >
+                    <option value="">선생님 선택</option>
+                    {employeeStaffs.map((staff) => (
+                      <option key={staff.id} value={staff.id}>
+                        {staff.name}
+                      </option>
+                    ))}
+                  </select>
+
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <select
+                      value={regularGroupForm.weekday}
+                      onChange={(e) => setRegularGroupForm((p) => ({ ...p, weekday: e.target.value === '' ? '' : Number(e.target.value) }))}
+                      className="w-full rounded-xl border px-3 py-3 md:py-2"
+                    >
+                      <option value="">요일 선택</option>
+                      {[1, 2, 3, 4, 5, 6].map((weekday) => (
+                        <option key={weekday} value={weekday}>
+                          {getWeekdayLabel(weekday)}
+                        </option>
+                      ))}
+                    </select>
+
+                    <select
+                      value={regularGroupForm.timeSlot}
+                      onChange={(e) => setRegularGroupForm((p) => ({ ...p, timeSlot: e.target.value }))}
+                      className="w-full rounded-xl border px-3 py-3 md:py-2"
+                    >
+                      {hourSlots.map((slot) => (
+                        <option key={slot} value={slot}>
+                          {slot}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <select
+                      value={regularGroupForm.minuteSlot}
+                      onChange={(e) => setRegularGroupForm((p) => ({ ...p, minuteSlot: e.target.value }))}
+                      className="w-full rounded-xl border px-3 py-3 md:py-2"
+                    >
+                      {getMinutesOptions().map((m) => (
+                        <option key={m} value={m}>
+                          {m}분
+                        </option>
+                      ))}
+                    </select>
+
+                    <select
+                      value={regularGroupForm.voucherType}
+                      onChange={(e) => setRegularGroupForm((p) => ({ ...p, voucherType: e.target.value }))}
+                      className="w-full rounded-xl border px-3 py-3 md:py-2"
+                    >
+                      <option value="">바우처 선택</option>
+                      {VOUCHER_OPTIONS.map((voucher) => (
+                        <option key={voucher} value={voucher}>
+                          {voucher}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <input
+                      type="date"
+                      value={regularGroupForm.startDate}
+                      onChange={(e) => setRegularGroupForm((p) => ({ ...p, startDate: e.target.value }))}
+                      className="w-full rounded-xl border px-3 py-3 md:py-2"
+                    />
+                    <input
+                      type="date"
+                      value={regularGroupForm.endDate}
+                      onChange={(e) => setRegularGroupForm((p) => ({ ...p, endDate: e.target.value }))}
+                      className="w-full rounded-xl border px-3 py-3 md:py-2"
+                    />
+                  </div>
+
+                  <input
+                    value={regularGroupForm.note}
+                    onChange={(e) => setRegularGroupForm((p) => ({ ...p, note: e.target.value }))}
+                    placeholder="메모"
+                    className="w-full rounded-xl border px-3 py-3 md:py-2"
+                  />
+
+                  <div>
+                    <div className="mb-2 text-sm font-medium text-slate-700">그룹 학생 선택</div>
+                    <div className="flex flex-wrap gap-2">
+                      {children.filter((c) => c.is_active).map((child) => {
+                        const active = regularGroupForm.childIds.includes(child.id)
+                        return (
+                          <button
+                            key={child.id}
+                            type="button"
+                            onClick={() => toggleRegularGroupChild(child.id)}
+                            className={`rounded-full px-3 py-2 text-sm ${
+                              active ? 'bg-indigo-600 text-white' : 'bg-slate-200 text-slate-700'
+                            }`}
+                          >
+                            {getDisplayName(child)}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </div>
+
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={regularGroupForm.isActive}
+                      onChange={(e) => setRegularGroupForm((p) => ({ ...p, isActive: e.target.checked }))}
+                    />
+                    사용중
+                  </label>
+
+                  <button
+                    onClick={handleSaveRegularGroupClass}
+                    className="w-full rounded-xl bg-indigo-600 py-3 text-white md:py-2"
+                  >
+                    {regularGroupForm.id ? '정기 그룹수업 수정' : '정기 그룹수업 등록'}
+                  </button>
+                </div>
+              </div>
+
+              <div className="rounded-2xl border p-4">
+                <h2 className="mb-3 text-xl font-bold">정기 그룹수업 목록</h2>
+                <input
+                  value={regularGroupSearch}
+                  onChange={(e) => setRegularGroupSearch(e.target.value)}
+                  placeholder="그룹명 / 선생님 / 학생 검색"
+                  className="mb-3 w-full rounded-xl border px-3 py-3 md:py-2"
+                />
+                <div className="space-y-2">
+                  {filteredRegularGroupClasses.length === 0 ? (
+                    <div className="rounded-xl border p-3 text-slate-500">등록된 정기 그룹수업이 없습니다.</div>
+                  ) : (
+                    filteredRegularGroupClasses.map((row) => {
+                      const teacher = staffs.find((s) => Number(s.id) === Number(row.teacher_id))
+                      const memberRows = regularGroupMembers.filter((m) => Number(m.regular_group_class_id) === Number(row.id) && m.is_active)
+                      const memberNames = memberRows
+                        .map((m) => children.find((c) => Number(c.id) === Number(m.child_id))?.child_name)
+                        .filter(Boolean)
+                        .join(', ')
+                      return (
+                        <div key={row.id} className="w-full rounded-xl border p-3 text-left hover:bg-slate-50">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setRegularGroupForm({
+                                id: row.id,
+                                teacherId: row.teacher_id,
+                                weekday: row.weekday,
+                                timeSlot: row.time_slot,
+                                minuteSlot: String(row.minute_slot ?? 0).padStart(2, '0'),
+                                startDate: row.start_date,
+                                endDate: row.end_date ?? '',
+                                voucherType: row.voucher_type ?? '',
+                                groupName: row.group_name,
+                                note: row.note ?? '',
+                                isActive: row.is_active,
+                                childIds: memberRows.map((m) => Number(m.child_id)),
+                              })
+                            }
+                            className="w-full text-left"
+                          >
+                            <div className="font-medium">
+                              {row.group_name} / {teacher?.name ?? `선생님(${row.teacher_id})`}
+                            </div>
+                            <div className="mt-1 text-sm text-slate-500">
+                              {getWeekdayLabel(row.weekday)} {row.time_slot}:{String(row.minute_slot ?? 0).padStart(2, '0')} / {row.start_date} ~ {row.end_date || '종료없음'}
+                            </div>
+                            <div className="mt-1 text-sm text-slate-500">
+                              바우처: {row.voucher_type ?? '일반'}
+                            </div>
+                            <div className="mt-1 text-sm text-slate-500">
+                              학생: {memberNames || '-'}
+                            </div>
+                          </button>
+                          <div className="mt-2 flex gap-2">
+                            <button
+                              onClick={() => handleDeleteRegularGroupClass(row.id)}
+                              className="rounded bg-rose-50 px-2 py-1 text-xs text-rose-700"
+                            >
+                              삭제
+                            </button>
+                          </div>
+                        </div>
+                      )
+                    })
+                  )}
+                </div>
+              </div>
+            </div>
         ) : null}
 
         {tab === 'summary' ? (
