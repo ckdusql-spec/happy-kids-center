@@ -1327,7 +1327,7 @@ export default function AdminPage() {
     }
   }
 
-  async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: number) {(dateStr: string, hourSlot: string, staffId: number) {
+  async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: number) {
     try {
       const staff = employeeStaffs.find((s) => Number(s.id) === Number(staffId))
       const minute = Number(selectedMinute)
