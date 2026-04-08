@@ -295,7 +295,7 @@ export default function EmployeePage() {
   const [classLogRows, setClassLogRows] = useState<ClassLogRow[]>([])
 
   const [weekBaseDate, setWeekBaseDate] = useState(new Date())
-  const [todayDate] = useState(() => toDateString(new Date()))
+  const [selectedTodayDate, setSelectedTodayDate] = useState(() => toDateString(new Date()))
 
   const [editingCell, setEditingCell] = useState<EditingCell>(null)
   const [editingEntryId, setEditingEntryId] = useState<string | null>(null)
@@ -336,6 +336,16 @@ export default function EmployeePage() {
       end: toDateString(weekDates[weekDates.length - 1]),
     }
   }, [weekDates])
+
+  const loadRange = useMemo(() => {
+    let start = weekRange.start
+    let end = weekRange.end
+
+    if (selectedTodayDate < start) start = selectedTodayDate
+    if (selectedTodayDate > end) end = selectedTodayDate
+
+    return { start, end }
+  }, [weekRange.start, weekRange.end, selectedTodayDate])
 
   const filteredGroupChildren = useMemo(() => {
     const keyword = groupSearch.trim()
@@ -381,7 +391,7 @@ export default function EmployeePage() {
 
   const todayItems = useMemo(() => {
     return scheduleRows
-      .filter((row) => row.date === todayDate && row.is_active)
+      .filter((row) => row.date === selectedTodayDate && row.is_active)
       .map((row) => {
         const child = children.find((c) => Number(c.id) === Number(row.child_id))
         const status = attendanceMap.get(getAttendanceKey(row))?.status ?? null
@@ -392,7 +402,7 @@ export default function EmployeePage() {
         const bMinute = getEntryMinuteTotal(b.row)
         return aMinute - bMinute
       })
-  }, [scheduleRows, children, attendanceMap, todayDate])
+  }, [scheduleRows, children, attendanceMap, selectedTodayDate])
 
   const selectedChildMonthlyLogs = useMemo(() => {
     if (!childInfoModal.child) return []
@@ -553,18 +563,31 @@ export default function EmployeePage() {
       return null
     }
 
+    const staffId = Number(storedId)
+    const { data, error } = await supabase
+      .from('staff_accounts')
+      .select('id, login_id, name, role, is_active')
+      .eq('id', staffId)
+      .maybeSingle()
+
+    if (error) throw error
+
     const nextUser: User = {
-      id: Number(storedId),
-      name: storedName ?? '',
-      loginId: '',
-      role: storedRole ?? 'employee',
+      id: staffId,
+      name: data?.name ?? storedName ?? '',
+      loginId: data?.login_id ?? '',
+      role: (data?.role ?? storedRole ?? 'employee') as StaffRole,
     }
 
     setUser(nextUser)
+
+    if (data?.name) localStorage.setItem('staff_name', data.name)
+    if (data?.role) localStorage.setItem('staff_role', data.role)
+
     return nextUser
   }
 
-  async function loadStaffs() {
+  async function loadStaffs(staffId?: number) {
     const { data, error } = await supabase
       .from('staff_accounts')
       .select('id, login_id, name, role, is_active')
@@ -573,19 +596,18 @@ export default function EmployeePage() {
     if (error) throw error
     setStaffs((data ?? []) as StaffRow[])
 
-    if (user && !user.loginId) {
-      const mine = (data ?? []).find((s: any) => Number(s.id) === Number(user.id))
+    const targetStaffId = Number(staffId ?? user?.id)
+    if (!Number.isNaN(targetStaffId) && targetStaffId > 0) {
+      const mine = (data ?? []).find((s: any) => Number(s.id) === targetStaffId)
       if (mine) {
-        setUser((prev) =>
-          prev
-            ? {
-                ...prev,
-                loginId: mine.login_id,
-                name: mine.name,
-                role: mine.role,
-              }
-            : prev
-        )
+        setUser((prev) => ({
+          id: targetStaffId,
+          name: mine.name,
+          loginId: mine.login_id,
+          role: mine.role,
+        }))
+        localStorage.setItem('staff_name', mine.name)
+        localStorage.setItem('staff_role', mine.role)
       }
     }
   }
@@ -606,8 +628,8 @@ export default function EmployeePage() {
       .from('schedule_entries')
       .select('*')
       .eq('teacher_id', staffId)
-      .gte('date', weekRange.start)
-      .lte('date', weekRange.end)
+      .gte('date', loadRange.start)
+      .lte('date', loadRange.end)
       .eq('is_active', true)
       .order('date', { ascending: true })
       .order('time_slot', { ascending: true })
@@ -622,8 +644,8 @@ export default function EmployeePage() {
       .from('class_logs')
       .select('*')
       .eq('staff_id', staffId)
-      .gte('class_date', weekRange.start)
-      .lte('class_date', weekRange.end)
+      .gte('class_date', loadRange.start)
+      .lte('class_date', loadRange.end)
       .order('class_date', { ascending: true })
       .order('created_at', { ascending: true })
 
@@ -635,7 +657,7 @@ export default function EmployeePage() {
     try {
       setLoading(true)
       setMessage('')
-      await Promise.all([loadStaffs(), loadChildren(), loadSchedules(staffId), loadClassLogs(staffId)])
+      await Promise.all([loadStaffs(staffId), loadChildren(), loadSchedules(staffId), loadClassLogs(staffId)])
     } catch (err: any) {
       setMessage(err?.message ?? '데이터 불러오기 실패')
     } finally {
@@ -662,7 +684,7 @@ export default function EmployeePage() {
     Promise.all([loadSchedules(user.id), loadClassLogs(user.id)]).catch((err: any) =>
       setMessage(err?.message ?? '주간 데이터 불러오기 실패')
     )
-  }, [weekRange.start, weekRange.end, user?.id])
+  }, [loadRange.start, loadRange.end, user?.id])
 
   async function handleLogout() {
     localStorage.removeItem('staff_id')
@@ -1324,8 +1346,13 @@ export default function EmployeePage() {
         {tab === 'today' ? (
           <div>
             <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-              <h2 className="text-lg font-bold">오늘 수업</h2>
-              <div className="text-sm text-slate-500">{todayDate}</div>
+              <h2 className="text-lg font-bold">오늘보기 / 날짜선택</h2>
+              <input
+                type="date"
+                value={selectedTodayDate}
+                onChange={(e) => setSelectedTodayDate(e.target.value)}
+                className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
+              />
             </div>
 
             {loading ? (
@@ -1334,7 +1361,7 @@ export default function EmployeePage() {
               </div>
             ) : todayItems.length === 0 ? (
               <div className="rounded-xl border bg-slate-50 p-6 text-center text-slate-500">
-                오늘 데이터 없음
+                선택한 날짜 데이터 없음
               </div>
             ) : (
               <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
