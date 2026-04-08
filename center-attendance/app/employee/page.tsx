@@ -1285,6 +1285,7 @@ export default function EmployeePage() {
     const child = children.find((c) => c.id === row.child_id)
     const status = attendanceMap.get(getAttendanceKey(row))?.status ?? null
     const timeText = `${row.time_slot.slice(0, 2)}:${String(row.minute_slot ?? 0).padStart(2, '0')}`
+    const ageText = child ? getAgeText(child.birth_date) : ''
 
     return (
       <div key={row.id} className="rounded-2xl border bg-white p-4">
@@ -1294,6 +1295,11 @@ export default function EmployeePage() {
             <div className="text-sm text-slate-700">
               {row.is_group ? row.group_name || '그룹수업' : child?.child_name ?? '이름없음'}
             </div>
+            {!row.is_group && child ? (
+              <div className="mt-1 text-xs text-slate-500">
+                나이: {ageText || '-'}
+              </div>
+            ) : null}
           </div>
           {status ? (
             <span className={`rounded-full px-2 py-1 text-xs ${getStatusClass(status)}`}>
@@ -1308,7 +1314,7 @@ export default function EmployeePage() {
 
         {row.note ? <div className="mt-2 text-xs text-slate-500">{row.note}</div> : null}
 
-        <div className="mt-3">
+        <div className="mt-3 flex flex-wrap gap-2">
           <button
             type="button"
             onClick={() => openRecordModal(row)}
@@ -1316,6 +1322,15 @@ export default function EmployeePage() {
           >
             상태입력
           </button>
+          {!row.is_group && child ? (
+            <button
+              type="button"
+              onClick={() => setChildInfoModal({ open: true, child })}
+              className="rounded-lg bg-slate-100 px-3 py-2 text-xs text-slate-700"
+            >
+              아이정보
+            </button>
+          ) : null}
         </div>
       </div>
     )
