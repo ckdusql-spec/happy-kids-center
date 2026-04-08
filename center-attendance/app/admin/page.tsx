@@ -1622,7 +1622,8 @@ export default function AdminPage() {
               teacher_name: teacherName,
               class_type: 'group',
               child_id: Number(childId),
-                    status: 'scheduled',
+              voucher_type: '그룹수업',
+              status: 'scheduled',
               note: `${buildRegularGroupNoteTag(Number(ruleId))}${regularGroupForm.note ? ` ${regularGroupForm.note}` : ''}`,
               is_active: true,
               is_group: true,
@@ -3974,23 +3975,25 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
 
                   <div className="space-y-3">
                     <div className="text-sm font-medium text-slate-700">학생 선택:</div>
-                    {Array.from({ length: 6 }).map((_, index) => (
-                      <div key={index} className="space-y-2">
-                        <div className="text-sm text-slate-600">{index + 1}번학생:</div>
-                        <input
-                          list={`regularGroupChildList-${index}`}
-                          value={regularGroupChildInputs[index] ?? ''}
-                          onChange={(e) => handleRegularGroupChildInputChange(index, e.target.value)}
-                          placeholder={`학생 이름 입력 또는 선택 (${index + 1}번학생)`}
-                          className="w-full rounded-xl border px-3 py-3 md:py-2"
-                        />
-                        <datalist id={`regularGroupChildList-${index}`}>
-                          {children.filter((c) => c.is_active).map((child) => (
-                            <option key={`${index}-${child.id}`} value={getDisplayName(child)} />
-                          ))}
-                        </datalist>
-                      </div>
-                    ))}
+                    <div className="grid gap-3 md:grid-cols-3">
+                      {Array.from({ length: 6 }).map((_, index) => (
+                        <div key={index} className="space-y-2">
+                          <div className="text-sm text-slate-600">{index + 1}번학생:</div>
+                          <input
+                            list={`regularGroupChildList-${index}`}
+                            value={regularGroupChildInputs[index] ?? ''}
+                            onChange={(e) => handleRegularGroupChildInputChange(index, e.target.value)}
+                            placeholder={`학생 이름 입력 또는 선택 (${index + 1}번학생)`}
+                            className="w-full rounded-xl border px-3 py-3 md:py-2"
+                          />
+                          <datalist id={`regularGroupChildList-${index}`}>
+                            {children.filter((c) => c.is_active).map((child) => (
+                              <option key={`${index}-${child.id}`} value={getDisplayName(child)} />
+                            ))}
+                          </datalist>
+                        </div>
+                      ))}
+                    </div>
                   </div>
 
                   <label className="flex items-center gap-2">
