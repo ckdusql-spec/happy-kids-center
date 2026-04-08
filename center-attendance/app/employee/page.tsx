@@ -913,7 +913,7 @@ export default function EmployeePage() {
     return (
       <div
         key={item.key}
-        className={`rounded-xl border border-slate-200 px-3 py-3 text-xs shadow-sm ${getScheduleCardBgClass(item, classLogRows)}`}
+        className={`rounded-lg border border-slate-200 px-2 py-2 text-[11px] shadow-sm ${getScheduleCardBgClass(item, classLogRows)}`}
       >
         {isEditing ? (
           <div className="space-y-2">
@@ -1454,13 +1454,13 @@ export default function EmployeePage() {
               </div>
             </div>
 
-            <div className="hidden overflow-x-auto md:block">
-              <table className="min-w-full border text-sm">
+            <div className="hidden md:block">
+              <table className="w-full table-fixed border text-xs">
                 <thead>
                   <tr>
-                    <th className="border bg-slate-100 px-2 py-2">시간</th>
+                    <th className="w-[64px] border bg-slate-100 px-1 py-2">시간</th>
                     {weekDates.map((date, idx) => (
-                      <th key={idx} className="min-w-[240px] border bg-slate-100 px-2 py-2">
+                      <th key={idx} className="w-[15.6%] border bg-slate-100 px-1 py-2">
                         <div className="text-sm font-semibold">
                           {['월', '화', '수', '목', '금', '토'][idx]} {toShortMonthDay(date)}
                         </div>
@@ -1484,7 +1484,7 @@ export default function EmployeePage() {
                         return (
                           <td
                             key={`${dateStr}-${hourSlot}`}
-                            className="min-w-[240px] border px-2 py-2 align-top"
+                            className="border px-1 py-2 align-top"
                           >
                             {isEditing ? (
                               <div className="min-h-[88px] space-y-2">
@@ -1617,7 +1617,7 @@ export default function EmployeePage() {
                                     setSelectedGroupChildIds([])
                                     setGroupSearch('')
                                   }}
-                                  className="min-h-[36px] w-full rounded border border-dashed border-slate-300 p-2 text-left text-slate-500 hover:bg-slate-100"
+                                  className="min-h-[32px] w-full rounded border border-dashed border-slate-300 p-1.5 text-left text-[11px] text-slate-500 hover:bg-slate-100"
                                 >
                                   + 추가
                                 </button>
