@@ -1286,6 +1286,21 @@ export default function EmployeePage() {
     const status = attendanceMap.get(getAttendanceKey(row))?.status ?? null
     const timeText = `${row.time_slot.slice(0, 2)}:${String(row.minute_slot ?? 0).padStart(2, '0')}`
     const ageText = child ? getAgeText(child.birth_date) : ''
+    const groupChildren = row.is_group
+      ? scheduleRows
+          .filter(
+            (item) =>
+              item.date === row.date &&
+              item.time_slot === row.time_slot &&
+              Number(item.minute_slot ?? 0) === Number(row.minute_slot ?? 0) &&
+              Number(item.teacher_id) === Number(row.teacher_id) &&
+              Boolean(item.is_group) &&
+              (item.group_id ?? '') === (row.group_id ?? '') &&
+              item.is_active
+          )
+          .map((item) => children.find((c) => c.id === item.child_id)?.child_name)
+          .filter((name): name is string => Boolean(name))
+      : []
 
     return (
       <div key={row.id} className="rounded-2xl border bg-white p-4">
@@ -1295,7 +1310,11 @@ export default function EmployeePage() {
             <div className="text-sm text-slate-700">
               {row.is_group ? row.group_name || '그룹수업' : child?.child_name ?? '이름없음'}
             </div>
-            {!row.is_group && child ? (
+            {row.is_group ? (
+              <div className="mt-1 text-xs text-slate-500">
+                학생: {groupChildren.length > 0 ? groupChildren.join(', ') : '이름없음'}
+              </div>
+            ) : child ? (
               <div className="mt-1 text-xs text-slate-500">
                 나이: {ageText || '-'}
               </div>
