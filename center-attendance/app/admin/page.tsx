@@ -151,7 +151,8 @@ type ChildForm = {
   voucherTypes: string[]
   basePrice: string
   didimPrice: string
-  achungsimPrice: string
+  achungsim1Price: string
+  achungsim2Price: string
   dreamStartPrice: string
   baeumPrice: string
   notes: string
@@ -237,7 +238,7 @@ type SettlementRow = {
   total_amount: number
 }
 
-const VOUCHER_OPTIONS = ['일반', '디딤', '아청심', '드림스타트', '배움'] as const
+const VOUCHER_OPTIONS = ['일반', '디딤', '아청심1', '아청심2', '드림스타트', '배움'] as const
 
 function toDateString(date: Date) {
   const y = date.getFullYear()
@@ -299,11 +300,12 @@ function getVoucherLabel(vouchers?: string[] | null) {
 }
 
 function getVoucherClass(voucher?: string | null) {
-  if (voucher === '디딤') return 'border-blue-200 bg-blue-50 text-blue-700'
-  if (voucher === '아청심') return 'border-violet-200 bg-violet-50 text-violet-700'
-  if (voucher === '드림스타트') return 'border-emerald-200 bg-emerald-50 text-emerald-700'
-  if (voucher === '배움') return 'border-amber-200 bg-amber-50 text-amber-700'
-  if (voucher === '그룹수업') return 'border-rose-200 bg-rose-50 text-rose-700'
+  const value = voucher ?? ''
+  if (value.includes('디딤')) return 'border-yellow-200 bg-yellow-50 text-yellow-700'
+  if (value.includes('아청심1') || value.includes('아청심2') || value.includes('아청심')) return 'border-violet-200 bg-violet-50 text-violet-700'
+  if (value.includes('배움')) return 'border-emerald-200 bg-emerald-50 text-emerald-700'
+  if (value.includes('드림스타트')) return 'border-orange-200 bg-orange-50 text-orange-700'
+  if (value.includes('그룹수업')) return 'border-rose-200 bg-rose-50 text-rose-700'
   return 'border-slate-200 bg-slate-50 text-slate-700'
 }
 
@@ -728,8 +730,9 @@ export default function AdminPage() {
     voucherTypes: [],
     basePrice: '60000',
     didimPrice: '10000',
-    achungsimPrice: '54000',
-    dreamStartPrice: '40000',
+    achungsim1Price: '13500',
+    achungsim2Price: '9000',
+    dreamStartPrice: '10000',
     baeumPrice: '10000',
     notes: '',
     isActive: true,
@@ -1123,7 +1126,8 @@ export default function AdminPage() {
 
       const voucherPrices = {
         디딤: Number(childForm.didimPrice || 0),
-        아청심: Number(childForm.achungsimPrice || 0),
+        아청심1: Number(childForm.achungsim1Price || 0),
+        아청심2: Number(childForm.achungsim2Price || 0),
         드림스타트: Number(childForm.dreamStartPrice || 0),
         배움: Number(childForm.baeumPrice || 0),
       }
@@ -1161,8 +1165,9 @@ export default function AdminPage() {
         voucherTypes: [],
         basePrice: '60000',
         didimPrice: '10000',
-        achungsimPrice: '54000',
-        dreamStartPrice: '40000',
+        achungsim1Price: '13500',
+        achungsim2Price: '9000',
+        dreamStartPrice: '10000',
         baeumPrice: '10000',
         notes: '',
         isActive: true,
@@ -2226,8 +2231,10 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
 
     if (row.is_group) return 0
     if (row.voucher_type === '디딤') return didimIndex <= 3 ? 0 : basePrice
-    if (row.voucher_type === '아청심') return Number(voucherPrices['아청심'] ?? 54000)
-    if (row.voucher_type === '드림스타트') return Number(voucherPrices['드림스타트'] ?? 40000)
+    if (row.voucher_type === '아청심1') return Number(voucherPrices['아청심1'] ?? voucherPrices['아청심'] ?? 13500)
+    if (row.voucher_type === '아청심2') return Number(voucherPrices['아청심2'] ?? 9000)
+    if (row.voucher_type === '아청심') return Number(voucherPrices['아청심1'] ?? voucherPrices['아청심'] ?? 13500)
+    if (row.voucher_type === '드림스타트') return Number(voucherPrices['드림스타트'] ?? 10000)
     if (row.voucher_type === '배움') return Number(voucherPrices['배움'] ?? 10000)
     return basePrice
   }
@@ -3419,10 +3426,16 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
                     onChange={(e) => setChildForm((p) => ({ ...p, didimPrice: e.target.value }))}
                     className="w-full rounded-xl border px-3 py-2"
                   />
-                  <label className="block text-sm">아청심</label>
+                  <label className="block text-sm">아청심1</label>
                   <input
-                    value={childForm.achungsimPrice}
-                    onChange={(e) => setChildForm((p) => ({ ...p, achungsimPrice: e.target.value }))}
+                    value={childForm.achungsim1Price}
+                    onChange={(e) => setChildForm((p) => ({ ...p, achungsim1Price: e.target.value }))}
+                    className="w-full rounded-xl border px-3 py-2"
+                  />
+                  <label className="block text-sm">아청심2</label>
+                  <input
+                    value={childForm.achungsim2Price}
+                    onChange={(e) => setChildForm((p) => ({ ...p, achungsim2Price: e.target.value }))}
                     className="w-full rounded-xl border px-3 py-2"
                   />
                   <label className="block text-sm">드림스타트</label>
@@ -3495,8 +3508,9 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
                             voucherTypes: childVouchers,
                             basePrice: String(child.base_price ?? child.monthly_limit ?? 60000),
                             didimPrice: String(voucherPrices['디딤'] ?? 10000),
-                            achungsimPrice: String(voucherPrices['아청심'] ?? 54000),
-                            dreamStartPrice: String(voucherPrices['드림스타트'] ?? 40000),
+                            achungsim1Price: String(voucherPrices['아청심1'] ?? voucherPrices['아청심'] ?? 13500),
+                            achungsim2Price: String(voucherPrices['아청심2'] ?? 9000),
+                            dreamStartPrice: String(voucherPrices['드림스타트'] ?? 10000),
                             baeumPrice: String(voucherPrices['배움'] ?? 10000),
                             notes: child.notes ?? '',
                             isActive: child.is_active,
