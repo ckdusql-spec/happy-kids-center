@@ -337,14 +337,12 @@ export default function EmployeePage() {
     }
   }, [weekDates])
 
-  const loadRange = useMemo(() => {
-    let start = weekRange.start
-    let end = weekRange.end
-
-    if (selectedTodayDate < start) start = selectedTodayDate
-    if (selectedTodayDate > end) end = selectedTodayDate
-
-    return { start, end }
+  const dataRange = useMemo(() => {
+    const values = [weekRange.start, weekRange.end, selectedTodayDate].sort()
+    return {
+      start: values[0],
+      end: values[values.length - 1],
+    }
   }, [weekRange.start, weekRange.end, selectedTodayDate])
 
   const filteredGroupChildren = useMemo(() => {
@@ -554,6 +552,29 @@ export default function EmployeePage() {
   }
 
   async function loadMe() {
+    try {
+      const res = await fetch('/api/me', { cache: 'no-store' })
+      const json = await res.json()
+
+      if (json?.ok && json?.user) {
+        const nextUser: User = {
+          id: Number(json.user.id),
+          name: json.user.name ?? '',
+          loginId: json.user.login_id ?? json.user.loginId ?? '',
+          role: (json.user.role ?? 'employee') as StaffRole,
+        }
+
+        localStorage.setItem('staff_id', String(nextUser.id))
+        localStorage.setItem('staff_name', nextUser.name)
+        localStorage.setItem('staff_role', nextUser.role)
+
+        setUser(nextUser)
+        return nextUser
+      }
+    } catch {
+      // localStorage fallback 사용
+    }
+
     const storedId = localStorage.getItem('staff_id')
     const storedName = localStorage.getItem('staff_name')
     const storedRole = localStorage.getItem('staff_role') as StaffRole | null
@@ -563,27 +584,14 @@ export default function EmployeePage() {
       return null
     }
 
-    const staffId = Number(storedId)
-    const { data, error } = await supabase
-      .from('staff_accounts')
-      .select('id, login_id, name, role, is_active')
-      .eq('id', staffId)
-      .maybeSingle()
-
-    if (error) throw error
-
     const nextUser: User = {
-      id: staffId,
-      name: data?.name ?? storedName ?? '',
-      loginId: data?.login_id ?? '',
-      role: (data?.role ?? storedRole ?? 'employee') as StaffRole,
+      id: Number(storedId),
+      name: storedName ?? '',
+      loginId: '',
+      role: storedRole ?? 'employee',
     }
 
     setUser(nextUser)
-
-    if (data?.name) localStorage.setItem('staff_name', data.name)
-    if (data?.role) localStorage.setItem('staff_role', data.role)
-
     return nextUser
   }
 
@@ -596,16 +604,27 @@ export default function EmployeePage() {
     if (error) throw error
     setStaffs((data ?? []) as StaffRow[])
 
-    const targetStaffId = Number(staffId ?? user?.id)
-    if (!Number.isNaN(targetStaffId) && targetStaffId > 0) {
-      const mine = (data ?? []).find((s: any) => Number(s.id) === targetStaffId)
+    const targetId = Number(staffId ?? user?.id)
+    if (targetId) {
+      const mine = (data ?? []).find((s: any) => Number(s.id) === targetId)
       if (mine) {
-        setUser((prev) => ({
-          id: targetStaffId,
-          name: mine.name,
-          loginId: mine.login_id,
-          role: mine.role,
-        }))
+        setUser((prev) =>
+          prev
+            ? {
+                ...prev,
+                loginId: mine.login_id,
+                name: mine.name,
+                role: mine.role,
+              }
+            : {
+                id: targetId,
+                loginId: mine.login_id,
+                name: mine.name,
+                role: mine.role,
+              }
+        )
+
+        localStorage.setItem('staff_id', String(targetId))
         localStorage.setItem('staff_name', mine.name)
         localStorage.setItem('staff_role', mine.role)
       }
@@ -628,8 +647,8 @@ export default function EmployeePage() {
       .from('schedule_entries')
       .select('*')
       .eq('teacher_id', staffId)
-      .gte('date', loadRange.start)
-      .lte('date', loadRange.end)
+      .gte('date', dataRange.start)
+      .lte('date', dataRange.end)
       .eq('is_active', true)
       .order('date', { ascending: true })
       .order('time_slot', { ascending: true })
@@ -644,8 +663,8 @@ export default function EmployeePage() {
       .from('class_logs')
       .select('*')
       .eq('staff_id', staffId)
-      .gte('class_date', loadRange.start)
-      .lte('class_date', loadRange.end)
+      .gte('class_date', dataRange.start)
+      .lte('class_date', dataRange.end)
       .order('class_date', { ascending: true })
       .order('created_at', { ascending: true })
 
@@ -684,7 +703,7 @@ export default function EmployeePage() {
     Promise.all([loadSchedules(user.id), loadClassLogs(user.id)]).catch((err: any) =>
       setMessage(err?.message ?? '주간 데이터 불러오기 실패')
     )
-  }, [loadRange.start, loadRange.end, user?.id])
+  }, [weekRange.start, weekRange.end, selectedTodayDate, user?.id])
 
   async function handleLogout() {
     localStorage.removeItem('staff_id')
@@ -1361,7 +1380,7 @@ export default function EmployeePage() {
               </div>
             ) : todayItems.length === 0 ? (
               <div className="rounded-xl border bg-slate-50 p-6 text-center text-slate-500">
-                선택한 날짜 데이터 없음
+                오늘 데이터 없음
               </div>
             ) : (
               <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
