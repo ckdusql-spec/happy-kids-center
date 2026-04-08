@@ -1,4 +1,4 @@
- 'use client'
+'use client'
 
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '@/lib/supabase'
@@ -3765,7 +3765,7 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
                       >
                         <button
                           type="button"
-                          onClick={() =>
+                          onClick={() => {
                             setRegularForm({
                               id: row.id,
                               childId: row.child_id,
@@ -3781,7 +3781,7 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
                             })
                             setRegularChildQuery(child?.child_name ? getDisplayName(child) : '')
                             setRegularTeacherQuery(staff?.name ?? '')
-                          }
+                          }}
                           className="w-full text-left"
                         >
                           <div className="font-medium">
@@ -3808,8 +3808,6 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
                 )}
               </div>
             </div>
-          </div>
-
 
             <div className="mt-8 grid gap-6 md:grid-cols-2">
               <div className="rounded-2xl border p-4">
