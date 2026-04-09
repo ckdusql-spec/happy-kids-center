@@ -2993,15 +2993,17 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
                         <th className="border bg-slate-100 px-1 py-2">시간</th>
 
                         {viewMode === 'staff' && selectedStaff ? (
-                          <th className="min-w-[170px] border bg-slate-100 px-1 py-2">
-                            <div className="text-sm font-semibold leading-tight">
-                              {dailyDate}
-                            </div>
-                            <div className="mt-1 text-xs font-normal leading-tight text-slate-500">
-                              {selectedStaff.name}
-                            </div>
-                          </th>
-                        ) : (
+  buildWeekDates(weekBaseDate).map((date, idx) => (
+    <th key={idx} className="min-w-[140px] border bg-slate-100 px-1 py-2">
+      <div className="text-sm font-semibold">
+        {['월','화','수','목','금','토'][idx]} {toShortMonthDay(date)}
+      </div>
+      <div className="text-xs text-slate-500">
+        {selectedStaff.name}
+      </div>
+    </th>
+  ))
+) : (
                           allViewStaffs.map((staff) => (
                             <th
                               key={`all-${dailyDate}-${staff.id}`}
