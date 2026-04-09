@@ -2934,17 +2934,29 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
 
                   <input
                     type="date"
-                    value={dailyDate}
-                    onChange={(e) => setDailyDate(e.target.value)}
+                    value={viewMode === 'staff' ? toDateString(weekBaseDate) : dailyDate}
+                    onChange={(e) => {
+                      if (viewMode === 'staff') {
+                        setWeekBaseDate(new Date(e.target.value))
+                      } else {
+                        setDailyDate(e.target.value)
+                      }
+                    }}
                     className="rounded-xl border px-3 py-3 md:py-2"
                   />
 
                   <div className="flex gap-2">
                     <button
                       onClick={() => {
-                        const d = new Date(dailyDate)
-                        d.setDate(d.getDate() - 1)
-                        setDailyDate(toDateString(d))
+                        if (viewMode === 'staff') {
+                          const d = new Date(weekBaseDate)
+                          d.setDate(d.getDate() - 7)
+                          setWeekBaseDate(d)
+                        } else {
+                          const d = new Date(dailyDate)
+                          d.setDate(d.getDate() - 1)
+                          setDailyDate(toDateString(d))
+                        }
                       }}
                       className="rounded-lg bg-slate-200 px-3 py-3 md:py-2"
                     >
@@ -2953,9 +2965,15 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
 
                     <button
                       onClick={() => {
-                        const d = new Date(dailyDate)
-                        d.setDate(d.getDate() + 1)
-                        setDailyDate(toDateString(d))
+                        if (viewMode === 'staff') {
+                          const d = new Date(weekBaseDate)
+                          d.setDate(d.getDate() + 7)
+                          setWeekBaseDate(d)
+                        } else {
+                          const d = new Date(dailyDate)
+                          d.setDate(d.getDate() + 1)
+                          setDailyDate(toDateString(d))
+                        }
                       }}
                       className="rounded-lg bg-slate-200 px-3 py-3 md:py-2"
                     >
@@ -2993,13 +3011,17 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
                         <th className="border bg-slate-100 px-1 py-2">시간</th>
 
                         {viewMode === 'staff' && selectedStaff ? (
-buildWeekDates(weekBaseDate).map((date, idx) => (
-<th key={idx} className="min-w-[140px] border bg-slate-100 px-1 py-2">
-<div>{['월','화','수','목','금','토'][idx]} {toShortMonthDay(date)}</div>
-<div className="text-xs text-slate-500">{selectedStaff.name}</div>
-</th>
-))
-) : (
+                          weekDates.map((date, idx) => (
+                            <th key={`staff-${idx}`} className="min-w-[150px] border bg-slate-100 px-1 py-2">
+                              <div className="text-sm font-semibold leading-tight">
+                                {['월', '화', '수', '목', '금', '토'][idx]} {toShortMonthDay(date)}
+                              </div>
+                              <div className="mt-1 text-xs font-normal leading-tight text-slate-500">
+                                {selectedStaff.name}
+                              </div>
+                            </th>
+                          ))
+                        ) : (
                           allViewStaffs.map((staff) => (
                             <th
                               key={`all-${dailyDate}-${staff.id}`}
@@ -3022,8 +3044,8 @@ buildWeekDates(weekBaseDate).map((date, idx) => (
                           </td>
 
                           {viewMode === 'staff' && selectedStaff
-                            ? (() => {
-                                const dateStr = dailyDate
+                            ? weekDates.map((date) => {
+                                const dateStr = toDateString(date)
                                 const items = buildDisplayItems(dateStr, hourSlot, Number(selectedStaff.id))
                                 const isEditing =
                                   editingCell?.date === dateStr &&
@@ -3033,7 +3055,7 @@ buildWeekDates(weekBaseDate).map((date, idx) => (
                                 return (
                                   <td
                                     key={`${selectedStaff.id}-${dateStr}-${hourSlot}`}
-                                    className="min-w-[170px] border px-1 py-1 align-top"
+                                    className="min-w-[150px] border px-1 py-1 align-top"
                                   >
                                     {isEditing ? (
                                       <div className="min-h-[72px] space-y-2">
@@ -3092,17 +3114,17 @@ buildWeekDates(weekBaseDate).map((date, idx) => (
                                           <>
                                             <select
                                               value={scheduleChildId}
-                                              onChange={(e) =>
-                                                setScheduleChildId(e.target.value ? Number(e.target.value) : '')
-                                              }
+                                              onChange={(e) => setScheduleChildId(e.target.value ? Number(e.target.value) : '')}
                                               className="w-full rounded border bg-white px-2 py-1 text-xs"
                                             >
                                               <option value="">학생 선택</option>
-                                              {children.filter((c) => c.is_active).map((c) => (
-                                                <option key={c.id} value={c.id}>
-                                                  {getDisplayName(c)}
-                                                </option>
-                                              ))}
+                                              {children
+                                                .filter((c) => c.is_active)
+                                                .map((c) => (
+                                                  <option key={c.id} value={c.id}>
+                                                    {getDisplayName(c)}
+                                                  </option>
+                                                ))}
                                             </select>
 
                                             <select
@@ -3132,11 +3154,16 @@ buildWeekDates(weekBaseDate).map((date, idx) => (
                                           ))}
                                         </select>
 
+                                        <input
+                                          value={scheduleMemo}
+                                          onChange={(e) => setScheduleMemo(e.target.value)}
+                                          placeholder="메모 입력"
+                                          className="w-full rounded border bg-white px-2 py-1 text-xs"
+                                        />
+
                                         <div className="flex gap-1">
                                           <button
-                                            onClick={() =>
-                                              handleSaveSchedule(dateStr, hourSlot, Number(selectedStaff.id))
-                                            }
+                                            onClick={() => handleSaveSchedule(dateStr, hourSlot, Number(selectedStaff.id))}
                                             className="flex-1 rounded bg-indigo-600 px-2 py-1 text-xs text-white"
                                           >
                                             저장
@@ -3164,24 +3191,23 @@ buildWeekDates(weekBaseDate).map((date, idx) => (
                                             setScheduleChildId('')
                                             setSelectedMinute('00')
                                             setSelectedVoucher('')
+                                            setScheduleMemo('')
                                             setIsGroupLesson(false)
                                             setGroupName('')
                                             setSelectedGroupChildIds([])
                                             setGroupSearch('')
                                           }}
-                                          className="min-h-[28px] w-full rounded border border-dashed border-slate-300 px-2 py-1 text-left text-xs text-slate-500 hover:bg-slate-100"
+                                          className="min-h-[36px] w-full rounded border border-dashed border-slate-300 p-2 text-left text-slate-500 hover:bg-slate-100"
                                         >
                                           + 추가
                                         </button>
 
-                                        {items.map((item) =>
-                                          renderScheduleCard(item, dateStr, Number(selectedStaff.id))
-                                        )}
+                                        {items.length === 0 ? null : items.map((item) => renderScheduleCard(item, dateStr, Number(selectedStaff.id)))}
                                       </div>
                                     )}
                                   </td>
                                 )
-                              })()
+                              })
                             : allViewStaffs.map((staff) => {
                                 const dateStr = dailyDate
                                 const items = buildDisplayItems(dateStr, hourSlot, Number(staff.id))
