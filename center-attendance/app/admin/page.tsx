@@ -3012,7 +3012,10 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
 
                         {viewMode === 'staff' && selectedStaff ? (
                           weekDates.map((date, idx) => (
-                            <th key={`staff-${idx}`} className="min-w-[150px] border bg-slate-100 px-1 py-2">
+                            <th
+                              key={`staff-${idx}`}
+                              className="min-w-[150px] border bg-slate-100 px-1 py-2"
+                            >
                               <div className="text-sm font-semibold leading-tight">
                                 {['월', '화', '수', '목', '금', '토'][idx]} {toShortMonthDay(date)}
                               </div>
@@ -3025,7 +3028,7 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
                           allViewStaffs.map((staff) => (
                             <th
                               key={`all-${dailyDate}-${staff.id}`}
-                              className="min-w-[170px] border bg-slate-100 px-1 py-2"
+                              className="w-[150px] border bg-slate-100 px-1 py-2"
                             >
                               <div className="text-sm font-semibold leading-tight">{dailyDate}</div>
                               <div className="mt-1 text-xs font-normal leading-tight text-slate-500">
@@ -3219,7 +3222,7 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
                                 return (
                                   <td
                                     key={`all-${staff.id}-${dateStr}-${hourSlot}`}
-                                    className="min-w-[170px] border px-1 py-1 align-top"
+                                    className="w-[150px] border px-1 py-1 align-top"
                                   >
                                     {isEditing ? (
                                       <div className="min-h-[72px] space-y-2">
@@ -3511,7 +3514,8 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
                 />
               </div>
 
-              <div className="space-y-2">
+              <div className="max-h-[420px] overflow-y-auto pr-1">
+                <div className="space-y-2">
                 {filteredChildren.length === 0 ? (
                   <div className="rounded-xl border p-3 text-slate-500">등록된 아이가 없습니다.</div>
                 ) : (
@@ -3557,6 +3561,7 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
                     )
                   })
                 )}
+                </div>
               </div>
             </div>
           </div>
@@ -3832,7 +3837,8 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
                 placeholder="학생 / 선생님 검색"
                 className="mb-3 w-full rounded-xl border px-3 py-3 md:py-2"
               />
-              <div className="space-y-2">
+              <div className="max-h-[420px] overflow-y-auto pr-1">
+                <div className="space-y-2">
                 {filteredRegularClasses.length === 0 ? (
                   <div className="rounded-xl border p-3 text-slate-500">등록된 정기수업이 없습니다.</div>
                 ) : (
@@ -3887,6 +3893,7 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
                     )
                   })
                 )}
+                </div>
               </div>
             </div>
 
