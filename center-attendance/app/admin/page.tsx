@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 
-type MainTab = 'schedule' | 'children' | 'staff' | 'summary'
+type MainTab = 'schedule' | 'children' | 'staff' | 'summary' | 'regular'
 type ViewMode = 'all' | 'staff' | 'daily'
 type SummarySubTab = 'attendance' | 'teacher' | 'settlement'
 type StaffRole = 'admin' | 'employee'
@@ -78,6 +78,70 @@ type MonthlyGroupPriceRow = {
   unit_price: number
 }
 
+type RegularClassRow = {
+  id: number
+  child_id: number
+  teacher_id: number
+  weekday: number
+  time_slot: string
+  minute_slot: number
+  start_date: string
+  end_date: string | null
+  voucher_type: string | null
+  note?: string | null
+  is_active: boolean
+}
+
+type RegularClassForm = {
+  id: number | null
+  childId: number | ''
+  teacherId: number | ''
+  weekday: number | ''
+  timeSlot: string
+  minuteSlot: string
+  startDate: string
+  endDate: string
+  voucherType?: string
+  note: string
+  isActive: boolean
+}
+
+type RegularGroupClassRow = {
+  id: number
+  teacher_id: number
+  weekday: number
+  time_slot: string
+  minute_slot: number
+  start_date: string
+  end_date: string | null
+  voucher_type: string | null
+  group_name: string
+  note?: string | null
+  is_active: boolean
+}
+
+type RegularGroupClassMemberRow = {
+  id: number
+  regular_group_class_id: number
+  child_id: number
+  is_active: boolean
+}
+
+type RegularGroupClassForm = {
+  id: number | null
+  teacherId: number | ''
+  weekday: number | ''
+  timeSlot: string
+  minuteSlot: string
+  startDate: string
+  endDate: string
+  voucherType?: string
+  groupName: string
+  note: string
+  isActive: boolean
+  childIds: number[]
+}
+
 type ChildForm = {
   id: number | null
   childName: string
@@ -87,7 +151,8 @@ type ChildForm = {
   voucherTypes: string[]
   basePrice: string
   didimPrice: string
-  achungsimPrice: string
+  achungsim1Price: string
+  achungsim2Price: string
   dreamStartPrice: string
   baeumPrice: string
   notes: string
@@ -116,7 +181,7 @@ type DisplayScheduleItem = {
   minuteSlot: number
   staffId: number
   teacherName: string
-  voucherType: string
+  voucherType?: string
   note: string
   isGroup: boolean
   groupId: string | null
@@ -173,7 +238,7 @@ type SettlementRow = {
   total_amount: number
 }
 
-const VOUCHER_OPTIONS = ['일반', '디딤', '아청심', '드림스타트', '배움'] as const
+const VOUCHER_OPTIONS = ['일반', '디딤', '아청심1', '아청심2', '드림스타트', '배움'] as const
 
 function toDateString(date: Date) {
   const y = date.getFullYear()
@@ -235,11 +300,12 @@ function getVoucherLabel(vouchers?: string[] | null) {
 }
 
 function getVoucherClass(voucher?: string | null) {
-  if (voucher === '디딤') return 'border-blue-200 bg-blue-50 text-blue-700'
-  if (voucher === '아청심') return 'border-violet-200 bg-violet-50 text-violet-700'
-  if (voucher === '드림스타트') return 'border-emerald-200 bg-emerald-50 text-emerald-700'
-  if (voucher === '배움') return 'border-amber-200 bg-amber-50 text-amber-700'
-  if (voucher === '그룹수업') return 'border-rose-200 bg-rose-50 text-rose-700'
+  const value = voucher ?? ''
+  if (value.includes('디딤')) return 'border-yellow-200 bg-yellow-50 text-yellow-700'
+  if (value.includes('아청심1') || value.includes('아청심2') || value.includes('아청심')) return 'border-violet-200 bg-violet-50 text-violet-700'
+  if (value.includes('배움')) return 'border-emerald-200 bg-emerald-50 text-emerald-700'
+  if (value.includes('드림스타트')) return 'border-orange-200 bg-orange-50 text-orange-700'
+  if (value.includes('그룹수업')) return 'border-rose-200 bg-rose-50 text-rose-700'
   return 'border-slate-200 bg-slate-50 text-slate-700'
 }
 
@@ -282,6 +348,35 @@ function buildClassTimestamp(
 
 function uniqueDateList(values: string[]) {
   return Array.from(new Set(values.filter(Boolean))).sort().join(', ')
+}
+
+
+function getWeekdayLabel(weekday: number) {
+  return ['일', '월', '화', '수', '목', '금', '토'][weekday] ?? ''
+}
+
+function getDateRangeMatchingWeekday(startDate: string, endDate: string, weekday: number) {
+  const result: string[] = []
+  const start = new Date(startDate)
+  const end = new Date(endDate)
+  start.setHours(0, 0, 0, 0)
+  end.setHours(0, 0, 0, 0)
+
+  for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+    if (d.getDay() === weekday) {
+      result.push(toDateString(new Date(d)))
+    }
+  }
+
+  return result
+}
+
+function buildRegularNoteTag(ruleId: number) {
+  return `[정기수업:${ruleId}]`
+}
+
+function buildRegularGroupNoteTag(ruleId: number) {
+  return `[정기그룹:${ruleId}]`
 }
 
 function getVoucherPrices(child: ChildRow) {
@@ -412,7 +507,12 @@ function AdminDailySchedule({
   attendanceMap: Map<string, ClassLogRow>
   onOpenRecord: (entry: ScheduleEntryRow) => void
 }) {
-  const teacherList = staffs.filter((s) => s.role === 'employee' && s.is_active)
+  const teacherList = staffs.filter(
+    (s) =>
+      s.role === 'employee' &&
+      s.is_active &&
+      entries.some((entry) => entry.date === selectedDate && Number(entry.teacher_id) === Number(s.id) && entry.is_active)
+  )
   const slots = getHourSlots()
 
   function getAttendanceKey(entry: ScheduleEntryRow) {
@@ -630,8 +730,9 @@ export default function AdminPage() {
     voucherTypes: [],
     basePrice: '60000',
     didimPrice: '10000',
-    achungsimPrice: '54000',
-    dreamStartPrice: '40000',
+    achungsim1Price: '13500',
+    achungsim2Price: '9000',
+    dreamStartPrice: '10000',
     baeumPrice: '10000',
     notes: '',
     isActive: true,
@@ -646,6 +747,43 @@ export default function AdminPage() {
     isActive: true,
   })
 
+
+  const [regularClasses, setRegularClasses] = useState<RegularClassRow[]>([])
+  const [regularSearch, setRegularSearch] = useState('')
+  const [regularForm, setRegularForm] = useState<RegularClassForm>({
+    id: null,
+    childId: '',
+    teacherId: '',
+    weekday: '',
+    timeSlot: '09:00',
+    minuteSlot: '00',
+    startDate: toDateString(new Date()),
+    endDate: '',
+    voucherType: '',
+    note: '',
+    isActive: true,
+  })
+  const [regularChildQuery, setRegularChildQuery] = useState('')
+  const [regularTeacherQuery, setRegularTeacherQuery] = useState('')
+
+  const [regularGroupClasses, setRegularGroupClasses] = useState<RegularGroupClassRow[]>([])
+  const [regularGroupMembers, setRegularGroupMembers] = useState<RegularGroupClassMemberRow[]>([])
+  const [regularGroupSearch, setRegularGroupSearch] = useState('')
+  const [regularGroupChildInputs, setRegularGroupChildInputs] = useState<string[]>(Array(6).fill(''))
+  const [regularGroupForm, setRegularGroupForm] = useState<RegularGroupClassForm>({
+    id: null,
+    teacherId: '',
+    weekday: '',
+    timeSlot: '09:00',
+    minuteSlot: '00',
+    startDate: toDateString(new Date()),
+    endDate: '',
+    groupName: '',
+    note: '',
+    isActive: true,
+    childIds: [],
+  })
+
   const weekDates = useMemo(() => buildWeekDates(weekBaseDate), [weekBaseDate])
   const hourSlots = useMemo(() => getHourSlots(), [])
   const employeeStaffs = useMemo(
@@ -657,12 +795,6 @@ export default function AdminPage() {
     () => employeeStaffs.find((s) => Number(s.id) === Number(selectedStaffId)),
     [employeeStaffs, selectedStaffId]
   )
-
-  const staffsWithClassesOnDailyDate = useMemo(
-    () => employeeStaffs,
-    [employeeStaffs]
-  )
-
 
   const filteredChildren = useMemo(() => {
     const q = childSearch.trim()
@@ -677,10 +809,84 @@ export default function AdminPage() {
     return base.filter((c) => c.child_name.includes(q))
   }, [children, groupSearch])
 
+  const regularChildCandidates = useMemo(() => {
+    const q = regularChildQuery.trim()
+    const base = children.filter((c) => c.is_active)
+    if (!q) return base
+    return base.filter((c) => c.child_name.includes(q))
+  }, [children, regularChildQuery])
+
+  const regularTeacherCandidates = useMemo(() => {
+    const q = regularTeacherQuery.trim()
+    const base = employeeStaffs
+    if (!q) return base
+    return base.filter((s) => s.name.includes(q))
+  }, [employeeStaffs, regularTeacherQuery])
+
+  const staffsWithClassesOnDailyDate = useMemo(() => {
+    return employeeStaffs.filter((staff) =>
+      allScheduleEntries.some(
+        (entry) =>
+          entry.date === dailyDate &&
+          Number(entry.teacher_id) === Number(staff.id) &&
+          entry.is_active
+      )
+    )
+  }, [employeeStaffs, allScheduleEntries, dailyDate])
+
+  const allViewStaffs = useMemo(() => employeeStaffs, [employeeStaffs])
+
+  const filteredRegularClasses = useMemo(() => {
+    return regularClasses
+      .filter((row) => {
+        if (!row.is_active) return false
+        const child = children.find((c) => Number(c.id) === Number(row.child_id))
+        const staff = staffs.find((s) => Number(s.id) === Number(row.teacher_id))
+        const keyword = regularSearch.trim()
+        if (!keyword) return true
+        return (
+          child?.child_name.includes(keyword) ||
+          staff?.name.includes(keyword)
+        )
+      })
+      .sort((a, b) => {
+        const childA = children.find((c) => Number(c.id) === Number(a.child_id))?.child_name ?? ''
+        const childB = children.find((c) => Number(c.id) === Number(b.child_id))?.child_name ?? ''
+        const nameCompare = childA.localeCompare(childB, 'ko')
+        if (nameCompare !== 0) return nameCompare
+        if (a.weekday !== b.weekday) return a.weekday - b.weekday
+        if (a.time_slot !== b.time_slot) return a.time_slot.localeCompare(b.time_slot)
+        return Number(a.minute_slot ?? 0) - Number(b.minute_slot ?? 0)
+      })
+  }, [regularClasses, children, staffs, regularSearch])
+
+  const filteredRegularGroupClasses = useMemo(() => {
+    return regularGroupClasses
+      .filter((row) => {
+        if (!row.is_active) return false
+        const staff = staffs.find((s) => Number(s.id) === Number(row.teacher_id))
+        const memberNames = regularGroupMembers
+          .filter((m) => Number(m.regular_group_class_id) === Number(row.id) && m.is_active)
+          .map((m) => children.find((c) => Number(c.id) === Number(m.child_id))?.child_name ?? '')
+          .join(', ')
+        const keyword = regularGroupSearch.trim()
+        if (!keyword) return true
+        return row.group_name.includes(keyword) || staff?.name.includes(keyword) || memberNames.includes(keyword)
+      })
+      .sort((a, b) => {
+        const nameCompare = a.group_name.localeCompare(b.group_name, 'ko')
+        if (nameCompare !== 0) return nameCompare
+        if (a.weekday !== b.weekday) return a.weekday - b.weekday
+        if (a.time_slot !== b.time_slot) return a.time_slot.localeCompare(b.time_slot)
+        return Number(a.minute_slot ?? 0) - Number(b.minute_slot ?? 0)
+      })
+  }, [regularGroupClasses, regularGroupMembers, children, staffs, regularGroupSearch])
+
   async function loadStaffs() {
     const { data, error } = await supabase
       .from('staff_accounts')
       .select('*')
+      .eq('is_active', true)
       .order('name', { ascending: true })
     if (error) throw error
     setStaffs((data ?? []) as StaffRow[])
@@ -693,6 +899,44 @@ export default function AdminPage() {
       .order('child_name', { ascending: true })
     if (error) throw error
     setChildren((data ?? []) as ChildRow[])
+  }
+
+
+  async function loadRegularClasses() {
+    const { data, error } = await supabase
+      .from('regular_classes')
+      .select('*')
+      .order('child_id', { ascending: true })
+      .order('weekday', { ascending: true })
+      .order('time_slot', { ascending: true })
+      .order('minute_slot', { ascending: true })
+
+    if (error) throw error
+    setRegularClasses((data ?? []) as RegularClassRow[])
+  }
+
+  async function loadRegularGroupClasses() {
+    const { data, error } = await supabase
+      .from('regular_group_classes')
+      .select('*')
+      .order('group_name', { ascending: true })
+      .order('weekday', { ascending: true })
+      .order('time_slot', { ascending: true })
+      .order('minute_slot', { ascending: true })
+
+    if (error) throw error
+    setRegularGroupClasses((data ?? []) as RegularGroupClassRow[])
+  }
+
+  async function loadRegularGroupMembers() {
+    const { data, error } = await supabase
+      .from('regular_group_class_members')
+      .select('*')
+      .order('regular_group_class_id', { ascending: true })
+      .order('child_id', { ascending: true })
+
+    if (error) throw error
+    setRegularGroupMembers((data ?? []) as RegularGroupClassMemberRow[])
   }
 
   async function loadSchedules() {
@@ -761,6 +1005,9 @@ export default function AdminPage() {
         loadSchedules(),
         loadClassLogsForMonth(),
         loadMonthlyGroupPrices(),
+        loadRegularClasses(),
+        loadRegularGroupClasses(),
+        loadRegularGroupMembers(),
       ])
     } catch (err: any) {
       setMessage(err?.message ?? '데이터 불러오기 실패')
@@ -879,7 +1126,8 @@ export default function AdminPage() {
 
       const voucherPrices = {
         디딤: Number(childForm.didimPrice || 0),
-        아청심: Number(childForm.achungsimPrice || 0),
+        아청심1: Number(childForm.achungsim1Price || 0),
+        아청심2: Number(childForm.achungsim2Price || 0),
         드림스타트: Number(childForm.dreamStartPrice || 0),
         배움: Number(childForm.baeumPrice || 0),
       }
@@ -917,8 +1165,9 @@ export default function AdminPage() {
         voucherTypes: [],
         basePrice: '60000',
         didimPrice: '10000',
-        achungsimPrice: '54000',
-        dreamStartPrice: '40000',
+        achungsim1Price: '13500',
+        achungsim2Price: '9000',
+        dreamStartPrice: '10000',
         baeumPrice: '10000',
         notes: '',
         isActive: true,
@@ -943,25 +1192,29 @@ export default function AdminPage() {
         return
       }
 
-      const payload: any = {
-        login_id: staffForm.loginId,
-        name: staffForm.name,
-        role: staffForm.role,
-        is_active: staffForm.isActive,
-      }
+      const res = await fetch('/admin/staff/manage', {
+        method: staffForm.id ? 'PUT' : 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          id: staffForm.id,
+          loginId: staffForm.loginId,
+          password: staffForm.password,
+          name: staffForm.name,
+          role: staffForm.role,
+          isActive: staffForm.isActive,
+        }),
+      })
 
-      if (staffForm.password.trim()) payload.password = staffForm.password
+      const json = await res.json()
 
-      if (staffForm.id) {
-        const { error } = await supabase.from('staff_accounts').update(payload).eq('id', staffForm.id)
-        if (error) throw error
-      } else {
-        const { error } = await supabase.from('staff_accounts').insert(payload)
-        if (error) throw error
+      if (!json.ok) {
+        throw new Error(json.message ?? '선생님 저장 실패')
       }
 
       await loadStaffs()
-      setMessage('선생님 정보가 저장되었습니다.')
+      setMessage(json.message ?? '선생님 정보가 저장되었습니다.')
       setStaffForm({
         id: null,
         loginId: '',
@@ -975,7 +1228,555 @@ export default function AdminPage() {
     }
   }
 
-  async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: number) {
+  async function handleDeleteStaff() {
+    try {
+      if (!staffForm.id) {
+        setMessage('삭제할 선생님을 먼저 선택하세요.')
+        return
+      }
+
+      const ok = window.confirm('이 선생님을 삭제할까요?')
+      if (!ok) return
+
+      const res = await fetch('/admin/staff/manage', {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ id: staffForm.id }),
+      })
+
+      const json = await res.json()
+      if (!json.ok) {
+        throw new Error(json.message ?? '선생님 삭제 실패')
+      }
+
+      await loadStaffs()
+      setMessage(json.message ?? '선생님 삭제 완료')
+      setStaffForm({
+        id: null,
+        loginId: '',
+        password: '',
+        name: '',
+        role: 'employee',
+        isActive: true,
+      })
+    } catch (err: any) {
+      setMessage(err?.message ?? '선생님 삭제 실패')
+    }
+  }
+
+  function toggleRegularGroupChild(childId: number) {
+    setRegularGroupForm((prev) => {
+      const exists = prev.childIds.includes(childId)
+      return {
+        ...prev,
+        childIds: exists ? prev.childIds.filter((id) => id !== childId) : [...prev.childIds, childId],
+      }
+    })
+  }
+
+  function getChildSearchLabelById(childId: number | '' | null | undefined) {
+    if (!childId) return ''
+    const child = children.find((c) => Number(c.id) === Number(childId))
+    if (!child) return ''
+    return getDisplayName(child)
+  }
+
+  function syncRegularGroupChildIdsFromInputs(nextInputs: string[]) {
+    const matchedIds = nextInputs
+      .map((value) => {
+        const keyword = value.trim()
+        if (!keyword) return null
+        const child = children.find(
+          (c) => c.is_active && (c.child_name === keyword || getDisplayName(c) === keyword)
+        )
+        return child ? Number(child.id) : null
+      })
+      .filter((value): value is number => value != null)
+
+    const uniqueIds = Array.from(new Set(matchedIds)).slice(0, 6)
+
+    setRegularGroupForm((prev) => ({
+      ...prev,
+      childIds: uniqueIds,
+    }))
+  }
+
+  function handleRegularGroupChildInputChange(index: number, value: string) {
+    setRegularGroupChildInputs((prev) => {
+      const next = [...prev]
+      next[index] = value
+      syncRegularGroupChildIdsFromInputs(next)
+      return next
+    })
+  }
+
+  function fillRegularGroupChildInputsByIds(childIds: number[]) {
+    const next = Array(6).fill('')
+    childIds.slice(0, 6).forEach((childId, idx) => {
+      next[idx] = getChildSearchLabelById(childId)
+    })
+    setRegularGroupChildInputs(next)
+  }
+
+  async function handleSaveRegularClass() {
+    try {
+      if (!regularForm.childId) {
+        setMessage('학생을 선택하세요.')
+        return
+      }
+      if (!regularForm.teacherId) {
+        setMessage('선생님을 선택하세요.')
+        return
+      }
+      if (regularForm.weekday === '') {
+        setMessage('요일을 선택하세요.')
+        return
+      }
+      if (!regularForm.startDate) {
+        setMessage('시작일을 선택하세요.')
+        return
+      }
+      if (!regularForm.voucherType) {
+        setMessage('바우처를 선택하세요.')
+        return
+      }
+
+      const endDate = regularForm.endDate || null
+      const voucherOptions = getVoucherOptionsForChild(regularForm.childId)
+      const effectiveVoucherType =
+        regularForm.voucherType && voucherOptions.includes(regularForm.voucherType)
+          ? regularForm.voucherType
+          : ''
+
+      const payload = {
+        child_id: Number(regularForm.childId),
+        teacher_id: Number(regularForm.teacherId),
+        weekday: Number(regularForm.weekday),
+        time_slot: regularForm.timeSlot,
+        minute_slot: Number(regularForm.minuteSlot),
+        start_date: regularForm.startDate,
+        end_date: endDate,
+        voucher_type: effectiveVoucherType,
+        note: regularForm.note || null,
+        is_active: regularForm.isActive,
+      }
+
+      let ruleId = regularForm.id
+
+      if (regularForm.id) {
+        const { error } = await supabase
+          .from('regular_classes')
+          .update(payload)
+          .eq('id', regularForm.id)
+
+        if (error) throw error
+
+        const endForDelete = endDate || '2099-12-31'
+        const { error: deactivateError } = await supabase
+          .from('schedule_entries')
+          .update({ is_active: false })
+          .eq('teacher_id', Number(regularForm.teacherId))
+          .eq('child_id', Number(regularForm.childId))
+          .like('note', `${buildRegularNoteTag(regularForm.id)}%`)
+          .gte('date', regularForm.startDate)
+          .lte('date', endForDelete)
+
+        if (deactivateError) throw deactivateError
+      } else {
+        const { data, error } = await supabase
+          .from('regular_classes')
+          .insert(payload)
+          .select('id')
+          .single()
+
+        if (error) throw error
+        ruleId = data?.id ?? null
+      }
+
+      if (!ruleId) {
+        setMessage('정기수업 저장 후 rule id를 찾지 못했습니다.')
+        return
+      }
+
+      const teacher = staffs.find((s) => Number(s.id) === Number(regularForm.teacherId))
+      const teacherName = teacher?.name ?? ''
+
+      const generatedDates = getDateRangeMatchingWeekday(
+        regularForm.startDate,
+        endDate || '2099-12-31',
+        Number(regularForm.weekday)
+      )
+
+      if (generatedDates.length > 0) {
+        const { data: existingRows, error: existingError } = await supabase
+          .from('schedule_entries')
+          .select('date,time_slot,minute_slot,teacher_id,child_id,voucher_type')
+          .eq('teacher_id', Number(regularForm.teacherId))
+          .eq('child_id', Number(regularForm.childId))
+          .gte('date', generatedDates[0])
+          .lte('date', generatedDates[generatedDates.length - 1])
+          .eq('is_active', true)
+
+        if (existingError) throw existingError
+
+        const existingKeySet = new Set(
+          (existingRows ?? []).map((row: any) =>
+            [
+              row.date,
+              row.time_slot,
+              Number(row.minute_slot ?? 0),
+              Number(row.teacher_id),
+              Number(row.child_id),
+              row.voucher_type ?? '',
+            ].join('|')
+          )
+        )
+
+        const rowsToInsert = generatedDates
+          .map((date) => ({
+            date,
+            time_slot: regularForm.timeSlot,
+            minute_slot: Number(regularForm.minuteSlot),
+            room_number: 1,
+            teacher_id: Number(regularForm.teacherId),
+            teacher_name: teacherName,
+            class_type: 'individual',
+            child_id: Number(regularForm.childId),
+            voucher_type: effectiveVoucherType,
+            status: 'scheduled',
+            note: `${buildRegularNoteTag(ruleId)}${regularForm.note ? ` ${regularForm.note}` : ''}`,
+            is_active: true,
+            is_group: false,
+            group_id: null,
+            group_name: null,
+          }))
+          .filter((row) => {
+            const key = [
+              row.date,
+              row.time_slot,
+              Number(row.minute_slot ?? 0),
+              Number(row.teacher_id),
+              Number(row.child_id),
+              row.voucher_type ?? '',
+            ].join('|')
+            return !existingKeySet.has(key)
+          })
+
+        if (rowsToInsert.length > 0) {
+          const { error: insertError } = await supabase
+            .from('schedule_entries')
+            .insert(rowsToInsert)
+
+          if (insertError) throw insertError
+        }
+      }
+
+      await Promise.all([loadRegularClasses(), loadSchedules()])
+      setRegularForm({
+        id: null,
+        childId: '',
+        teacherId: '',
+        weekday: '',
+        timeSlot: '09:00',
+        minuteSlot: '00',
+        startDate: toDateString(new Date()),
+        endDate: '',
+        note: '',
+        isActive: true,
+      })
+      setRegularChildQuery('')
+      setRegularTeacherQuery('')
+      setMessage('정기수업이 저장되었습니다.')
+    } catch (err: any) {
+      setMessage(err?.message ?? '정기수업 저장 실패')
+    }
+  }
+
+  async function handleSaveRegularGroupClass() {
+    try {
+      if (!regularGroupForm.teacherId) {
+        setMessage('선생님을 선택하세요.')
+        return
+      }
+      if (regularGroupForm.weekday === '') {
+        setMessage('요일을 선택하세요.')
+        return
+      }
+      if (!regularGroupForm.startDate) {
+        setMessage('시작일을 선택하세요.')
+        return
+      }
+      if (!regularGroupForm.groupName.trim()) {
+        setMessage('그룹명을 입력하세요.')
+        return
+      }
+      if (regularGroupForm.childIds.length === 0) {
+        setMessage('그룹 학생을 1명 이상 선택하세요.')
+        return
+      }
+
+      const endDate = regularGroupForm.endDate || null
+      const payload = {
+        teacher_id: Number(regularGroupForm.teacherId),
+        weekday: Number(regularGroupForm.weekday),
+        time_slot: regularGroupForm.timeSlot,
+        minute_slot: Number(regularGroupForm.minuteSlot),
+        start_date: regularGroupForm.startDate,
+        end_date: endDate,
+        group_name: regularGroupForm.groupName,
+        note: regularGroupForm.note || null,
+        is_active: regularGroupForm.isActive,
+      }
+
+      let ruleId = regularGroupForm.id
+
+      if (regularGroupForm.id) {
+        const { error } = await supabase
+          .from('regular_group_classes')
+          .update(payload)
+          .eq('id', regularGroupForm.id)
+
+        if (error) throw error
+
+        const { error: memberOffError } = await supabase
+          .from('regular_group_class_members')
+          .update({ is_active: false })
+          .eq('regular_group_class_id', regularGroupForm.id)
+
+        if (memberOffError) throw memberOffError
+
+        const { error: scheduleOffError } = await supabase
+          .from('schedule_entries')
+          .update({ is_active: false })
+          .eq('is_group', true)
+          .eq('group_id', String(regularGroupForm.id))
+
+        if (scheduleOffError) throw scheduleOffError
+      } else {
+        const { data, error } = await supabase
+          .from('regular_group_classes')
+          .insert(payload)
+          .select('id')
+          .single()
+
+        if (error) throw error
+        ruleId = data?.id ?? null
+      }
+
+      if (!ruleId) {
+        setMessage('정기 그룹수업 저장 후 rule id를 찾지 못했습니다.')
+        return
+      }
+
+      const memberRows = regularGroupForm.childIds.map((childId) => ({
+        regular_group_class_id: Number(ruleId),
+        child_id: Number(childId),
+        is_active: true,
+      }))
+
+      const { error: memberInsertError } = await supabase
+        .from('regular_group_class_members')
+        .insert(memberRows)
+
+      if (memberInsertError) throw memberInsertError
+
+      const teacher = staffs.find((s) => Number(s.id) === Number(regularGroupForm.teacherId))
+      const teacherName = teacher?.name ?? ''
+
+      const generatedDates = getDateRangeMatchingWeekday(
+        regularGroupForm.startDate,
+        endDate || '2099-12-31',
+        Number(regularGroupForm.weekday)
+      )
+
+      if (generatedDates.length > 0) {
+        const { data: existingRows, error: existingError } = await supabase
+          .from('schedule_entries')
+          .select('date,time_slot,minute_slot,teacher_id,child_id,group_id')
+          .eq('teacher_id', Number(regularGroupForm.teacherId))
+          .eq('is_group', true)
+          .gte('date', generatedDates[0])
+          .lte('date', generatedDates[generatedDates.length - 1])
+          .eq('is_active', true)
+
+        if (existingError) throw existingError
+
+        const existingKeySet = new Set(
+          (existingRows ?? []).map((row: any) =>
+            [
+              row.date,
+              row.time_slot,
+              Number(row.minute_slot ?? 0),
+              Number(row.teacher_id),
+              Number(row.child_id),
+              row.group_id ?? '',
+            ].join('|')
+          )
+        )
+
+        const rowsToInsert = generatedDates.flatMap((date) =>
+          regularGroupForm.childIds
+            .map((childId) => ({
+              date,
+              time_slot: regularGroupForm.timeSlot,
+              minute_slot: Number(regularGroupForm.minuteSlot),
+              room_number: 1,
+              teacher_id: Number(regularGroupForm.teacherId),
+              teacher_name: teacherName,
+              class_type: 'group',
+              child_id: Number(childId),
+              voucher_type: '그룹수업',
+              status: 'scheduled',
+              note: `${buildRegularGroupNoteTag(Number(ruleId))}${regularGroupForm.note ? ` ${regularGroupForm.note}` : ''}`,
+              is_active: true,
+              is_group: true,
+              group_id: String(ruleId),
+              group_name: regularGroupForm.groupName,
+            }))
+            .filter((row) => {
+              const key = [
+                row.date,
+                row.time_slot,
+                Number(row.minute_slot ?? 0),
+                Number(row.teacher_id),
+                Number(row.child_id),
+                row.group_id ?? '',
+              ].join('|')
+              return !existingKeySet.has(key)
+            })
+        )
+
+        if (rowsToInsert.length > 0) {
+          const { error: insertError } = await supabase
+            .from('schedule_entries')
+            .insert(rowsToInsert)
+
+          if (insertError) throw insertError
+        }
+      }
+
+      await Promise.all([loadRegularGroupClasses(), loadRegularGroupMembers(), loadSchedules()])
+      setRegularGroupForm({
+        id: null,
+        teacherId: '',
+        weekday: '',
+        timeSlot: '09:00',
+        minuteSlot: '00',
+        startDate: toDateString(new Date()),
+        endDate: '',
+        groupName: '',
+        note: '',
+        isActive: true,
+        childIds: [],
+      })
+      setMessage('정기 그룹수업이 저장되었습니다.')
+    } catch (err: any) {
+      setMessage(err?.message ?? '정기 그룹수업 저장 실패')
+    }
+  }
+
+  async function handleDeleteRegularGroupClass(id: number) {
+    try {
+      const ok = window.confirm('정기 그룹수업을 삭제할까요?')
+      if (!ok) return
+
+      const { error } = await supabase
+        .from('regular_group_classes')
+        .update({ is_active: false })
+        .eq('id', id)
+
+      if (error) throw error
+
+      const { error: memberError } = await supabase
+        .from('regular_group_class_members')
+        .update({ is_active: false })
+        .eq('regular_group_class_id', id)
+
+      if (memberError) throw memberError
+
+      const { error: scheduleError } = await supabase
+        .from('schedule_entries')
+        .update({ is_active: false })
+        .eq('is_group', true)
+        .eq('group_id', String(id))
+
+      if (scheduleError) throw scheduleError
+
+      await Promise.all([loadRegularGroupClasses(), loadRegularGroupMembers(), loadSchedules()])
+      if (Number(regularGroupForm.id) === Number(id)) {
+        setRegularGroupForm({
+          id: null,
+          teacherId: '',
+          weekday: '',
+          timeSlot: '09:00',
+          minuteSlot: '00',
+          startDate: toDateString(new Date()),
+          endDate: '',
+            groupName: '',
+          note: '',
+          isActive: true,
+          childIds: [],
+        })
+      }
+      setMessage('정기 그룹수업이 삭제되었습니다.')
+    } catch (err: any) {
+      setMessage(err?.message ?? '정기 그룹수업 삭제 실패')
+    }
+  }
+
+  async function handleDeleteRegularClass(id: number) {
+    try {
+      const ok = window.confirm('이 정기수업을 삭제할까요?')
+      if (!ok) return
+
+      const rule = regularClasses.find((row) => Number(row.id) === Number(id))
+      if (!rule) {
+        setMessage('정기수업 정보를 찾을 수 없습니다.')
+        return
+      }
+
+      const { error } = await supabase
+        .from('regular_classes')
+        .update({ is_active: false })
+        .eq('id', id)
+
+      if (error) throw error
+
+      const endForDelete = rule.end_date || '2099-12-31'
+      const { error: scheduleError } = await supabase
+        .from('schedule_entries')
+        .update({ is_active: false })
+        .like('note', `${buildRegularNoteTag(id)}%`)
+        .gte('date', rule.start_date)
+        .lte('date', endForDelete)
+
+      if (scheduleError) throw scheduleError
+
+      await Promise.all([loadRegularClasses(), loadSchedules()])
+      if (Number(regularForm.id) === Number(id)) {
+        setRegularForm({
+          id: null,
+          childId: '',
+          teacherId: '',
+          weekday: '',
+          timeSlot: '09:00',
+          minuteSlot: '00',
+          startDate: toDateString(new Date()),
+          endDate: '',
+            note: '',
+          isActive: true,
+        })
+      }
+      setMessage('정기수업이 삭제되었습니다.')
+    } catch (err: any) {
+      setMessage(err?.message ?? '정기수업 삭제 실패')
+    }
+  }
+
+  
+async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: number) {
     try {
       const staff = employeeStaffs.find((s) => Number(s.id) === Number(staffId))
       const minute = Number(selectedMinute)
@@ -1430,8 +2231,10 @@ export default function AdminPage() {
 
     if (row.is_group) return 0
     if (row.voucher_type === '디딤') return didimIndex <= 3 ? 0 : basePrice
-    if (row.voucher_type === '아청심') return Number(voucherPrices['아청심'] ?? 54000)
-    if (row.voucher_type === '드림스타트') return Number(voucherPrices['드림스타트'] ?? 40000)
+    if (row.voucher_type === '아청심1') return Number(voucherPrices['아청심1'] ?? voucherPrices['아청심'] ?? 13500)
+    if (row.voucher_type === '아청심2') return Number(voucherPrices['아청심2'] ?? 9000)
+    if (row.voucher_type === '아청심') return Number(voucherPrices['아청심1'] ?? voucherPrices['아청심'] ?? 13500)
+    if (row.voucher_type === '드림스타트') return Number(voucherPrices['드림스타트'] ?? 10000)
     if (row.voucher_type === '배움') return Number(voucherPrices['배움'] ?? 10000)
     return basePrice
   }
@@ -2037,6 +2840,12 @@ export default function AdminPage() {
             >
               월정산
             </button>
+            <button
+              onClick={() => setTab('regular')}
+              className={`rounded-xl px-4 py-2 ${tab === 'regular' ? 'bg-black text-white' : 'bg-slate-200'}`}
+            >
+              정기수업관리
+            </button>
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
@@ -2123,21 +2932,19 @@ export default function AdminPage() {
                     </select>
                   ) : null}
 
-                  {viewMode === 'daily' ? (
-                    <input
-                      type="date"
-                      value={dailyDate}
-                      onChange={(e) => setDailyDate(e.target.value)}
-                      className="rounded-xl border px-3 py-3 md:py-2"
-                    />
-                  ) : null}
+                  <input
+                    type="date"
+                    value={dailyDate}
+                    onChange={(e) => setDailyDate(e.target.value)}
+                    className="rounded-xl border px-3 py-3 md:py-2"
+                  />
 
                   <div className="flex gap-2">
                     <button
                       onClick={() => {
-                        const d = new Date(weekBaseDate)
-                        d.setDate(d.getDate() - 7)
-                        setWeekBaseDate(d)
+                        const d = new Date(dailyDate)
+                        d.setDate(d.getDate() - 1)
+                        setDailyDate(toDateString(d))
                       }}
                       className="rounded-lg bg-slate-200 px-3 py-3 md:py-2"
                     >
@@ -2146,9 +2953,9 @@ export default function AdminPage() {
 
                     <button
                       onClick={() => {
-                        const d = new Date(weekBaseDate)
-                        d.setDate(d.getDate() + 7)
-                        setWeekBaseDate(d)
+                        const d = new Date(dailyDate)
+                        d.setDate(d.getDate() + 1)
+                        setDailyDate(toDateString(d))
                       }}
                       className="rounded-lg bg-slate-200 px-3 py-3 md:py-2"
                     >
@@ -2185,32 +2992,28 @@ export default function AdminPage() {
                       <tr>
                         <th className="border bg-slate-100 px-1 py-2">시간</th>
 
-                        {viewMode === 'staff'
-                          ? weekDates.map((date, idx) => (
-                              <th key={`staff-${idx}`} className="min-w-[170px] border bg-slate-100 px-1 py-2">
-                                <div className="text-sm font-semibold leading-tight">
-                                  {['월', '화', '수', '목', '금', '토'][idx]} {toShortMonthDay(date)}
-                                </div>
-                                <div className="mt-1 text-xs font-normal leading-tight text-slate-500">
-                                  {selectedStaff?.name}
-                                </div>
-                              </th>
-                            ))
-                          : weekDates.flatMap((date, idx) =>
-                              employeeStaffs.map((staff) => (
-                                <th
-                                  key={`all-${toDateString(date)}-${staff.id}`}
-                                  className="min-w-[170px] border bg-slate-100 px-1 py-2"
-                                >
-                                  <div className="text-sm font-semibold leading-tight">
-                                    {['월', '화', '수', '목', '금', '토'][idx]} {toShortMonthDay(date)}
-                                  </div>
-                                  <div className="mt-1 text-xs font-normal leading-tight text-slate-500">
-                                    {staff.name}
-                                  </div>
-                                </th>
-                              ))
-                            )}
+                        {viewMode === 'staff' && selectedStaff ? (
+                          <th className="min-w-[170px] border bg-slate-100 px-1 py-2">
+                            <div className="text-sm font-semibold leading-tight">
+                              {dailyDate}
+                            </div>
+                            <div className="mt-1 text-xs font-normal leading-tight text-slate-500">
+                              {selectedStaff.name}
+                            </div>
+                          </th>
+                        ) : (
+                          allViewStaffs.map((staff) => (
+                            <th
+                              key={`all-${dailyDate}-${staff.id}`}
+                              className="min-w-[170px] border bg-slate-100 px-1 py-2"
+                            >
+                              <div className="text-sm font-semibold leading-tight">{dailyDate}</div>
+                              <div className="mt-1 text-xs font-normal leading-tight text-slate-500">
+                                {staff.name}
+                              </div>
+                            </th>
+                          ))
+                        )}
                       </tr>
                     </thead>
                     <tbody>
@@ -2221,8 +3024,8 @@ export default function AdminPage() {
                           </td>
 
                           {viewMode === 'staff' && selectedStaff
-                            ? weekDates.map((date) => {
-                                const dateStr = toDateString(date)
+                            ? (() => {
+                                const dateStr = dailyDate
                                 const items = buildDisplayItems(dateStr, hourSlot, Number(selectedStaff.id))
                                 const isEditing =
                                   editingCell?.date === dateStr &&
@@ -2380,180 +3183,177 @@ export default function AdminPage() {
                                     )}
                                   </td>
                                 )
-                              })
-                            : weekDates.flatMap((date) =>
-                                employeeStaffs.map((staff) => {
-                                  const dateStr = toDateString(date)
-                                  const items = buildDisplayItems(dateStr, hourSlot, Number(staff.id))
-                                  const isEditing =
-                                    editingCell?.date === dateStr &&
-                                    editingCell?.hour === hourSlot &&
-                                    Number(editingCell?.staffId) === Number(staff.id)
+                              })()
+                            : allViewStaffs.map((staff) => {
+                                const dateStr = dailyDate
+                                const items = buildDisplayItems(dateStr, hourSlot, Number(staff.id))
+                                const isEditing =
+                                  editingCell?.date === dateStr &&
+                                  editingCell?.hour === hourSlot &&
+                                  Number(editingCell?.staffId) === Number(staff.id)
 
-                                  return (
-                                    <td
-                                      key={`all-${staff.id}-${dateStr}-${hourSlot}`}
-                                      className="min-w-[170px] border px-1 py-1 align-top"
-                                    >
-                                      {isEditing ? (
-                                        <div className="min-h-[72px] space-y-2">
-                                          <label className="flex items-center gap-2 text-xs">
-                                            <input
-                                              type="checkbox"
-                                              checked={isGroupLesson}
-                                              onChange={(e) => {
-                                                setIsGroupLesson(e.target.checked)
-                                                setSelectedVoucher('')
-                                                setScheduleChildId('')
-                                                setSelectedGroupChildIds([])
-                                              }}
-                                            />
-                                            그룹수업
-                                          </label>
-
-                                          {isGroupLesson ? (
-                                            <>
-                                              <input
-                                                value={groupName}
-                                                onChange={(e) => setGroupName(e.target.value)}
-                                                placeholder="그룹명"
-                                                className="w-full rounded border bg-white px-2 py-1 text-xs"
-                                              />
-                                              <input
-                                                value={groupSearch}
-                                                onChange={(e) => setGroupSearch(e.target.value)}
-                                                placeholder="학생 이름 검색"
-                                                className="w-full rounded border bg-white px-2 py-1 text-xs"
-                                              />
-                                              <div className="rounded border p-2">
-                                                <div className="mb-2 text-[11px] text-slate-500">
-                                                  학생 선택 ({selectedGroupChildIds.length}/8)
-                                                </div>
-                                                <div className="grid max-h-40 grid-cols-1 gap-1 overflow-y-auto">
-                                                  {filteredGroupChildren.map((c) => {
-                                                    const active = selectedGroupChildIds.includes(c.id)
-                                                    return (
-                                                      <button
-                                                        key={c.id}
-                                                        type="button"
-                                                        onClick={() => toggleGroupChild(c.id)}
-                                                        className={`rounded px-2 py-1 text-left text-[11px] ${
-                                                          active ? 'bg-rose-500 text-white' : 'bg-slate-100 text-slate-700'
-                                                        }`}
-                                                      >
-                                                        {getDisplayName(c)}
-                                                      </button>
-                                                    )
-                                                  })}
-                                                </div>
-                                              </div>
-                                            </>
-                                          ) : (
-                                            <>
-                                              <select
-                                                value={scheduleChildId}
-                                                onChange={(e) =>
-                                                  setScheduleChildId(e.target.value ? Number(e.target.value) : '')
-                                                }
-                                                className="w-full rounded border bg-white px-2 py-1 text-xs"
-                                              >
-                                                <option value="">학생 선택</option>
-                                                {children.filter((c) => c.is_active).map((c) => (
-                                                  <option key={c.id} value={c.id}>
-                                                    {getDisplayName(c)}
-                                                  </option>
-                                                ))}
-                                              </select>
-
-                                              <select
-                                                value={selectedVoucher}
-                                                onChange={(e) => setSelectedVoucher(e.target.value)}
-                                                className="w-full rounded border bg-white px-2 py-1 text-xs"
-                                              >
-                                                <option value="">바우처 선택</option>
-                                                {getVoucherOptionsForChild(scheduleChildId).map((voucher) => (
-                                                  <option key={voucher} value={voucher}>
-                                                    {voucher}
-                                                  </option>
-                                                ))}
-                                              </select>
-                                            </>
-                                          )}
-
-                                          <select
-                                            value={selectedMinute}
-                                            onChange={(e) => setSelectedMinute(e.target.value)}
-                                            className="w-full rounded border bg-white px-2 py-1 text-xs"
-                                          >
-                                            {getMinutesOptions().map((m) => (
-                                              <option key={m} value={m}>
-                                                {m}분
-                                              </option>
-                                            ))}
-                                          </select>
-
-                                          <div className="flex gap-1">
-                                            <button
-                                              onClick={() =>
-                                                handleSaveSchedule(dateStr, hourSlot, Number(staff.id))
-                                              }
-                                              className="flex-1 rounded bg-indigo-600 px-2 py-1 text-xs text-white"
-                                            >
-                                              저장
-                                            </button>
-                                            <button
-                                              onClick={resetScheduleEditor}
-                                              className="flex-1 rounded bg-slate-300 px-2 py-1 text-xs"
-                                            >
-                                              취소
-                                            </button>
-                                          </div>
-                                        </div>
-                                      ) : (
-                                        <div className="space-y-1">
-                                          <button
-                                            type="button"
-                                            onClick={() => {
-                                              setEditingCell({
-                                                date: dateStr,
-                                                hour: hourSlot,
-                                                staffId: Number(staff.id),
-                                              })
-                                              setEditingEntryId(null)
-                                              setEditingGroupId(null)
-                                              setScheduleChildId('')
-                                              setSelectedMinute('00')
+                                return (
+                                  <td
+                                    key={`all-${staff.id}-${dateStr}-${hourSlot}`}
+                                    className="min-w-[170px] border px-1 py-1 align-top"
+                                  >
+                                    {isEditing ? (
+                                      <div className="min-h-[72px] space-y-2">
+                                        <label className="flex items-center gap-2 text-xs">
+                                          <input
+                                            type="checkbox"
+                                            checked={isGroupLesson}
+                                            onChange={(e) => {
+                                              setIsGroupLesson(e.target.checked)
                                               setSelectedVoucher('')
-                                              setIsGroupLesson(false)
-                                              setGroupName('')
+                                              setScheduleChildId('')
                                               setSelectedGroupChildIds([])
-                                              setGroupSearch('')
                                             }}
-                                            className="min-h-[28px] w-full rounded border border-dashed border-slate-300 px-2 py-1 text-left text-xs text-slate-500 hover:bg-slate-100"
-                                          >
-                                            + 추가
-                                          </button>
+                                          />
+                                          그룹수업
+                                        </label>
 
-                                          {items.map((item) =>
-                                            renderScheduleCard(item, dateStr, Number(staff.id))
-                                          )}
+                                        {isGroupLesson ? (
+                                          <>
+                                            <input
+                                              value={groupName}
+                                              onChange={(e) => setGroupName(e.target.value)}
+                                              placeholder="그룹명"
+                                              className="w-full rounded border bg-white px-2 py-1 text-xs"
+                                            />
+                                            <input
+                                              value={groupSearch}
+                                              onChange={(e) => setGroupSearch(e.target.value)}
+                                              placeholder="학생 이름 검색"
+                                              className="w-full rounded border bg-white px-2 py-1 text-xs"
+                                            />
+                                            <div className="rounded border p-2">
+                                              <div className="mb-2 text-[11px] text-slate-500">
+                                                학생 선택 ({selectedGroupChildIds.length}/8)
+                                              </div>
+                                              <div className="grid max-h-40 grid-cols-1 gap-1 overflow-y-auto">
+                                                {filteredGroupChildren.map((c) => {
+                                                  const active = selectedGroupChildIds.includes(c.id)
+                                                  return (
+                                                    <button
+                                                      key={c.id}
+                                                      type="button"
+                                                      onClick={() => toggleGroupChild(c.id)}
+                                                      className={`rounded px-2 py-1 text-left text-[11px] ${
+                                                        active ? 'bg-rose-500 text-white' : 'bg-slate-100 text-slate-700'
+                                                      }`}
+                                                    >
+                                                      {getDisplayName(c)}
+                                                    </button>
+                                                  )
+                                                })}
+                                              </div>
+                                            </div>
+                                          </>
+                                        ) : (
+                                          <>
+                                            <select
+                                              value={scheduleChildId}
+                                              onChange={(e) =>
+                                                setScheduleChildId(e.target.value ? Number(e.target.value) : '')
+                                              }
+                                              className="w-full rounded border bg-white px-2 py-1 text-xs"
+                                            >
+                                              <option value="">학생 선택</option>
+                                              {children.filter((c) => c.is_active).map((c) => (
+                                                <option key={c.id} value={c.id}>
+                                                  {getDisplayName(c)}
+                                                </option>
+                                              ))}
+                                            </select>
+
+                                            <select
+                                              value={selectedVoucher}
+                                              onChange={(e) => setSelectedVoucher(e.target.value)}
+                                              className="w-full rounded border bg-white px-2 py-1 text-xs"
+                                            >
+                                              <option value="">바우처 선택</option>
+                                              {getVoucherOptionsForChild(scheduleChildId).map((voucher) => (
+                                                <option key={voucher} value={voucher}>
+                                                  {voucher}
+                                                </option>
+                                              ))}
+                                            </select>
+                                          </>
+                                        )}
+
+                                        <select
+                                          value={selectedMinute}
+                                          onChange={(e) => setSelectedMinute(e.target.value)}
+                                          className="w-full rounded border bg-white px-2 py-1 text-xs"
+                                        >
+                                          {getMinutesOptions().map((m) => (
+                                            <option key={m} value={m}>
+                                              {m}분
+                                            </option>
+                                          ))}
+                                        </select>
+
+                                        <div className="flex gap-1">
+                                          <button
+                                            onClick={() =>
+                                              handleSaveSchedule(dateStr, hourSlot, Number(staff.id))
+                                            }
+                                            className="flex-1 rounded bg-indigo-600 px-2 py-1 text-xs text-white"
+                                          >
+                                            저장
+                                          </button>
+                                          <button
+                                            onClick={resetScheduleEditor}
+                                            className="flex-1 rounded bg-slate-300 px-2 py-1 text-xs"
+                                          >
+                                            취소
+                                          </button>
                                         </div>
-                                      )}
-                                    </td>
-                                  )
-                                })
-                              )}
+                                      </div>
+                                    ) : (
+                                      <div className="space-y-1">
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            setEditingCell({
+                                              date: dateStr,
+                                              hour: hourSlot,
+                                              staffId: Number(staff.id),
+                                            })
+                                            setEditingEntryId(null)
+                                            setEditingGroupId(null)
+                                            setScheduleChildId('')
+                                            setSelectedMinute('00')
+                                            setSelectedVoucher('')
+                                            setIsGroupLesson(false)
+                                            setGroupName('')
+                                            setSelectedGroupChildIds([])
+                                            setGroupSearch('')
+                                          }}
+                                          className="min-h-[28px] w-full rounded border border-dashed border-slate-300 px-2 py-1 text-left text-xs text-slate-500 hover:bg-slate-100"
+                                        >
+                                          + 추가
+                                        </button>
+
+                                        {items.map((item) =>
+                                          renderScheduleCard(item, dateStr, Number(staff.id))
+                                        )}
+                                      </div>
+                                    )}
+                                  </td>
+                                )
+                              })}
                         </tr>
                       ))}
                     </tbody>
-                  </table>
-                </div>
+                  </table>                </div>
 
                 <div className="space-y-4 md:hidden">
                   {viewMode === 'staff' && selectedStaff
-                    ? weekDates.map((date) => renderMobileDayCard(date, Number(selectedStaff.id)))
-                    : weekDates.flatMap((date) =>
-                        employeeStaffs.map((staff) => renderMobileDayCard(date, Number(staff.id)))
+                    ? [renderMobileDayCard(new Date(dailyDate), Number(selectedStaff.id))]
+                    : allViewStaffs.map((staff) =>
+                        renderMobileDayCard(new Date(dailyDate), Number(staff.id))
                       )}
                 </div>
               </>
@@ -2626,10 +3426,16 @@ export default function AdminPage() {
                     onChange={(e) => setChildForm((p) => ({ ...p, didimPrice: e.target.value }))}
                     className="w-full rounded-xl border px-3 py-2"
                   />
-                  <label className="block text-sm">아청심</label>
+                  <label className="block text-sm">아청심1</label>
                   <input
-                    value={childForm.achungsimPrice}
-                    onChange={(e) => setChildForm((p) => ({ ...p, achungsimPrice: e.target.value }))}
+                    value={childForm.achungsim1Price}
+                    onChange={(e) => setChildForm((p) => ({ ...p, achungsim1Price: e.target.value }))}
+                    className="w-full rounded-xl border px-3 py-2"
+                  />
+                  <label className="block text-sm">아청심2</label>
+                  <input
+                    value={childForm.achungsim2Price}
+                    onChange={(e) => setChildForm((p) => ({ ...p, achungsim2Price: e.target.value }))}
                     className="w-full rounded-xl border px-3 py-2"
                   />
                   <label className="block text-sm">드림스타트</label>
@@ -2702,8 +3508,9 @@ export default function AdminPage() {
                             voucherTypes: childVouchers,
                             basePrice: String(child.base_price ?? child.monthly_limit ?? 60000),
                             didimPrice: String(voucherPrices['디딤'] ?? 10000),
-                            achungsimPrice: String(voucherPrices['아청심'] ?? 54000),
-                            dreamStartPrice: String(voucherPrices['드림스타트'] ?? 40000),
+                            achungsim1Price: String(voucherPrices['아청심1'] ?? voucherPrices['아청심'] ?? 13500),
+                            achungsim2Price: String(voucherPrices['아청심2'] ?? 9000),
+                            dreamStartPrice: String(voucherPrices['드림스타트'] ?? 10000),
                             baeumPrice: String(voucherPrices['배움'] ?? 10000),
                             notes: child.notes ?? '',
                             isActive: child.is_active,
@@ -2771,12 +3578,22 @@ export default function AdminPage() {
                   />
                   사용중
                 </label>
-                <button
-                  onClick={handleSaveStaff}
-                  className="w-full rounded-xl bg-black py-3 text-white md:py-2"
-                >
-                  {staffForm.id ? '선생님 수정' : '선생님 등록'}
-                </button>
+                <div className="flex gap-2">
+                  <button
+                    onClick={handleSaveStaff}
+                    className="flex-1 rounded-xl bg-black py-3 text-white md:py-2"
+                  >
+                    {staffForm.id ? '선생님 수정' : '선생님 등록'}
+                  </button>
+                  {staffForm.id ? (
+                    <button
+                      onClick={handleDeleteStaff}
+                      className="flex-1 rounded-xl bg-rose-500 py-3 text-white md:py-2"
+                    >
+                      삭제
+                    </button>
+                  ) : null}
+                </div>
               </div>
             </div>
 
@@ -2813,6 +3630,472 @@ export default function AdminPage() {
               </div>
             </div>
           </div>
+        ) : null}
+
+
+        {tab === 'regular' ? (
+          <>
+            <div className="grid gap-6 md:grid-cols-2">
+            <div className="rounded-2xl border p-4">
+              <h2 className="mb-3 text-xl font-bold">정기수업 등록 / 수정</h2>
+              <div className="space-y-3">
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-slate-700">학생:</label>
+                  <input
+                    list="regular-child-list"
+                    value={regularChildQuery}
+                    onChange={(e) => {
+                      const value = e.target.value
+                      setRegularChildQuery(value)
+                      const matchedChild = children.find((c) => c.is_active && getDisplayName(c) === value)
+                      if (matchedChild) {
+                        const nextOptions = getVoucherOptionsForChild(matchedChild.id)
+                        setRegularForm((p) => ({
+                          ...p,
+                          childId: matchedChild.id,
+                          voucherType: nextOptions.includes(p.voucherType) ? p.voucherType : '',
+                        }))
+                      } else {
+                        setRegularForm((p) => ({ ...p, childId: '' }))
+                      }
+                    }}
+                    placeholder="학생 이름 입력 또는 선택"
+                    className="w-full rounded-xl border px-3 py-3 md:py-2"
+                  />
+                  <datalist id="regular-child-list">
+                    {regularChildCandidates.map((child) => (
+                      <option key={child.id} value={getDisplayName(child)} />
+                    ))}
+                  </datalist>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-slate-700">선생님:</label>
+                  <input
+                    list="regular-teacher-list"
+                    value={regularTeacherQuery}
+                    onChange={(e) => {
+                      const value = e.target.value
+                      setRegularTeacherQuery(value)
+                      const matchedStaff = employeeStaffs.find((staff) => staff.name === value)
+                      if (matchedStaff) {
+                        setRegularForm((p) => ({ ...p, teacherId: matchedStaff.id }))
+                      } else {
+                        setRegularForm((p) => ({ ...p, teacherId: '' }))
+                      }
+                    }}
+                    placeholder="선생님 이름 입력 또는 선택"
+                    className="w-full rounded-xl border px-3 py-3 md:py-2"
+                  />
+                  <datalist id="regular-teacher-list">
+                    {regularTeacherCandidates.map((staff) => (
+                      <option key={staff.id} value={staff.name} />
+                    ))}
+                  </datalist>
+                </div>
+
+                <div className="grid gap-3 md:grid-cols-2">
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-slate-700">요일:</label>
+                    <select
+                      value={regularForm.weekday}
+                      onChange={(e) => setRegularForm((p) => ({ ...p, weekday: e.target.value === '' ? '' : Number(e.target.value) }))}
+                      className="w-full rounded-xl border px-3 py-3 md:py-2"
+                    >
+                      <option value="">요일 선택</option>
+                      {[1, 2, 3, 4, 5, 6].map((weekday) => (
+                        <option key={weekday} value={weekday}>
+                          {getWeekdayLabel(weekday)}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-slate-700">시간:</label>
+                    <select
+                      value={regularForm.timeSlot}
+                      onChange={(e) => setRegularForm((p) => ({ ...p, timeSlot: e.target.value }))}
+                      className="w-full rounded-xl border px-3 py-3 md:py-2"
+                    >
+                      {hourSlots.map((slot) => (
+                        <option key={slot} value={slot}>
+                          {slot}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                <div className="grid gap-3 md:grid-cols-2">
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-slate-700">분:</label>
+                    <select
+                      value={regularForm.minuteSlot}
+                      onChange={(e) => setRegularForm((p) => ({ ...p, minuteSlot: e.target.value }))}
+                      className="w-full rounded-xl border px-3 py-3 md:py-2"
+                    >
+                      {getMinutesOptions().map((m) => (
+                        <option key={m} value={m}>
+                          {m}분
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-slate-700">바우처:</label>
+                    <select
+                      value={regularForm.voucherType}
+                      onChange={(e) => setRegularForm((p) => ({ ...p, voucherType: e.target.value }))}
+                      className="w-full rounded-xl border px-3 py-3 md:py-2"
+                    >
+                      <option value="">바우처 선택</option>
+                      {getVoucherOptionsForChild(regularForm.childId).map((voucher) => (
+                        <option key={voucher} value={voucher}>
+                          {voucher}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                <div className="grid gap-3 md:grid-cols-2">
+                  <input
+                    type="date"
+                    value={regularForm.startDate}
+                    onChange={(e) => setRegularForm((p) => ({ ...p, startDate: e.target.value }))}
+                    className="w-full rounded-xl border px-3 py-3 md:py-2"
+                  />
+                  <input
+                    type="date"
+                    value={regularForm.endDate}
+                    onChange={(e) => setRegularForm((p) => ({ ...p, endDate: e.target.value }))}
+                    className="w-full rounded-xl border px-3 py-3 md:py-2"
+                  />
+                </div>
+
+                <input
+                  value={regularForm.note}
+                  onChange={(e) => setRegularForm((p) => ({ ...p, note: e.target.value }))}
+                  placeholder="메모"
+                  className="w-full rounded-xl border px-3 py-3 md:py-2"
+                />
+
+                <label className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={regularForm.isActive}
+                    onChange={(e) => setRegularForm((p) => ({ ...p, isActive: e.target.checked }))}
+                  />
+                  사용중
+                </label>
+
+                <button
+                  onClick={handleSaveRegularClass}
+                  className="w-full rounded-xl bg-black py-3 text-white md:py-2"
+                >
+                  {regularForm.id ? '정기수업 수정' : '정기수업 등록'}
+                </button>
+              </div>
+            </div>
+
+            <div className="rounded-2xl border p-4">
+              <h2 className="mb-3 text-xl font-bold">정기수업 목록</h2>
+              <input
+                value={regularSearch}
+                onChange={(e) => setRegularSearch(e.target.value)}
+                placeholder="학생 / 선생님 검색"
+                className="mb-3 w-full rounded-xl border px-3 py-3 md:py-2"
+              />
+              <div className="space-y-2">
+                {filteredRegularClasses.length === 0 ? (
+                  <div className="rounded-xl border p-3 text-slate-500">등록된 정기수업이 없습니다.</div>
+                ) : (
+                  filteredRegularClasses.map((row) => {
+                    const child = children.find((c) => Number(c.id) === Number(row.child_id))
+                    const staff = staffs.find((s) => Number(s.id) === Number(row.teacher_id))
+                    return (
+                      <div
+                        key={row.id}
+                        className="w-full rounded-xl border p-3 text-left hover:bg-slate-50"
+                      >
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setRegularForm({
+                              id: row.id,
+                              childId: row.child_id,
+                              teacherId: row.teacher_id,
+                              weekday: row.weekday,
+                              timeSlot: row.time_slot,
+                              minuteSlot: String(row.minute_slot ?? 0).padStart(2, '0'),
+                              startDate: row.start_date,
+                              endDate: row.end_date ?? '',
+                              voucherType: row.voucher_type ?? '일반',
+                              note: row.note ?? '',
+                              isActive: row.is_active,
+                            })
+                            setRegularChildQuery(child?.child_name ? getDisplayName(child) : '')
+                            setRegularTeacherQuery(staff?.name ?? '')
+                          }}
+                          className="w-full text-left"
+                        >
+                          <div className="font-medium">
+                            {child?.child_name ?? `학생(${row.child_id})`} / {staff?.name ?? `선생님(${row.teacher_id})`}
+                          </div>
+                          <div className="mt-1 text-sm text-slate-500">
+                            {getWeekdayLabel(row.weekday)} {row.time_slot}:{String(row.minute_slot ?? 0).padStart(2, '0')} / {row.start_date} ~ {row.end_date || '종료없음'}
+                          </div>
+                          <div className="mt-1 text-sm text-slate-500">
+                            바우처: {row.voucher_type ?? '일반'}
+                          </div>
+                        </button>
+                        <div className="mt-2 flex gap-2">
+                          <button
+                            onClick={() => handleDeleteRegularClass(row.id)}
+                            className="rounded bg-rose-50 px-2 py-1 text-xs text-rose-700"
+                          >
+                            삭제
+                          </button>
+                        </div>
+                      </div>
+                    )
+                  })
+                )}
+              </div>
+            </div>
+
+            </div>
+            <div className="mt-8 grid gap-6 md:grid-cols-2">
+              <div className="rounded-2xl border p-4">
+                <h2 className="mb-3 text-xl font-bold">정기 그룹수업 등록 / 수정</h2>
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <div className="text-sm font-medium text-slate-700">그룹명:</div>
+                    <input
+                      value={regularGroupForm.groupName}
+                      onChange={(e) => setRegularGroupForm((p) => ({ ...p, groupName: e.target.value }))}
+                      placeholder="그룹명 입력"
+                      className="w-full rounded-xl border px-3 py-3 md:py-2"
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <div className="text-sm font-medium text-slate-700">선생님:</div>
+                    <input
+                      list="regularGroupTeacherList"
+                      value={
+                        regularGroupForm.teacherId
+                          ? staffs.find((s) => Number(s.id) === Number(regularGroupForm.teacherId))?.name ?? ''
+                          : ''
+                      }
+                      onChange={(e) => {
+                        const keyword = e.target.value.trim()
+                        const matched = employeeStaffs.find((staff) => staff.name === keyword)
+                        setRegularGroupForm((p) => ({
+                          ...p,
+                          teacherId: matched ? Number(matched.id) : '',
+                        }))
+                      }}
+                      placeholder="선생님 이름 입력 또는 선택"
+                      className="w-full rounded-xl border px-3 py-3 md:py-2"
+                    />
+                    <datalist id="regularGroupTeacherList">
+                      {employeeStaffs.map((staff) => (
+                        <option key={staff.id} value={staff.name} />
+                      ))}
+                    </datalist>
+                  </div>
+
+                  <div className="space-y-2">
+                    <div className="text-sm font-medium text-slate-700">요일:</div>
+                    <select
+                      value={regularGroupForm.weekday}
+                      onChange={(e) => setRegularGroupForm((p) => ({ ...p, weekday: e.target.value === '' ? '' : Number(e.target.value) }))}
+                      className="w-full rounded-xl border px-3 py-3 md:py-2"
+                    >
+                      <option value="">요일 선택</option>
+                      {[1, 2, 3, 4, 5, 6].map((weekday) => (
+                        <option key={weekday} value={weekday}>
+                          {getWeekdayLabel(weekday)}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <div className="space-y-2">
+                      <div className="text-sm font-medium text-slate-700">시간:</div>
+                      <select
+                        value={regularGroupForm.timeSlot}
+                        onChange={(e) => setRegularGroupForm((p) => ({ ...p, timeSlot: e.target.value }))}
+                        className="w-full rounded-xl border px-3 py-3 md:py-2"
+                      >
+                        {hourSlots.map((slot) => (
+                          <option key={slot} value={slot}>
+                            {slot}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="space-y-2">
+                      <div className="text-sm font-medium text-slate-700">분:</div>
+                      <select
+                        value={regularGroupForm.minuteSlot}
+                        onChange={(e) => setRegularGroupForm((p) => ({ ...p, minuteSlot: e.target.value }))}
+                        className="w-full rounded-xl border px-3 py-3 md:py-2"
+                      >
+                        {getMinutesOptions().map((m) => (
+                          <option key={m} value={m}>
+                            {m}분
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <div className="space-y-2">
+                      <div className="text-sm font-medium text-slate-700">시작일:</div>
+                      <input
+                        type="date"
+                        value={regularGroupForm.startDate}
+                        onChange={(e) => setRegularGroupForm((p) => ({ ...p, startDate: e.target.value }))}
+                        className="w-full rounded-xl border px-3 py-3 md:py-2"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <div className="text-sm font-medium text-slate-700">종료일:</div>
+                      <input
+                        type="date"
+                        value={regularGroupForm.endDate}
+                        onChange={(e) => setRegularGroupForm((p) => ({ ...p, endDate: e.target.value }))}
+                        className="w-full rounded-xl border px-3 py-3 md:py-2"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <div className="text-sm font-medium text-slate-700">메모:</div>
+                    <input
+                      value={regularGroupForm.note}
+                      onChange={(e) => setRegularGroupForm((p) => ({ ...p, note: e.target.value }))}
+                      placeholder="메모"
+                      className="w-full rounded-xl border px-3 py-3 md:py-2"
+                    />
+                  </div>
+
+                  <div className="space-y-3">
+                    <div className="text-sm font-medium text-slate-700">학생 선택:</div>
+                    <div className="grid gap-3 md:grid-cols-3">
+                      {Array.from({ length: 6 }).map((_, index) => (
+                        <div key={index} className="space-y-2">
+                          <div className="text-sm text-slate-600">{index + 1}번학생:</div>
+                          <input
+                            list={`regularGroupChildList-${index}`}
+                            value={regularGroupChildInputs[index] ?? ''}
+                            onChange={(e) => handleRegularGroupChildInputChange(index, e.target.value)}
+                            placeholder={`학생 이름 입력 또는 선택 (${index + 1}번학생)`}
+                            className="w-full rounded-xl border px-3 py-3 md:py-2"
+                          />
+                          <datalist id={`regularGroupChildList-${index}`}>
+                            {children.filter((c) => c.is_active).map((child) => (
+                              <option key={`${index}-${child.id}`} value={getDisplayName(child)} />
+                            ))}
+                          </datalist>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={regularGroupForm.isActive}
+                      onChange={(e) => setRegularGroupForm((p) => ({ ...p, isActive: e.target.checked }))}
+                    />
+                    사용중
+                  </label>
+
+                  <button
+                    onClick={handleSaveRegularGroupClass}
+                    className="w-full rounded-xl bg-indigo-600 py-3 text-white md:py-2"
+                  >
+                    {regularGroupForm.id ? '정기 그룹수업 수정' : '정기 그룹수업 등록'}
+                  </button>
+                </div>
+              </div>
+
+              <div className="rounded-2xl border p-4">
+                <h2 className="mb-3 text-xl font-bold">정기 그룹수업 목록</h2>
+                <input
+                  value={regularGroupSearch}
+                  onChange={(e) => setRegularGroupSearch(e.target.value)}
+                  placeholder="그룹명 / 선생님 / 학생 검색"
+                  className="mb-3 w-full rounded-xl border px-3 py-3 md:py-2"
+                />
+                <div className="space-y-2">
+                  {filteredRegularGroupClasses.length === 0 ? (
+                    <div className="rounded-xl border p-3 text-slate-500">등록된 정기 그룹수업이 없습니다.</div>
+                  ) : (
+                    filteredRegularGroupClasses.map((row) => {
+                      const teacher = staffs.find((s) => Number(s.id) === Number(row.teacher_id))
+                      const memberRows = regularGroupMembers.filter((m) => Number(m.regular_group_class_id) === Number(row.id) && m.is_active)
+                      const memberNames = memberRows
+                        .map((m) => children.find((c) => Number(c.id) === Number(m.child_id))?.child_name)
+                        .filter(Boolean)
+                        .join(', ')
+                      return (
+                        <div key={row.id} className="w-full rounded-xl border p-3 text-left hover:bg-slate-50">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const nextChildIds = memberRows.map((m) => Number(m.child_id)).slice(0, 6)
+                              setRegularGroupForm({
+                                id: row.id,
+                                teacherId: row.teacher_id,
+                                weekday: row.weekday,
+                                timeSlot: row.time_slot,
+                                minuteSlot: String(row.minute_slot ?? 0).padStart(2, '0'),
+                                startDate: row.start_date,
+                                endDate: row.end_date ?? '',
+                                groupName: row.group_name,
+                                note: row.note ?? '',
+                                isActive: row.is_active,
+                                childIds: nextChildIds,
+                              })
+                              fillRegularGroupChildInputsByIds(nextChildIds)
+                            }}
+                            className="w-full text-left"
+                          >
+                            <div className="font-medium">
+                              {row.group_name} / {teacher?.name ?? `선생님(${row.teacher_id})`}
+                            </div>
+                            <div className="mt-1 text-sm text-slate-500">
+                              {getWeekdayLabel(row.weekday)} {row.time_slot}:{String(row.minute_slot ?? 0).padStart(2, '0')} / {row.start_date} ~ {row.end_date || '종료없음'}
+                            </div>
+                            <div className="mt-1 text-sm text-slate-500">
+                              학생: {memberNames || '-'}
+                            </div>
+                          </button>
+                          <div className="mt-2 flex gap-2">
+                            <button
+                              onClick={() => handleDeleteRegularGroupClass(row.id)}
+                              className="rounded bg-rose-50 px-2 py-1 text-xs text-rose-700"
+                            >
+                              삭제
+                            </button>
+                          </div>
+                        </div>
+                      )
+                    })
+                  )}
+                </div>
+              </div>
+            </div>
+          </>
         ) : null}
 
         {tab === 'summary' ? (
