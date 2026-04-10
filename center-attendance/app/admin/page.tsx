@@ -2563,13 +2563,6 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
             </select>
 
             <div className="flex gap-1">
-<button
-  onClick={() => window.location.href='/admin/staff-week'}
-  className="rounded-xl bg-blue-500 text-white px-3 py-2"
->
-  선생님 주간보기
-</button>
-
               <button
                 onClick={() => handleSaveSchedule(dateStr, item.hourSlot, staffId)}
                 className="flex-1 rounded bg-indigo-600 px-2 py-1 text-xs text-white"
@@ -2910,7 +2903,7 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
                       viewMode === 'staff' ? 'bg-indigo-500 text-white' : 'bg-slate-200 text-slate-700'
                     }`}
                   >
-                    
+                    선생님별 보기
                   </button>
 
                   <button
