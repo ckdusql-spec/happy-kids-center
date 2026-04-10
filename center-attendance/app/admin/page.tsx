@@ -2898,7 +2898,7 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
                   </button>
 
                   <button
-                    onClick={() => setViewMode('staff')}
+                    onClick={() => { window.location.href = '/admin/staff-week' }}
                     className={`rounded-xl px-4 py-2 text-sm font-medium ${
                       viewMode === 'staff' ? 'bg-indigo-500 text-white' : 'bg-slate-200 text-slate-700'
                     }`}
@@ -2937,9 +2937,7 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
                     value={viewMode === 'staff' ? toDateString(weekBaseDate) : dailyDate}
                     onChange={(e) => {
                       if (viewMode === 'staff') {
-                        const picked = new Date(e.target.value)
-                        setWeekBaseDate(picked)
-                        setDailyDate(toDateString(picked))
+                        setWeekBaseDate(new Date(e.target.value))
                       } else {
                         setDailyDate(e.target.value)
                       }
@@ -2954,7 +2952,6 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
                           const d = new Date(weekBaseDate)
                           d.setDate(d.getDate() - 7)
                           setWeekBaseDate(d)
-                          setDailyDate(toDateString(d))
                         } else {
                           const d = new Date(dailyDate)
                           d.setDate(d.getDate() - 1)
@@ -2972,7 +2969,6 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
                           const d = new Date(weekBaseDate)
                           d.setDate(d.getDate() + 7)
                           setWeekBaseDate(d)
-                          setDailyDate(toDateString(d))
                         } else {
                           const d = new Date(dailyDate)
                           d.setDate(d.getDate() + 1)
@@ -3014,7 +3010,7 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
                       <tr>
                         <th className="border bg-slate-100 px-1 py-2">시간</th>
 
-                        {viewMode === 'staff' && selectedStaff ? (
+                        {false && selectedStaff ? (
                           weekDates.map((date, idx) => (
                             <th
                               key={`staff-${idx}`}
@@ -3050,7 +3046,7 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
                             {hourSlot}
                           </td>
 
-                          {viewMode === 'staff' && selectedStaff
+                          {false && selectedStaff
                             ? weekDates.map((date) => {
                                 const dateStr = toDateString(date)
                                 const items = buildDisplayItems(dateStr, hourSlot, Number(selectedStaff.id))
@@ -3381,8 +3377,8 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
                   </table>                </div>
 
                 <div className="space-y-4 md:hidden">
-                  {viewMode === 'staff' && selectedStaff
-                    ? weekDates.map((date) => renderMobileDayCard(date, Number(selectedStaff.id)))
+                  {false && selectedStaff
+                    ? [renderMobileDayCard(new Date(dailyDate), Number(selectedStaff.id))]
                     : allViewStaffs.map((staff) =>
                         renderMobileDayCard(new Date(dailyDate), Number(staff.id))
                       )}
