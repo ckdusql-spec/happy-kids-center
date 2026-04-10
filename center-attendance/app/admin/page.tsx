@@ -785,6 +785,7 @@ export default function AdminPage() {
   })
 
   const weekDates = useMemo(() => buildWeekDates(weekBaseDate), [weekBaseDate])
+  const staffWeekDates = weekDates
   const hourSlots = useMemo(() => getHourSlots(), [])
   const employeeStaffs = useMemo(
     () => staffs.filter((s) => s.role === 'employee' && s.is_active),
@@ -3012,7 +3013,10 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
 
                         {viewMode === 'staff' && selectedStaff ? (
                           weekDates.map((date, idx) => (
-                            <th key={`staff-${idx}`} className="min-w-[150px] border bg-slate-100 px-1 py-2">
+                            <th
+                              key={`staff-${idx}`}
+                              className="min-w-[150px] border bg-slate-100 px-1 py-2"
+                            >
                               <div className="text-sm font-semibold leading-tight">
                                 {['월', '화', '수', '목', '금', '토'][idx]} {toShortMonthDay(date)}
                               </div>
@@ -3025,7 +3029,7 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
                           allViewStaffs.map((staff) => (
                             <th
                               key={`all-${dailyDate}-${staff.id}`}
-                              className="min-w-[170px] border bg-slate-100 px-1 py-2"
+                              className="w-[150px] border bg-slate-100 px-1 py-2"
                             >
                               <div className="text-sm font-semibold leading-tight">{dailyDate}</div>
                               <div className="mt-1 text-xs font-normal leading-tight text-slate-500">
@@ -3044,7 +3048,7 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
                           </td>
 
                           {viewMode === 'staff' && selectedStaff
-                            ? weekDates.map((date) => {
+                            ? staffWeekDates.map((date) => {
                                 const dateStr = toDateString(date)
                                 const items = buildDisplayItems(dateStr, hourSlot, Number(selectedStaff.id))
                                 const isEditing =
@@ -3163,7 +3167,7 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
 
                                         <div className="flex gap-1">
                                           <button
-                                            onClick={() => handleSaveSchedule(dateStr, hourSlot, Number(selectedStaff.id))}
+                                            onClick={() => { if (!selectedStaff) return; handleSaveSchedule(dateStr, hourSlot, Number(selectedStaff.id)) }}
                                             className="flex-1 rounded bg-indigo-600 px-2 py-1 text-xs text-white"
                                           >
                                             저장
@@ -3184,7 +3188,7 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
                                             setEditingCell({
                                               date: dateStr,
                                               hour: hourSlot,
-                                              staffId: Number(selectedStaff.id),
+                                              staffId: Number(selectedStaff?.id ?? 0),
                                             })
                                             setEditingEntryId(null)
                                             setEditingGroupId(null)
@@ -3202,13 +3206,13 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
                                           + 추가
                                         </button>
 
-                                        {items.length === 0 ? null : items.map((item) => renderScheduleCard(item, dateStr, Number(selectedStaff.id)))}
+                                        {items.length === 0 ? null : items.map((item) => renderScheduleCard(item, dateStr, Number(selectedStaff?.id ?? 0)))}
                                       </div>
                                     )}
                                   </td>
                                 )
                               })
-                                                        : allViewStaffs.map((staff) => {
+                            : allViewStaffs.map((staff) => {
                                 const dateStr = dailyDate
                                 const items = buildDisplayItems(dateStr, hourSlot, Number(staff.id))
                                 const isEditing =
@@ -3219,7 +3223,7 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
                                 return (
                                   <td
                                     key={`all-${staff.id}-${dateStr}-${hourSlot}`}
-                                    className="min-w-[170px] border px-1 py-1 align-top"
+                                    className="w-[150px] border px-1 py-1 align-top"
                                   >
                                     {isEditing ? (
                                       <div className="min-h-[72px] space-y-2">
