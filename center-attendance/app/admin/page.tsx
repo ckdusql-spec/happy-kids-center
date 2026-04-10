@@ -3379,7 +3379,7 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
 
                 <div className="space-y-4 md:hidden">
                   {viewMode === 'staff' && selectedStaff
-                    ? [renderMobileDayCard(new Date(dailyDate), Number(selectedStaff.id))]
+                    ? weekDates.map((date) => renderMobileDayCard(date, Number(selectedStaff.id)))
                     : allViewStaffs.map((staff) =>
                         renderMobileDayCard(new Date(dailyDate), Number(staff.id))
                       )}
