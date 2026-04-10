@@ -3439,50 +3439,75 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
                   </div>
                 </div>
 
-                <div className="space-y-2 rounded-xl border p-3">
+                <div className="space-y-3 rounded-xl border p-3">
                   <div className="font-medium">단가 입력</div>
-                  <label className="block text-sm">일반</label>
-                  <input
-                    value={childForm.basePrice}
-                    onChange={(e) => setChildForm((p) => ({ ...p, basePrice: e.target.value }))}
-                    className="w-full rounded-xl border px-3 py-2"
-                  />
-                  <label className="block text-sm">디딤</label>
-                  <input
-                    value={childForm.didimPrice}
-                    onChange={(e) => setChildForm((p) => ({ ...p, didimPrice: e.target.value }))}
-                    className="w-full rounded-xl border px-3 py-2"
-                  />
-                  <label className="block text-sm">아청심1</label>
-                  <input
-                    value={childForm.achungsim1Price}
-                    onChange={(e) => setChildForm((p) => ({ ...p, achungsim1Price: e.target.value }))}
-                    className="w-full rounded-xl border px-3 py-2"
-                  />
-                  <label className="block text-sm">아청심2</label>
-                  <input
-                    value={childForm.achungsim2Price}
-                    onChange={(e) => setChildForm((p) => ({ ...p, achungsim2Price: e.target.value }))}
-                    className="w-full rounded-xl border px-3 py-2"
-                  />
-                  <label className="block text-sm">드림스타트</label>
-                  <input
-                    value={childForm.dreamStartPrice}
-                    onChange={(e) => setChildForm((p) => ({ ...p, dreamStartPrice: e.target.value }))}
-                    className="w-full rounded-xl border px-3 py-2"
-                  />
-                  <label className="block text-sm">배움</label>
-                  <input
-                    value={childForm.baeumPrice}
-                    onChange={(e) => setChildForm((p) => ({ ...p, baeumPrice: e.target.value }))}
-                    className="w-full rounded-xl border px-3 py-2"
-                  />
-                  <label className="block text-sm">메모</label>
-                  <input
-                    value={childForm.notes}
-                    onChange={(e) => setChildForm((p) => ({ ...p, notes: e.target.value }))}
-                    className="w-full rounded-xl border px-3 py-2"
-                  />
+
+                  <div className="grid grid-cols-3 gap-2">
+                    <div>
+                      <label className="mb-1 block text-sm">일반</label>
+                      <input
+                        value={childForm.basePrice}
+                        onChange={(e) => setChildForm((p) => ({ ...p, basePrice: e.target.value }))}
+                        className="w-full rounded-xl border px-3 py-2"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="mb-1 block text-sm">디딤</label>
+                      <input
+                        value={childForm.didimPrice}
+                        onChange={(e) => setChildForm((p) => ({ ...p, didimPrice: e.target.value }))}
+                        className="w-full rounded-xl border px-3 py-2"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="mb-1 block text-sm">드림스타트</label>
+                      <input
+                        value={childForm.dreamStartPrice}
+                        onChange={(e) => setChildForm((p) => ({ ...p, dreamStartPrice: e.target.value }))}
+                        className="w-full rounded-xl border px-3 py-2"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-2">
+                    <div>
+                      <label className="mb-1 block text-sm">아청심1</label>
+                      <input
+                        value={childForm.achungsim1Price}
+                        onChange={(e) => setChildForm((p) => ({ ...p, achungsim1Price: e.target.value }))}
+                        className="w-full rounded-xl border px-3 py-2"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="mb-1 block text-sm">아청심2</label>
+                      <input
+                        value={childForm.achungsim2Price}
+                        onChange={(e) => setChildForm((p) => ({ ...p, achungsim2Price: e.target.value }))}
+                        className="w-full rounded-xl border px-3 py-2"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="mb-1 block text-sm">배움</label>
+                      <input
+                        value={childForm.baeumPrice}
+                        onChange={(e) => setChildForm((p) => ({ ...p, baeumPrice: e.target.value }))}
+                        className="w-full rounded-xl border px-3 py-2"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="mb-1 block text-sm">메모</label>
+                    <input
+                      value={childForm.notes}
+                      onChange={(e) => setChildForm((p) => ({ ...p, notes: e.target.value }))}
+                      className="w-full rounded-xl border px-3 py-2"
+                    />
+                  </div>
                 </div>
 
                 <label className="flex items-center gap-2">
