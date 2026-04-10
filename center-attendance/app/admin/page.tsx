@@ -247,6 +247,11 @@ function toDateString(date: Date) {
   return `${y}-${m}-${d}`
 }
 
+function parseLocalDate(value: string) {
+  const [y, m, d] = value.split('-').map(Number)
+  return new Date(y, (m || 1) - 1, d || 1)
+}
+
 function toShortMonthDay(date: Date) {
   return `${date.getMonth() + 1}/${date.getDate()}`
 }
@@ -2938,7 +2943,9 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
                     value={viewMode === 'staff' ? toDateString(weekBaseDate) : dailyDate}
                     onChange={(e) => {
                       if (viewMode === 'staff') {
-                        setWeekBaseDate(new Date(e.target.value))
+                        const picked = parseLocalDate(e.target.value)
+                        setWeekBaseDate(picked)
+                        setDailyDate(toDateString(picked))
                       } else {
                         setDailyDate(e.target.value)
                       }
@@ -2953,6 +2960,7 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
                           const d = new Date(weekBaseDate)
                           d.setDate(d.getDate() - 7)
                           setWeekBaseDate(d)
+                          setDailyDate(toDateString(d))
                         } else {
                           const d = new Date(dailyDate)
                           d.setDate(d.getDate() - 1)
@@ -2970,6 +2978,7 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
                           const d = new Date(weekBaseDate)
                           d.setDate(d.getDate() + 7)
                           setWeekBaseDate(d)
+                          setDailyDate(toDateString(d))
                         } else {
                           const d = new Date(dailyDate)
                           d.setDate(d.getDate() + 1)
