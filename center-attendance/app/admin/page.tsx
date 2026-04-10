@@ -701,7 +701,6 @@ export default function AdminPage() {
   const [scheduleChildId, setScheduleChildId] = useState<number | ''>('')
   const [selectedMinute, setSelectedMinute] = useState('00')
   const [selectedVoucher, setSelectedVoucher] = useState('')
-  const [scheduleMemo, setScheduleMemo] = useState('')
   const [isGroupLesson, setIsGroupLesson] = useState(false)
   const [groupName, setGroupName] = useState('')
   const [selectedGroupChildIds, setSelectedGroupChildIds] = useState<number[]>([])
@@ -2938,7 +2937,9 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
                     value={viewMode === 'staff' ? toDateString(weekBaseDate) : dailyDate}
                     onChange={(e) => {
                       if (viewMode === 'staff') {
-                        setWeekBaseDate(new Date(e.target.value))
+                        const picked = new Date(e.target.value)
+                        setWeekBaseDate(picked)
+                        setDailyDate(toDateString(picked))
                       } else {
                         setDailyDate(e.target.value)
                       }
@@ -2953,6 +2954,7 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
                           const d = new Date(weekBaseDate)
                           d.setDate(d.getDate() - 7)
                           setWeekBaseDate(d)
+                          setDailyDate(toDateString(d))
                         } else {
                           const d = new Date(dailyDate)
                           d.setDate(d.getDate() - 1)
@@ -2970,6 +2972,7 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
                           const d = new Date(weekBaseDate)
                           d.setDate(d.getDate() + 7)
                           setWeekBaseDate(d)
+                          setDailyDate(toDateString(d))
                         } else {
                           const d = new Date(dailyDate)
                           d.setDate(d.getDate() + 1)
@@ -3379,7 +3382,7 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
 
                 <div className="space-y-4 md:hidden">
                   {viewMode === 'staff' && selectedStaff
-                    ? [renderMobileDayCard(new Date(dailyDate), Number(selectedStaff.id))]
+                    ? weekDates.map((date) => renderMobileDayCard(date, Number(selectedStaff.id)))
                     : allViewStaffs.map((staff) =>
                         renderMobileDayCard(new Date(dailyDate), Number(staff.id))
                       )}
