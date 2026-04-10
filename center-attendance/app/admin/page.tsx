@@ -247,11 +247,6 @@ function toDateString(date: Date) {
   return `${y}-${m}-${d}`
 }
 
-function parseLocalDate(value: string) {
-  const [y, m, d] = value.split('-').map(Number)
-  return new Date(y, (m || 1) - 1, d || 1)
-}
-
 function toShortMonthDay(date: Date) {
   return `${date.getMonth() + 1}/${date.getDate()}`
 }
@@ -706,6 +701,7 @@ export default function AdminPage() {
   const [scheduleChildId, setScheduleChildId] = useState<number | ''>('')
   const [selectedMinute, setSelectedMinute] = useState('00')
   const [selectedVoucher, setSelectedVoucher] = useState('')
+  const [scheduleMemo, setScheduleMemo] = useState('')
   const [isGroupLesson, setIsGroupLesson] = useState(false)
   const [groupName, setGroupName] = useState('')
   const [selectedGroupChildIds, setSelectedGroupChildIds] = useState<number[]>([])
@@ -790,7 +786,6 @@ export default function AdminPage() {
   })
 
   const weekDates = useMemo(() => buildWeekDates(weekBaseDate), [weekBaseDate])
-  const staffWeekDates = weekDates
   const hourSlots = useMemo(() => getHourSlots(), [])
   const employeeStaffs = useMemo(
     () => staffs.filter((s) => s.role === 'employee' && s.is_active),
@@ -2943,9 +2938,7 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
                     value={viewMode === 'staff' ? toDateString(weekBaseDate) : dailyDate}
                     onChange={(e) => {
                       if (viewMode === 'staff') {
-                        const picked = parseLocalDate(e.target.value)
-                        setWeekBaseDate(picked)
-                        setDailyDate(toDateString(picked))
+                        setWeekBaseDate(new Date(e.target.value))
                       } else {
                         setDailyDate(e.target.value)
                       }
@@ -2960,7 +2953,6 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
                           const d = new Date(weekBaseDate)
                           d.setDate(d.getDate() - 7)
                           setWeekBaseDate(d)
-                          setDailyDate(toDateString(d))
                         } else {
                           const d = new Date(dailyDate)
                           d.setDate(d.getDate() - 1)
@@ -2978,7 +2970,6 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
                           const d = new Date(weekBaseDate)
                           d.setDate(d.getDate() + 7)
                           setWeekBaseDate(d)
-                          setDailyDate(toDateString(d))
                         } else {
                           const d = new Date(dailyDate)
                           d.setDate(d.getDate() + 1)
@@ -3057,7 +3048,7 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
                           </td>
 
                           {viewMode === 'staff' && selectedStaff
-                            ? staffWeekDates.map((date) => {
+                            ? weekDates.map((date) => {
                                 const dateStr = toDateString(date)
                                 const items = buildDisplayItems(dateStr, hourSlot, Number(selectedStaff.id))
                                 const isEditing =
@@ -3176,7 +3167,7 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
 
                                         <div className="flex gap-1">
                                           <button
-                                            onClick={() => { if (!selectedStaff) return; handleSaveSchedule(dateStr, hourSlot, Number(selectedStaff.id)) }}
+                                            onClick={() => handleSaveSchedule(dateStr, hourSlot, Number(selectedStaff.id))}
                                             className="flex-1 rounded bg-indigo-600 px-2 py-1 text-xs text-white"
                                           >
                                             저장
@@ -3197,7 +3188,7 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
                                             setEditingCell({
                                               date: dateStr,
                                               hour: hourSlot,
-                                              staffId: Number(selectedStaff?.id ?? 0),
+                                              staffId: Number(selectedStaff.id),
                                             })
                                             setEditingEntryId(null)
                                             setEditingGroupId(null)
@@ -3215,7 +3206,7 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
                                           + 추가
                                         </button>
 
-                                        {items.length === 0 ? null : items.map((item) => renderScheduleCard(item, dateStr, Number(selectedStaff?.id ?? 0)))}
+                                        {items.length === 0 ? null : items.map((item) => renderScheduleCard(item, dateStr, Number(selectedStaff.id)))}
                                       </div>
                                     )}
                                   </td>
@@ -3388,7 +3379,7 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
 
                 <div className="space-y-4 md:hidden">
                   {viewMode === 'staff' && selectedStaff
-                    ? weekDates.map((date) => renderMobileDayCard(date, Number(selectedStaff.id)))
+                    ? [renderMobileDayCard(new Date(dailyDate), Number(selectedStaff.id))]
                     : allViewStaffs.map((staff) =>
                         renderMobileDayCard(new Date(dailyDate), Number(staff.id))
                       )}
