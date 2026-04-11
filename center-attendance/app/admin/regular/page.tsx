@@ -903,7 +903,7 @@ export default function AdminRegularPage() {
     setRegularGroupChildInputs(Array(6).fill('').map((_, idx) => childNames[idx] ?? ''))
   }
 
-  return (
+  return 
     <main className="min-h-screen bg-slate-50 p-3 md:p-6">
       <div className="relative mx-auto max-w-7xl rounded-[28px] border border-white/70 bg-white/85 p-4 shadow-[0_20px_60px_rgba(0,0,0,0.08)] backdrop-blur md:p-6">
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
