@@ -662,7 +662,108 @@ export default function AdminRegularPage() {
       setMessage(err?.message ?? '정기수업 삭제 실패')
     }
   }
+async function upsertGroupRegularSchedules(
+  ruleId: number,
+  payload: {
+    teacherId: number
+    teacherName: string
+    weekday: number
+    timeSlot: string
+    minuteSlot: number
+    startDate: string
+    endDate: string
+    groupName: string
+    note: string
+    childIds: number[]
+  }
+) {
+  const { data: existingRows, error: existingError } = await supabase
+    .from('schedule_entries')
+    .select('*')
+    .eq('group_id', String(ruleId))
+    .eq('is_group', true)
+    .eq('is_active', true)
 
+  if (existingError) throw existingError
+
+  const { loggedRows, unloggedRows } = await splitLoggedSchedules(
+    (existingRows ?? []) as ScheduleEntryRow[]
+  )
+
+  if (unloggedRows.length > 0) {
+    const { error } = await supabase
+      .from('schedule_entries')
+      .update({ is_active: false })
+      .in('id', unloggedRows.map((r) => r.id))
+
+    if (error) throw error
+  }
+
+  const keepKeys = new Set(
+    loggedRows.map((row) =>
+      buildLogicalAttendanceKey({
+        classDate: row.date,
+        minuteTotal: getEntryMinuteTotal(row),
+        staffId: Number(row.teacher_id),
+        childId: Number(row.child_id),
+        isGroup: true,
+        groupId: String(ruleId),
+      })
+    )
+  )
+
+  const dates = getDateRangeMatchingWeekday(
+    payload.startDate,
+    payload.endDate,
+    payload.weekday
+  )
+
+  const rows = dates
+    .flatMap((date) =>
+      payload.childIds.map((childId) => ({
+        date,
+        time_slot: payload.timeSlot,
+        minute_slot: payload.minuteSlot,
+        room_number: 1,
+        teacher_id: payload.teacherId,
+        teacher_name: payload.teacherName,
+        class_type: 'group',
+        child_id: childId,
+        voucher_type: '그룹수업',
+        status: 'scheduled',
+        note: `${buildRegularGroupNoteTag(ruleId)}${
+          payload.note ? ` ${payload.note}` : ''
+        }`,
+        is_active: true,
+        is_group: true,
+        group_id: String(ruleId),
+        group_name: payload.groupName,
+      }))
+    )
+    .filter((row) => {
+      const key = buildLogicalAttendanceKey({
+        classDate: row.date,
+        minuteTotal:
+          Number(row.time_slot.slice(0, 2)) * 60 + Number(row.minute_slot ?? 0),
+        staffId: Number(row.teacher_id),
+        childId: Number(row.child_id),
+        isGroup: true,
+        groupId: String(ruleId),
+      })
+      return !keepKeys.has(key)
+    })
+
+  if (rows.length > 0) {
+    const { error } = await supabase.from('schedule_entries').insert(rows)
+    if (error) throw error
+  }
+
+  return {
+    loggedRows,
+    unloggedRows,
+    insertedCount: rows.length,
+  }
+}
 
   async function upsertGroupRegularSchedules(ruleId: number, payload: {
     teacherId: number
