@@ -2841,8 +2841,8 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
               월정산
             </button>
             <button
-              onClick={() => setTab('regular')}
-              className={`rounded-xl px-4 py-2 ${tab === 'regular' ? 'bg-black text-white' : 'bg-slate-200'}`}
+              onClick={() => { window.location.href = '/admin/regular' }}
+              className="rounded-xl bg-black px-4 py-2 text-white"
             >
               정기수업관리
             </button>
