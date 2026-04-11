@@ -1128,5 +1128,53 @@ export default function AdminRegularPage() {
         )}
       </div>
     </main>
-  )
+  ){/* ======================= */
+/* 정기 그룹수업 */
+/* ======================= */}
+
+<div className="mt-8 grid gap-6 md:grid-cols-2">
+  
+  {/* 등록 */}
+  <div className="rounded-2xl border p-4">
+    <h2 className="mb-3 text-xl font-bold">정기 그룹수업 등록</h2>
+
+    <input
+      value={regularGroupForm.groupName}
+      onChange={(e) =>
+        setRegularGroupForm((p) => ({ ...p, groupName: e.target.value }))
+      }
+      placeholder="그룹명"
+      className="w-full rounded-xl border px-3 py-2 mb-2"
+    />
+
+    <button
+      onClick={handleSaveRegularGroupClass}
+      className="w-full rounded-xl bg-black py-2 text-white"
+    >
+      {regularGroupForm.id ? '수정' : '등록'}
+    </button>
+  </div>
+
+  {/* 목록 */}
+  <div className="rounded-2xl border p-4">
+    <h2 className="mb-3 text-xl font-bold">정기 그룹수업 목록</h2>
+
+    <div className="max-h-[400px] overflow-y-auto">
+      {filteredRegularGroupClasses.map((row) => (
+        <div key={row.id} className="border p-2 mb-2">
+
+          <div>{row.group_name}</div>
+
+          <button
+            onClick={() => handleDeleteRegularGroupClass(row.id)}
+            className="text-red-500 text-sm"
+          >
+            삭제
+          </button>
+        </div>
+      ))}
+    </div>
+  </div>
+
+</div>
 }
