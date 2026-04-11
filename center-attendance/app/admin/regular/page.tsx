@@ -463,6 +463,18 @@ export default function AdminRegularPage() {
 
       const endDate = regularForm.endDate || addYearsDate(regularForm.startDate, 5)
 
+      const result = await upsertSingleRegularSchedules(ruleId, {
+  childId: Number(regularForm.childId),
+  teacherId: Number(regularForm.teacherId),
+  teacherName,
+  weekday: Number(regularForm.weekday),
+  timeSlot: regularForm.timeSlot,
+  minuteSlot: Number(regularForm.minuteSlot),
+  startDate: regularForm.startDate,
+  endDate,
+  voucherType: regularForm.voucherType,
+  note: regularForm.note || '',
+})
       const payload = {
         child_id: Number(regularForm.childId),
         teacher_id: Number(regularForm.teacherId),
@@ -862,99 +874,138 @@ async function upsertGroupRegularSchedules(
     }))
   }
 
-  async function handleSaveRegularGroupClass() {
-    try {
-      if (!regularGroupForm.teacherId || regularGroupForm.weekday === '' || !regularGroupForm.startDate || !regularGroupForm.groupName.trim()) {
-        setMessage('그룹명, 선생님, 요일, 시작일을 확인하세요.')
-        return
-      }
-      if (regularGroupForm.childIds.length === 0) {
-        setMessage('그룹 학생을 1명 이상 선택하세요.')
-        return
-      }
-
-      const endDate = regularGroupForm.endDate || addYearsDate(regularGroupForm.startDate, 5)
-      const payload = {
-        teacher_id: Number(regularGroupForm.teacherId),
-        weekday: Number(regularGroupForm.weekday),
-        time_slot: regularGroupForm.timeSlot,
-        minute_slot: Number(regularGroupForm.minuteSlot),
-        start_date: regularGroupForm.startDate,
-        end_date: endDate,
-        group_name: regularGroupForm.groupName,
-        note: regularGroupForm.note || null,
-        is_active: regularGroupForm.isActive,
-      }
-
-      let ruleId = regularGroupForm.id
-      if (regularGroupForm.id) {
-        const { error } = await supabase.from('regular_group_classes').update(payload).eq('id', regularGroupForm.id)
-        if (error) throw error
-        const { error: memberOffError } = await supabase
-          .from('regular_group_class_members')
-          .update({ is_active: false })
-          .eq('regular_group_class_id', regularGroupForm.id)
-        if (memberOffError) throw memberOffError
-      } else {
-        const { data, error } = await supabase.from('regular_group_classes').insert(payload).select('id').single()
-        if (error) throw error
-        ruleId = data?.id ?? null
-      }
-
-      if (!ruleId) {
-        setMessage('정기 그룹수업 rule id를 찾지 못했습니다.')
-        return
-      }
-
-      const memberRows = regularGroupForm.childIds.map((childId) => ({
-        regular_group_class_id: Number(ruleId),
-        child_id: Number(childId),
-        is_active: true,
-      }))
-      const { error: memberInsertError } = await supabase.from('regular_group_class_members').insert(memberRows)
-      if (memberInsertError) throw memberInsertError
-
-      const teacher = staffs.find((s) => Number(s.id) === Number(regularGroupForm.teacherId))
-      const teacherName = teacher?.name ?? ''
-      const result = await upsertGroupRegularSchedules(ruleId, {
-        teacherId: Number(regularGroupForm.teacherId),
-        teacherName,
-        weekday: Number(regularGroupForm.weekday),
-        timeSlot: regularGroupForm.timeSlot,
-        minuteSlot: Number(regularGroupForm.minuteSlot),
-        startDate: regularGroupForm.startDate,
-        endDate,
-        groupName: regularGroupForm.groupName,
-        note: regularGroupForm.note || '',
-        childIds: regularGroupForm.childIds,
-      })
-
-      await Promise.all([loadRegularGroupClasses(), loadRegularGroupMembers()])
-      setRegularGroupForm({
-        id: null,
-        teacherId: '',
-        weekday: '',
-        timeSlot: '09:00',
-        minuteSlot: '00',
-        startDate: toDateString(new Date()),
-        endDate: addYearsDate(toDateString(new Date()), 5),
-        groupName: '',
-        note: '',
-        isActive: true,
-        childIds: [],
-      })
-      setRegularGroupTeacherQuery('')
-      setRegularGroupChildInputs(Array(6).fill(''))
-
-      setMessage(
-        regularGroupForm.id
-          ? `정기 그룹수업이 수정되었습니다. 출결체크 ${result.loggedRows.length}건은 유지되고 미체크 일정이 실시간 반영되었습니다.`
-          : '정기 그룹수업이 등록되었습니다.'
-      )
-    } catch (err: any) {
-      setMessage(err?.message ?? '정기 그룹수업 저장 실패')
+async function handleSaveRegularGroupClass() {
+  try {
+    if (!regularGroupForm.teacherId) {
+      setMessage('선생님을 선택하세요.')
+      return
     }
+
+    if (regularGroupForm.weekday === '') {
+      setMessage('요일을 선택하세요.')
+      return
+    }
+
+    if (!regularGroupForm.startDate) {
+      setMessage('시작일을 선택하세요.')
+      return
+    }
+
+    if (!regularGroupForm.groupName.trim()) {
+      setMessage('그룹명을 입력하세요.')
+      return
+    }
+
+    if (regularGroupForm.childIds.length === 0) {
+      setMessage('그룹 학생을 1명 이상 선택하세요.')
+      return
+    }
+
+    const endDate =
+      regularGroupForm.endDate || addYearsDate(regularGroupForm.startDate, 5)
+
+    const payload = {
+      teacher_id: Number(regularGroupForm.teacherId),
+      weekday: Number(regularGroupForm.weekday),
+      time_slot: regularGroupForm.timeSlot,
+      minute_slot: Number(regularGroupForm.minuteSlot),
+      start_date: regularGroupForm.startDate,
+      end_date: endDate,
+      group_name: regularGroupForm.groupName,
+      note: regularGroupForm.note || null,
+      is_active: regularGroupForm.isActive,
+    }
+
+    let ruleId = regularGroupForm.id
+
+    if (regularGroupForm.id) {
+      const { error } = await supabase
+        .from('regular_group_classes')
+        .update(payload)
+        .eq('id', regularGroupForm.id)
+
+      if (error) throw error
+
+      const { error: memberOffError } = await supabase
+        .from('regular_group_class_members')
+        .update({ is_active: false })
+        .eq('regular_group_class_id', regularGroupForm.id)
+
+      if (memberOffError) throw memberOffError
+    } else {
+      const { data, error } = await supabase
+        .from('regular_group_classes')
+        .insert(payload)
+        .select('id')
+        .single()
+
+      if (error) throw error
+      ruleId = data?.id ?? null
+    }
+
+    if (!ruleId) {
+      setMessage('정기 그룹수업 rule id를 찾지 못했습니다.')
+      return
+    }
+
+    const memberRows = regularGroupForm.childIds.map((childId) => ({
+      regular_group_class_id: Number(ruleId),
+      child_id: Number(childId),
+      is_active: true,
+    }))
+
+    const { error: memberInsertError } = await supabase
+      .from('regular_group_class_members')
+      .insert(memberRows)
+
+    if (memberInsertError) throw memberInsertError
+
+    const teacher = staffs.find(
+      (s) => Number(s.id) === Number(regularGroupForm.teacherId)
+    )
+    const teacherName = teacher?.name ?? ''
+
+    const result = await upsertGroupRegularSchedules(ruleId, {
+      teacherId: Number(regularGroupForm.teacherId),
+      teacherName,
+      weekday: Number(regularGroupForm.weekday),
+      timeSlot: regularGroupForm.timeSlot,
+      minuteSlot: Number(regularGroupForm.minuteSlot),
+      startDate: regularGroupForm.startDate,
+      endDate,
+      groupName: regularGroupForm.groupName,
+      note: regularGroupForm.note || '',
+      childIds: regularGroupForm.childIds,
+    })
+
+    await Promise.all([loadRegularGroupClasses(), loadRegularGroupMembers()])
+
+    setRegularGroupForm({
+      id: null,
+      teacherId: '',
+      weekday: '',
+      timeSlot: '09:00',
+      minuteSlot: '00',
+      startDate: toDateString(new Date()),
+      endDate: addYearsDate(toDateString(new Date()), 5),
+      groupName: '',
+      note: '',
+      isActive: true,
+      childIds: [],
+    })
+
+    setRegularGroupTeacherQuery('')
+    setRegularGroupChildInputs(Array(6).fill(''))
+
+    setMessage(
+      regularGroupForm.id
+        ? `정기 그룹수업이 수정되었습니다. 출결체크 ${result.loggedRows.length}건은 유지되고 미출결 일정이 자동 갱신되었습니다.`
+        : '정기 그룹수업이 등록되었습니다.'
+    )
+  } catch (err: any) {
+    setMessage(err?.message ?? '정기 그룹수업 저장 실패')
   }
+}
 
   async function handleDeleteRegularGroupClass(id: number) {
     try {
