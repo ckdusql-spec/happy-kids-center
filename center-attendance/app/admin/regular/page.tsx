@@ -35,6 +35,27 @@ type RegularClassRow = {
   is_active: boolean
 }
 
+
+type RegularGroupClassRow = {
+  id: number
+  teacher_id: number
+  weekday: number
+  time_slot: string
+  minute_slot: number
+  start_date: string
+  end_date: string | null
+  group_name: string
+  note?: string | null
+  is_active: boolean
+}
+
+type RegularGroupClassMemberRow = {
+  id: number
+  regular_group_class_id: number
+  child_id: number
+  is_active: boolean
+}
+
 type ScheduleEntryRow = {
   id: string
   date: string
@@ -73,6 +94,21 @@ type RegularClassForm = {
   voucherType: string
   note: string
   isActive: boolean
+}
+
+
+type RegularGroupClassForm = {
+  id: number | null
+  teacherId: number | ''
+  weekday: number | ''
+  timeSlot: string
+  minuteSlot: string
+  startDate: string
+  endDate: string
+  groupName: string
+  note: string
+  isActive: boolean
+  childIds: number[]
 }
 
 function toDateString(date: Date) {
@@ -115,6 +151,10 @@ function getWeekdayLabel(weekday: number) {
 function buildRegularNoteTag(ruleId: number) {
   return `[정기수업:${ruleId}]`
 }
+function buildRegularGroupNoteTag(ruleId: number) {
+  return `[정기그룹:${ruleId}]`
+}
+
 
 function getDateRangeMatchingWeekday(startDate: string, endDate: string, weekday: number) {
   const result: string[] = []
@@ -179,10 +219,15 @@ export default function AdminRegularPage() {
   const [children, setChildren] = useState<ChildRow[]>([])
   const [staffs, setStaffs] = useState<StaffRow[]>([])
   const [regularClasses, setRegularClasses] = useState<RegularClassRow[]>([])
+  const [regularGroupClasses, setRegularGroupClasses] = useState<RegularGroupClassRow[]>([])
+  const [regularGroupMembers, setRegularGroupMembers] = useState<RegularGroupClassMemberRow[]>([])
 
   const [regularSearch, setRegularSearch] = useState('')
   const [regularChildQuery, setRegularChildQuery] = useState('')
   const [regularTeacherQuery, setRegularTeacherQuery] = useState('')
+  const [regularGroupSearch, setRegularGroupSearch] = useState('')
+  const [regularGroupTeacherQuery, setRegularGroupTeacherQuery] = useState('')
+  const [regularGroupChildInputs, setRegularGroupChildInputs] = useState<string[]>(Array(6).fill(''))
 
   const [regularForm, setRegularForm] = useState<RegularClassForm>({
     id: null,
@@ -196,6 +241,20 @@ export default function AdminRegularPage() {
     voucherType: '',
     note: '',
     isActive: true,
+  })
+
+  const [regularGroupForm, setRegularGroupForm] = useState<RegularGroupClassForm>({
+    id: null,
+    teacherId: '',
+    weekday: '',
+    timeSlot: '09:00',
+    minuteSlot: '00',
+    startDate: toDateString(new Date()),
+    endDate: addYearsDate(toDateString(new Date()), 5),
+    groupName: '',
+    note: '',
+    isActive: true,
+    childIds: [],
   })
 
   const employeeStaffs = useMemo(
@@ -216,6 +275,31 @@ export default function AdminRegularPage() {
     if (!q) return base
     return base.filter((s) => s.name.includes(q))
   }, [employeeStaffs, regularTeacherQuery])
+
+  const regularGroupTeacherCandidates = useMemo(() => {
+    const q = regularGroupTeacherQuery.trim()
+    const base = employeeStaffs
+    if (!q) return base
+    return base.filter((s) => s.name.includes(q))
+  }, [employeeStaffs, regularGroupTeacherQuery])
+
+  const regularGroupChildCandidates = useMemo(() => children.filter((c) => c.is_active), [children])
+
+  const filteredRegularGroupClasses = useMemo(() => {
+    return regularGroupClasses
+      .filter((row) => {
+        if (!row.is_active) return false
+        const staff = staffs.find((s) => Number(s.id) === Number(row.teacher_id))
+        const memberNames = regularGroupMembers
+          .filter((m) => Number(m.regular_group_class_id) === Number(row.id) && m.is_active)
+          .map((m) => children.find((c) => Number(c.id) === Number(m.child_id))?.child_name ?? '')
+          .join(', ')
+        const keyword = regularGroupSearch.trim()
+        if (!keyword) return true
+        return Boolean(row.group_name.includes(keyword) || staff?.name.includes(keyword) || memberNames.includes(keyword))
+      })
+      .sort((a, b) => a.group_name.localeCompare(b.group_name, 'ko'))
+  }, [regularGroupClasses, regularGroupMembers, children, staffs, regularGroupSearch])
 
   const filteredRegularClasses = useMemo(() => {
     return regularClasses
@@ -260,6 +344,28 @@ export default function AdminRegularPage() {
     setChildren((data ?? []) as ChildRow[])
   }
 
+  async function loadRegularGroupClasses() {
+    const { data, error } = await supabase
+      .from('regular_group_classes')
+      .select('*')
+      .order('group_name', { ascending: true })
+      .order('weekday', { ascending: true })
+      .order('time_slot', { ascending: true })
+      .order('minute_slot', { ascending: true })
+    if (error) throw error
+    setRegularGroupClasses((data ?? []) as RegularGroupClassRow[])
+  }
+
+  async function loadRegularGroupMembers() {
+    const { data, error } = await supabase
+      .from('regular_group_class_members')
+      .select('*')
+      .order('regular_group_class_id', { ascending: true })
+      .order('child_id', { ascending: true })
+    if (error) throw error
+    setRegularGroupMembers((data ?? []) as RegularGroupClassMemberRow[])
+  }
+
   async function loadRegularClasses() {
     const { data, error } = await supabase
       .from('regular_classes')
@@ -276,7 +382,7 @@ export default function AdminRegularPage() {
     try {
       setLoading(true)
       setMessage('')
-      await Promise.all([loadStaffs(), loadChildren(), loadRegularClasses()])
+      await Promise.all([loadStaffs(), loadChildren(), loadRegularClasses(), loadRegularGroupClasses(), loadRegularGroupMembers()])
     } catch (err: any) {
       setMessage(err?.message ?? '데이터 불러오기 실패')
     } finally {
@@ -555,6 +661,246 @@ export default function AdminRegularPage() {
     } catch (err: any) {
       setMessage(err?.message ?? '정기수업 삭제 실패')
     }
+  }
+
+
+  async function upsertGroupRegularSchedules(ruleId: number, payload: {
+    teacherId: number
+    teacherName: string
+    weekday: number
+    timeSlot: string
+    minuteSlot: number
+    startDate: string
+    endDate: string
+    groupName: string
+    note: string
+    childIds: number[]
+  }) {
+    const { data: existingRows, error: existingError } = await supabase
+      .from('schedule_entries')
+      .select('*')
+      .eq('group_id', String(ruleId))
+      .eq('is_group', true)
+      .eq('is_active', true)
+    if (existingError) throw existingError
+
+    const { loggedRows, unloggedRows } = await splitLoggedSchedules((existingRows ?? []) as ScheduleEntryRow[])
+
+    if (unloggedRows.length > 0) {
+      const { error } = await supabase.from('schedule_entries').update({ is_active: false }).in('id', unloggedRows.map((r) => r.id))
+      if (error) throw error
+    }
+
+    const keepKeys = new Set(
+      loggedRows.map((row) =>
+        buildLogicalAttendanceKey({
+          classDate: row.date,
+          minuteTotal: getEntryMinuteTotal(row),
+          staffId: Number(row.teacher_id),
+          childId: Number(row.child_id),
+          isGroup: true,
+          groupId: String(ruleId),
+        })
+      )
+    )
+
+    const dates = getDateRangeMatchingWeekday(payload.startDate, payload.endDate, payload.weekday)
+    const rows = dates.flatMap((date) =>
+      payload.childIds.map((childId) => ({
+        date,
+        time_slot: payload.timeSlot,
+        minute_slot: payload.minuteSlot,
+        room_number: 1,
+        teacher_id: payload.teacherId,
+        teacher_name: payload.teacherName,
+        class_type: 'group',
+        child_id: childId,
+        voucher_type: '그룹수업',
+        status: 'scheduled',
+        note: `${buildRegularGroupNoteTag(ruleId)}${payload.note ? ` ${payload.note}` : ''}`,
+        is_active: true,
+        is_group: true,
+        group_id: String(ruleId),
+        group_name: payload.groupName,
+      }))
+    ).filter((row) => {
+      const key = buildLogicalAttendanceKey({
+        classDate: row.date,
+        minuteTotal: Number(row.time_slot.slice(0, 2)) * 60 + Number(row.minute_slot ?? 0),
+        staffId: Number(row.teacher_id),
+        childId: Number(row.child_id),
+        isGroup: true,
+        groupId: String(ruleId),
+      })
+      return !keepKeys.has(key)
+    })
+
+    if (rows.length > 0) {
+      const { error } = await supabase.from('schedule_entries').insert(rows)
+      if (error) throw error
+    }
+
+    return { loggedRows, unloggedRows, insertedCount: rows.length }
+  }
+
+  function syncRegularGroupChildInput(index: number, value: string) {
+    const nextInputs = [...regularGroupChildInputs]
+    nextInputs[index] = value
+    setRegularGroupChildInputs(nextInputs)
+
+    const matchedIds = nextInputs
+      .map((name) => {
+        const matched = children.find((c) => c.is_active && getDisplayName(c) === name)
+        return matched ? matched.id : null
+      })
+      .filter((id): id is number => id != null)
+
+    setRegularGroupForm((prev) => ({
+      ...prev,
+      childIds: Array.from(new Set(matchedIds)),
+    }))
+  }
+
+  async function handleSaveRegularGroupClass() {
+    try {
+      if (!regularGroupForm.teacherId || regularGroupForm.weekday === '' || !regularGroupForm.startDate || !regularGroupForm.groupName.trim()) {
+        setMessage('그룹명, 선생님, 요일, 시작일을 확인하세요.')
+        return
+      }
+      if (regularGroupForm.childIds.length === 0) {
+        setMessage('그룹 학생을 1명 이상 선택하세요.')
+        return
+      }
+
+      const endDate = regularGroupForm.endDate || addYearsDate(regularGroupForm.startDate, 5)
+      const payload = {
+        teacher_id: Number(regularGroupForm.teacherId),
+        weekday: Number(regularGroupForm.weekday),
+        time_slot: regularGroupForm.timeSlot,
+        minute_slot: Number(regularGroupForm.minuteSlot),
+        start_date: regularGroupForm.startDate,
+        end_date: endDate,
+        group_name: regularGroupForm.groupName,
+        note: regularGroupForm.note || null,
+        is_active: regularGroupForm.isActive,
+      }
+
+      let ruleId = regularGroupForm.id
+      if (regularGroupForm.id) {
+        const { error } = await supabase.from('regular_group_classes').update(payload).eq('id', regularGroupForm.id)
+        if (error) throw error
+        const { error: memberOffError } = await supabase
+          .from('regular_group_class_members')
+          .update({ is_active: false })
+          .eq('regular_group_class_id', regularGroupForm.id)
+        if (memberOffError) throw memberOffError
+      } else {
+        const { data, error } = await supabase.from('regular_group_classes').insert(payload).select('id').single()
+        if (error) throw error
+        ruleId = data?.id ?? null
+      }
+
+      if (!ruleId) {
+        setMessage('정기 그룹수업 rule id를 찾지 못했습니다.')
+        return
+      }
+
+      const memberRows = regularGroupForm.childIds.map((childId) => ({
+        regular_group_class_id: Number(ruleId),
+        child_id: Number(childId),
+        is_active: true,
+      }))
+      const { error: memberInsertError } = await supabase.from('regular_group_class_members').insert(memberRows)
+      if (memberInsertError) throw memberInsertError
+
+      const teacher = staffs.find((s) => Number(s.id) === Number(regularGroupForm.teacherId))
+      const teacherName = teacher?.name ?? ''
+      const result = await upsertGroupRegularSchedules(ruleId, {
+        teacherId: Number(regularGroupForm.teacherId),
+        teacherName,
+        weekday: Number(regularGroupForm.weekday),
+        timeSlot: regularGroupForm.timeSlot,
+        minuteSlot: Number(regularGroupForm.minuteSlot),
+        startDate: regularGroupForm.startDate,
+        endDate,
+        groupName: regularGroupForm.groupName,
+        note: regularGroupForm.note || '',
+        childIds: regularGroupForm.childIds,
+      })
+
+      await Promise.all([loadRegularGroupClasses(), loadRegularGroupMembers()])
+      setRegularGroupForm({
+        id: null,
+        teacherId: '',
+        weekday: '',
+        timeSlot: '09:00',
+        minuteSlot: '00',
+        startDate: toDateString(new Date()),
+        endDate: addYearsDate(toDateString(new Date()), 5),
+        groupName: '',
+        note: '',
+        isActive: true,
+        childIds: [],
+      })
+      setRegularGroupTeacherQuery('')
+      setRegularGroupChildInputs(Array(6).fill(''))
+
+      setMessage(
+        regularGroupForm.id
+          ? `정기 그룹수업이 수정되었습니다. 출결체크 ${result.loggedRows.length}건은 유지되고 미체크 일정이 실시간 반영되었습니다.`
+          : '정기 그룹수업이 등록되었습니다.'
+      )
+    } catch (err: any) {
+      setMessage(err?.message ?? '정기 그룹수업 저장 실패')
+    }
+  }
+
+  async function handleDeleteRegularGroupClass(id: number) {
+    try {
+      const ok = window.confirm('정기 그룹수업을 삭제할까요? 출결체크된 일정은 유지되고 미체크 일정만 삭제됩니다.')
+      if (!ok) return
+
+      const { data: scheduleRows, error: scheduleReadError } = await supabase
+        .from('schedule_entries')
+        .select('*')
+        .eq('group_id', String(id))
+        .eq('is_group', true)
+        .eq('is_active', true)
+      if (scheduleReadError) throw scheduleReadError
+
+      const { loggedRows, unloggedRows } = await splitLoggedSchedules((scheduleRows ?? []) as ScheduleEntryRow[])
+      if (unloggedRows.length > 0) {
+        const { error } = await supabase.from('schedule_entries').update({ is_active: false }).in('id', unloggedRows.map((r) => r.id))
+        if (error) throw error
+      }
+
+      const { error } = await supabase.from('regular_group_classes').update({ is_active: false }).eq('id', id)
+      if (error) throw error
+
+      const { error: memberError } = await supabase
+        .from('regular_group_class_members')
+        .update({ is_active: false })
+        .eq('regular_group_class_id', id)
+      if (memberError) throw memberError
+
+      await Promise.all([loadRegularGroupClasses(), loadRegularGroupMembers()])
+      setMessage(
+        loggedRows.length > 0
+          ? `정기 그룹수업 규칙은 중지되었고 출결체크 ${loggedRows.length}건은 유지, 미체크 ${unloggedRows.length}건만 삭제되었습니다.`
+          : '정기 그룹수업이 삭제되었습니다.'
+      )
+    } catch (err: any) {
+      setMessage(err?.message ?? '정기 그룹수업 삭제 실패')
+    }
+  }
+
+  function setGroupChildValuesFromMembers(ruleId: number) {
+    const members = regularGroupMembers.filter((m) => Number(m.regular_group_class_id) === Number(ruleId) && m.is_active)
+    const childNames = members.map((m) => {
+      const child = children.find((c) => Number(c.id) === Number(m.child_id))
+      return child ? getDisplayName(child) : ''
+    })
+    setRegularGroupChildInputs(Array(6).fill('').map((_, idx) => childNames[idx] ?? ''))
   }
 
   return (
