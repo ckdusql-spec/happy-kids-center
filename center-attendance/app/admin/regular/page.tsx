@@ -1125,56 +1125,178 @@ export default function AdminRegularPage() {
               </div>
             </div>
           </div>
+
+            <div className="mt-8 grid gap-6 md:grid-cols-2">
+              <div className="rounded-2xl border p-4">
+                <h2 className="mb-3 text-xl font-bold">정기 그룹수업 등록 / 수정</h2>
+                <div className="space-y-3">
+                  <input
+                    value={regularGroupForm.groupName}
+                    onChange={(e) => setRegularGroupForm((p) => ({ ...p, groupName: e.target.value }))}
+                    placeholder="그룹명"
+                    className="w-full rounded-xl border px-3 py-3 md:py-2"
+                  />
+
+                  <input
+                    list="regular-group-teacher-list"
+                    value={regularGroupTeacherQuery}
+                    onChange={(e) => {
+                      const value = e.target.value
+                      setRegularGroupTeacherQuery(value)
+                      const matchedStaff = employeeStaffs.find((staff) => staff.name === value)
+                      setRegularGroupForm((p) => ({ ...p, teacherId: matchedStaff ? matchedStaff.id : '' }))
+                    }}
+                    placeholder="선생님 이름 입력 또는 선택"
+                    className="w-full rounded-xl border px-3 py-3 md:py-2"
+                  />
+                  <datalist id="regular-group-teacher-list">
+                    {regularGroupTeacherCandidates.map((staff) => (
+                      <option key={staff.id} value={staff.name} />
+                    ))}
+                  </datalist>
+
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <select
+                      value={regularGroupForm.weekday}
+                      onChange={(e) => setRegularGroupForm((p) => ({ ...p, weekday: e.target.value === '' ? '' : Number(e.target.value) }))}
+                      className="w-full rounded-xl border px-3 py-3 md:py-2"
+                    >
+                      <option value="">요일 선택</option>
+                      {[1,2,3,4,5,6].map((weekday) => (
+                        <option key={weekday} value={weekday}>{getWeekdayLabel(weekday)}</option>
+                      ))}
+                    </select>
+                    <select
+                      value={regularGroupForm.timeSlot}
+                      onChange={(e) => setRegularGroupForm((p) => ({ ...p, timeSlot: e.target.value }))}
+                      className="w-full rounded-xl border px-3 py-3 md:py-2"
+                    >
+                      {getHourSlots().map((slot) => (
+                        <option key={slot} value={slot}>{slot}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <select
+                      value={regularGroupForm.minuteSlot}
+                      onChange={(e) => setRegularGroupForm((p) => ({ ...p, minuteSlot: e.target.value }))}
+                      className="w-full rounded-xl border px-3 py-3 md:py-2"
+                    >
+                      {getMinutesOptions().map((m) => (
+                        <option key={m} value={m}>{m}분</option>
+                      ))}
+                    </select>
+                    <input
+                      type="date"
+                      value={regularGroupForm.startDate}
+                      onChange={(e) => {
+                        const nextStart = e.target.value
+                        setRegularGroupForm((p) => ({ ...p, startDate: nextStart, endDate: p.endDate || addYearsDate(nextStart, 5) }))
+                      }}
+                      className="w-full rounded-xl border px-3 py-3 md:py-2"
+                    />
+                  </div>
+
+                  <input
+                    type="date"
+                    value={regularGroupForm.endDate}
+                    onChange={(e) => setRegularGroupForm((p) => ({ ...p, endDate: e.target.value }))}
+                    className="w-full rounded-xl border px-3 py-3 md:py-2"
+                  />
+
+                  <div className="grid gap-2 md:grid-cols-3">
+                    {Array.from({ length: 6 }, (_, index) => (
+                      <div key={index} className="space-y-1">
+                        <div className="text-xs text-slate-500">{index + 1}번학생</div>
+                        <input
+                          list={`regular-group-child-list-${index}`}
+                          value={regularGroupChildInputs[index] ?? ''}
+                          onChange={(e) => syncRegularGroupChildInput(index, e.target.value)}
+                          placeholder={`학생${index + 1}`}
+                          className="w-full rounded-xl border px-3 py-2"
+                        />
+                        <datalist id={`regular-group-child-list-${index}`}>
+                          {regularGroupChildCandidates.map((child) => (
+                            <option key={child.id} value={getDisplayName(child)} />
+                          ))}
+                        </datalist>
+                      </div>
+                    ))}
+                  </div>
+
+                  <input
+                    value={regularGroupForm.note}
+                    onChange={(e) => setRegularGroupForm((p) => ({ ...p, note: e.target.value }))}
+                    placeholder="메모"
+                    className="w-full rounded-xl border px-3 py-3 md:py-2"
+                  />
+
+                  <button onClick={handleSaveRegularGroupClass} className="w-full rounded-xl bg-black py-3 text-white md:py-2">
+                    {regularGroupForm.id ? '정기 그룹수업 수정' : '정기 그룹수업 등록'}
+                  </button>
+                </div>
+              </div>
+
+              <div className="rounded-2xl border p-4">
+                <h2 className="mb-3 text-xl font-bold">정기 그룹수업 목록</h2>
+                <input
+                  value={regularGroupSearch}
+                  onChange={(e) => setRegularGroupSearch(e.target.value)}
+                  placeholder="그룹명 / 선생님 / 학생 검색"
+                  className="mb-3 w-full rounded-xl border px-3 py-3 md:py-2"
+                />
+                <div className="max-h-[420px] overflow-y-auto pr-1">
+                  <div className="space-y-2">
+                    {filteredRegularGroupClasses.map((row) => {
+                      const staff = staffs.find((s) => Number(s.id) === Number(row.teacher_id))
+                      const members = regularGroupMembers.filter((m) => Number(m.regular_group_class_id) === Number(row.id) && m.is_active)
+                      const memberNames = members.map((m) => children.find((c) => Number(c.id) === Number(m.child_id))?.child_name ?? '').filter(Boolean).join(', ')
+                      return (
+                        <div key={row.id} className="rounded-xl border p-3">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setRegularGroupForm({
+                                id: row.id,
+                                teacherId: row.teacher_id,
+                                weekday: row.weekday,
+                                timeSlot: row.time_slot,
+                                minuteSlot: String(row.minute_slot ?? 0).padStart(2, '0'),
+                                startDate: row.start_date,
+                                endDate: row.end_date ?? '',
+                                groupName: row.group_name,
+                                note: row.note ?? '',
+                                isActive: row.is_active,
+                                childIds: members.map((m) => Number(m.child_id)),
+                              })
+                              setRegularGroupTeacherQuery(staff?.name ?? '')
+                              const childNames = members.map((m) => {
+                                const child = children.find((c) => Number(c.id) === Number(m.child_id))
+                                return child ? getDisplayName(child) : ''
+                              })
+                              setRegularGroupChildInputs(Array(6).fill('').map((_, idx) => childNames[idx] ?? ''))
+                            }}
+                            className="w-full text-left"
+                          >
+                            <div className="font-medium">{row.group_name} / {staff?.name ?? `선생님(${row.teacher_id})`}</div>
+                            <div className="mt-1 text-sm text-slate-500">{getWeekdayLabel(row.weekday)} {row.time_slot}:{String(row.minute_slot ?? 0).padStart(2, '0')} / {row.start_date} ~ {row.end_date || '종료없음'}</div>
+                            <div className="mt-1 text-sm text-slate-500">학생: {memberNames || '-'}</div>
+                          </button>
+                          <div className="mt-2">
+                            <button onClick={() => void handleDeleteRegularGroupClass(row.id)} className="rounded bg-rose-50 px-2 py-1 text-xs text-rose-700">삭제</button>
+                          </div>
+                        </div>
+                      )
+                    })}
+                    {filteredRegularGroupClasses.length === 0 ? <div className="rounded-xl border p-3 text-slate-500">등록된 정기 그룹수업이 없습니다.</div> : null}
+                  </div>
+                </div>
+              </div>
+            </div>
+
         )}
       </div>
     </main>
-  ){/* ======================= */
-/* 정기 그룹수업 */
-/* ======================= */}
-
-<div className="mt-8 grid gap-6 md:grid-cols-2">
-  
-  {/* 등록 */}
-  <div className="rounded-2xl border p-4">
-    <h2 className="mb-3 text-xl font-bold">정기 그룹수업 등록</h2>
-
-    <input
-      value={regularGroupForm.groupName}
-      onChange={(e) =>
-        setRegularGroupForm((p) => ({ ...p, groupName: e.target.value }))
-      }
-      placeholder="그룹명"
-      className="w-full rounded-xl border px-3 py-2 mb-2"
-    />
-
-    <button
-      onClick={handleSaveRegularGroupClass}
-      className="w-full rounded-xl bg-black py-2 text-white"
-    >
-      {regularGroupForm.id ? '수정' : '등록'}
-    </button>
-  </div>
-
-  {/* 목록 */}
-  <div className="rounded-2xl border p-4">
-    <h2 className="mb-3 text-xl font-bold">정기 그룹수업 목록</h2>
-
-    <div className="max-h-[400px] overflow-y-auto">
-      {filteredRegularGroupClasses.map((row) => (
-        <div key={row.id} className="border p-2 mb-2">
-
-          <div>{row.group_name}</div>
-
-          <button
-            onClick={() => handleDeleteRegularGroupClass(row.id)}
-            className="text-red-500 text-sm"
-          >
-            삭제
-          </button>
-        </div>
-      ))}
-    </div>
-  </div>
-
-</div>
+  )
 }
