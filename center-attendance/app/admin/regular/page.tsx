@@ -282,6 +282,7 @@ export default function Page() {
   const [regularChildQuery, setRegularChildQuery] = useState('')
   const [regularTeacherQuery, setRegularTeacherQuery] = useState('')
   const [regularGroupTeacherQuery, setRegularGroupTeacherQuery] = useState('')
+  const [regularGroupDebugSteps, setRegularGroupDebugSteps] = useState<string[]>([])
   const [regularGroupChildInputs, setRegularGroupChildInputs] = useState<string[]>(
     Array(6).fill('')
   )
