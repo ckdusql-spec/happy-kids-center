@@ -1131,7 +1131,7 @@ export default function Page() {
       await Promise.all([
         loadRegularGroupClasses(),
         loadRegularGroupMembers(),
-        loadScheduleEntries(),
+ 
       ])
       pushRegularGroupDebug('23. 화면 재조회 완료')
 
