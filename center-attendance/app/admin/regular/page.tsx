@@ -74,6 +74,26 @@ type ScheduleEntryRow = {
   group_name?: string | null
 }
 
+const SCHEDULE_ENTRY_SELECT_COLUMNS = `
+  id,
+  date,
+  time_slot,
+  minute_slot,
+  room_number,
+  teacher_id,
+  teacher_name,
+  class_type,
+  child_id,
+  voucher_type,
+  status,
+  is_active,
+  note,
+  is_group,
+  group_id,
+  group_name
+`
+
+
 type ClassLogRow = {
   id: number
   staff_id: number
@@ -688,10 +708,12 @@ export default function Page() {
 
     const { data: existingRows, error: existingError } = await supabase
       .from('schedule_entries')
-      .select('*')
+      .select(SCHEDULE_ENTRY_SELECT_COLUMNS)
       .eq('group_id', String(ruleId))
       .eq('is_group', true)
       .eq('is_active', true)
+      .gte('date', payload.startDate)
+      .lte('date', payload.endDate)
 
     pushRegularGroupDebug('11. 기존 group schedule_entries 조회 완료', {
       ms: Math.round(performance.now() - readStart),
@@ -1209,7 +1231,7 @@ export default function Page() {
 
       const { data: scheduleRows, error: scheduleReadError } = await supabase
         .from('schedule_entries')
-        .select('*')
+        .select(SCHEDULE_ENTRY_SELECT_COLUMNS)
         .eq('group_id', String(id))
         .eq('is_group', true)
         .eq('is_active', true)
