@@ -126,16 +126,6 @@ function addYearsDate(dateString: string, years: number) {
   return toDateString(d)
 }
 
-
-function debugRegularGroup(label: string, payload?: any) {
-  const now = new Date().toISOString()
-  if (payload === undefined) {
-    console.log(`[regular-group][${now}] ${label}`)
-    return
-  }
-  console.log(`[regular-group][${now}] ${label}`, payload)
-}
-
 function getDisplayName(child: ChildRow) {
   if (!child.birth_date) return child.child_name
 
@@ -231,6 +221,37 @@ function buildLogicalAttendanceKey(params: {
     params.isGroup ? 'group' : 'single',
     params.groupId ?? '',
   ].join('|')
+}
+
+
+function chunkArray<T>(items: T[], size: number) {
+  if (items.length === 0) return []
+  const result: T[][] = []
+  for (let i = 0; i < items.length; i += size) {
+    result.push(items.slice(i, i + size))
+  }
+  return result
+}
+
+async function deactivateScheduleEntriesByIds(ids: string[]) {
+  const uniqueIds = Array.from(new Set(ids.filter(Boolean)))
+  const chunks = chunkArray(uniqueIds, 200)
+  for (const chunk of chunks) {
+    const { error } = await supabase
+      .from('schedule_entries')
+      .update({ is_active: false })
+      .in('id', chunk)
+    if (error) throw error
+  }
+}
+
+async function insertScheduleEntriesInChunks(rows: Record<string, any>[]) {
+  if (rows.length === 0) return
+  const chunks = chunkArray(rows, 200)
+  for (const chunk of chunks) {
+    const { error } = await supabase.from('schedule_entries').insert(chunk)
+    if (error) throw error
+  }
 }
 
 function getVoucherOptionsForChild(childId: number | '', children: ChildRow[]) {
@@ -654,30 +675,24 @@ export default function Page() {
       childIds: number[]
     }
   ) {
-    debugRegularGroup('A. upsertGroupRegularSchedules start', {
+    pushRegularGroupDebug('9. 그룹 일정 처리 시작', {
       ruleId,
-      teacherId: payload.teacherId,
-      weekday: payload.weekday,
+      childIdsCount: payload.childIds.length,
       startDate: payload.startDate,
       endDate: payload.endDate,
-      childIdsCount: payload.childIds.length,
-      timeSlot: payload.timeSlot,
-      minuteSlot: payload.minuteSlot,
     })
 
+    pushRegularGroupDebug('10. 기존 group schedule_entries 조회 시작')
     const readStart = performance.now()
-    debugRegularGroup('B. existing schedule_entries select start')
 
     const { data: existingRows, error: existingError } = await supabase
       .from('schedule_entries')
-      .select(
-        'id, date, time_slot, minute_slot, teacher_id, child_id, is_group, group_id, is_active'
-      )
+      .select('*')
       .eq('group_id', String(ruleId))
       .eq('is_group', true)
       .eq('is_active', true)
 
-    debugRegularGroup('C. existing schedule_entries select end', {
+    pushRegularGroupDebug('11. 기존 group schedule_entries 조회 완료', {
       ms: Math.round(performance.now() - readStart),
       rows: existingRows?.length ?? 0,
       error: existingError?.message ?? null,
@@ -685,35 +700,32 @@ export default function Page() {
 
     if (existingError) throw existingError
 
+    pushRegularGroupDebug('12. splitLoggedSchedules 시작')
     const splitStart = performance.now()
-    debugRegularGroup('D. splitLoggedSchedules start')
 
     const { loggedRows, unloggedRows } = await splitLoggedSchedules(
       (existingRows ?? []) as ScheduleEntryRow[]
     )
 
-    debugRegularGroup('E. splitLoggedSchedules end', {
+    pushRegularGroupDebug('13. splitLoggedSchedules 완료', {
       ms: Math.round(performance.now() - splitStart),
       loggedRows: loggedRows.length,
       unloggedRows: unloggedRows.length,
     })
 
     if (unloggedRows.length > 0) {
-      const deactivateStart = performance.now()
-      debugRegularGroup('F. deactivate old unlogged rows start', {
+      pushRegularGroupDebug('14. 미출결 기존 일정 비활성화 시작', {
         count: unloggedRows.length,
       })
-
+      const deactivateStart = performance.now()
       await deactivateScheduleEntriesByIds(unloggedRows.map((r) => r.id))
-
-      debugRegularGroup('G. deactivate old unlogged rows end', {
+      pushRegularGroupDebug('15. 미출결 기존 일정 비활성화 완료', {
         ms: Math.round(performance.now() - deactivateStart),
       })
     } else {
-      debugRegularGroup('F/G. no unlogged rows to deactivate')
+      pushRegularGroupDebug('14~15. 비활성화할 미출결 일정 없음')
     }
 
-    const keepKeyStart = performance.now()
     const keepKeys = new Set(
       loggedRows.map((row) =>
         buildLogicalAttendanceKey({
@@ -726,23 +738,20 @@ export default function Page() {
         })
       )
     )
-    debugRegularGroup('H. keepKeys built', {
-      ms: Math.round(performance.now() - keepKeyStart),
-      keepKeys: keepKeys.size,
-    })
+    pushRegularGroupDebug('16. 유지할 logged key 구성 완료', { keepKeys: keepKeys.size })
 
-    const datesBuildStart = performance.now()
+    const datesStart = performance.now()
     const dates = getDateRangeMatchingWeekday(
       payload.startDate,
       payload.endDate,
       payload.weekday
     )
-    debugRegularGroup('I. matching dates built', {
-      ms: Math.round(performance.now() - datesBuildStart),
+    pushRegularGroupDebug('17. 생성 대상 날짜 계산 완료', {
+      ms: Math.round(performance.now() - datesStart),
       datesCount: dates.length,
     })
 
-    const rowBuildStart = performance.now()
+    const rowsBuildStart = performance.now()
     const rowsToInsert = dates
       .flatMap((date) =>
         payload.childIds.map((childId) => ({
@@ -775,27 +784,24 @@ export default function Page() {
           isGroup: true,
           groupId: String(ruleId),
         })
-
         return !keepKeys.has(key)
       })
 
-    debugRegularGroup('J. rowsToInsert built', {
-      ms: Math.round(performance.now() - rowBuildStart),
+    pushRegularGroupDebug('18. insert 대상 row 생성 완료', {
+      ms: Math.round(performance.now() - rowsBuildStart),
       rowsToInsert: rowsToInsert.length,
     })
 
     const insertStart = performance.now()
-    debugRegularGroup('K. insertScheduleEntriesInChunks start', {
+    pushRegularGroupDebug('19. schedule_entries insert 시작', {
       rowsToInsert: rowsToInsert.length,
     })
 
     await insertScheduleEntriesInChunks(rowsToInsert)
 
-    debugRegularGroup('L. insertScheduleEntriesInChunks end', {
+    pushRegularGroupDebug('20. schedule_entries insert 완료', {
       ms: Math.round(performance.now() - insertStart),
     })
-
-    debugRegularGroup('M. upsertGroupRegularSchedules done')
 
     return {
       loggedRows,
@@ -839,6 +845,20 @@ export default function Page() {
         .fill('')
         .map((_, idx) => childNames[idx] ?? '')
     )
+  }
+
+
+  function pushRegularGroupDebug(message: string, extra?: any) {
+    const now = new Date()
+    const hh = String(now.getHours()).padStart(2, '0')
+    const mm = String(now.getMinutes()).padStart(2, '0')
+    const ss = String(now.getSeconds()).padStart(2, '0')
+    const line =
+      extra === undefined
+        ? `[${hh}:${mm}:${ss}] ${message}`
+        : `[${hh}:${mm}:${ss}] ${message} ${typeof extra === 'string' ? extra : JSON.stringify(extra)}`
+    console.log('[regular-group-visible-debug]', line)
+    setRegularGroupDebugSteps((prev) => [...prev, line])
   }
 
   async function handleSaveRegularClass() {
@@ -943,34 +963,54 @@ export default function Page() {
   }
 
   async function handleSaveRegularGroupClass() {
+    setRegularGroupDebugSteps([])
     try {
+      pushRegularGroupDebug('1. 정기그룹수업 저장 시작', {
+        formId: regularGroupForm.id,
+        teacherId: regularGroupForm.teacherId,
+        weekday: regularGroupForm.weekday,
+        startDate: regularGroupForm.startDate,
+        endDate: regularGroupForm.endDate,
+        selectedChildIds: regularGroupForm.childIds.length,
+      })
+
       if (!regularGroupForm.teacherId) {
+        pushRegularGroupDebug('ERROR. 선생님 미선택')
         setMessage('선생님을 선택하세요.')
         return
       }
 
       if (regularGroupForm.weekday === '') {
+        pushRegularGroupDebug('ERROR. 요일 미선택')
         setMessage('요일을 선택하세요.')
         return
       }
 
       if (!regularGroupForm.startDate) {
+        pushRegularGroupDebug('ERROR. 시작일 미선택')
         setMessage('시작일을 선택하세요.')
         return
       }
 
       if (!regularGroupForm.groupName.trim()) {
+        pushRegularGroupDebug('ERROR. 그룹명 미입력')
         setMessage('그룹명을 입력하세요.')
         return
       }
 
       if (regularGroupForm.childIds.length === 0) {
+        pushRegularGroupDebug('ERROR. 그룹 학생 미선택')
         setMessage('그룹 학생을 1명 이상 선택하세요.')
         return
       }
 
       const endDate =
         regularGroupForm.endDate || addYearsDate(regularGroupForm.startDate, 5)
+
+      pushRegularGroupDebug('2. 저장 payload 준비 완료', {
+        endDate,
+        childIdsCount: regularGroupForm.childIds.length,
+      })
 
       const payload = {
         teacher_id: Number(regularGroupForm.teacherId),
@@ -987,6 +1027,7 @@ export default function Page() {
       let ruleId = regularGroupForm.id
 
       if (regularGroupForm.id) {
+        pushRegularGroupDebug('3. regular_group_classes update 시작', { ruleId: regularGroupForm.id })
         const { error } = await supabase
           .from('regular_group_classes')
           .update(payload)
@@ -994,13 +1035,18 @@ export default function Page() {
 
         if (error) throw error
 
+        pushRegularGroupDebug('4. regular_group_classes update 완료')
+
+        pushRegularGroupDebug('5. 기존 그룹멤버 비활성화 시작')
         const { error: memberOffError } = await supabase
           .from('regular_group_class_members')
           .update({ is_active: false })
           .eq('regular_group_class_id', regularGroupForm.id)
 
         if (memberOffError) throw memberOffError
+        pushRegularGroupDebug('6. 기존 그룹멤버 비활성화 완료')
       } else {
+        pushRegularGroupDebug('3. regular_group_classes insert 시작')
         const { data, error } = await supabase
           .from('regular_group_classes')
           .insert(payload)
@@ -1009,9 +1055,11 @@ export default function Page() {
 
         if (error) throw error
         ruleId = data?.id ?? null
+        pushRegularGroupDebug('4. regular_group_classes insert 완료', { ruleId })
       }
 
       if (!ruleId) {
+        pushRegularGroupDebug('ERROR. rule id 없음')
         setMessage('정기 그룹수업 rule id를 찾지 못했습니다.')
         return
       }
@@ -1022,18 +1070,22 @@ export default function Page() {
         is_active: true,
       }))
 
+      pushRegularGroupDebug('7. 그룹멤버 insert 시작', { count: memberRows.length })
+
       const { error: memberInsertError } = await supabase
         .from('regular_group_class_members')
         .insert(memberRows)
 
       if (memberInsertError) throw memberInsertError
 
+      pushRegularGroupDebug('8. 그룹멤버 insert 완료')
+
       const teacher = staffs.find(
         (s) => Number(s.id) === Number(regularGroupForm.teacherId)
       )
       const teacherName = teacher?.name ?? ''
 
-      const result = await upsertGroupRegularSchedules(ruleId, {
+      const result = await upsertGroupRegularSchedules(Number(ruleId), {
         teacherId: Number(regularGroupForm.teacherId),
         teacherName,
         weekday: Number(regularGroupForm.weekday),
@@ -1043,10 +1095,22 @@ export default function Page() {
         endDate,
         groupName: regularGroupForm.groupName,
         note: regularGroupForm.note || '',
-        childIds: regularGroupForm.childIds,
+        childIds: regularGroupForm.childIds.map((id) => Number(id)),
       })
 
-      await Promise.all([loadRegularGroupClasses(), loadRegularGroupMembers()])
+      pushRegularGroupDebug('21. 그룹 일정 처리 완료', {
+        insertedCount: result.insertedCount,
+        loggedRows: result.loggedRows.length,
+        unloggedRows: result.unloggedRows.length,
+      })
+
+      pushRegularGroupDebug('22. 화면 재조회 시작')
+      await Promise.all([
+        loadRegularGroupClasses(),
+        loadRegularGroupMembers(),
+        loadScheduleEntries(),
+      ])
+      pushRegularGroupDebug('23. 화면 재조회 완료')
 
       setRegularGroupForm({
         id: null,
@@ -1070,7 +1134,10 @@ export default function Page() {
           ? `정기 그룹수업이 수정되었습니다. 출결체크 ${result.loggedRows.length}건은 유지되고 미출결 일정이 자동 갱신되었습니다.`
           : '정기 그룹수업이 등록되었습니다.'
       )
+
+      pushRegularGroupDebug('24. 정기그룹수업 저장 성공')
     } catch (err: any) {
+      pushRegularGroupDebug('ERROR. 정기그룹수업 저장 실패', err?.message ?? String(err))
       setMessage(err?.message ?? '정기 그룹수업 저장 실패')
     }
   }
@@ -1489,6 +1556,27 @@ export default function Page() {
             <div className="mt-8 grid gap-6 md:grid-cols-2">
               <div className="rounded-2xl border p-4">
                 <h2 className="mb-3 text-xl font-bold">정기 그룹수업 등록 / 수정</h2>
+
+                {regularGroupDebugSteps.length > 0 && (
+                  <div
+                    className="rounded-xl border px-3 py-3"
+                    style={{
+                      marginTop: 12,
+                      marginBottom: 12,
+                      borderColor: '#f59e0b',
+                      background: '#fff7ed',
+                      color: '#9a3412',
+                      whiteSpace: 'pre-wrap',
+                      fontSize: 13,
+                      lineHeight: 1.5,
+                    }}
+                  >
+                    <div style={{ fontWeight: 700, marginBottom: 8 }}>정기그룹수업 디버그 로그</div>
+                    {regularGroupDebugSteps.map((step, index) => (
+                      <div key={`${index}-${step}`}>{step}</div>
+                    ))}
+                  </div>
+                )}
 
                 <div className="space-y-3">
                   <input
