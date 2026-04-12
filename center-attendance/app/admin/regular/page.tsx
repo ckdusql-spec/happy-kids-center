@@ -223,6 +223,40 @@ function buildLogicalAttendanceKey(params: {
   ].join('|')
 }
 
+
+function chunkArray<T>(items: T[], size: number) {
+  if (items.length === 0) return []
+  const result: T[][] = []
+  for (let i = 0; i < items.length; i += size) {
+    result.push(items.slice(i, i + size))
+  }
+  return result
+}
+
+async function deactivateScheduleEntriesByIds(ids: string[]) {
+  const uniqueIds = Array.from(new Set(ids.filter(Boolean)))
+  const chunks = chunkArray(uniqueIds, 200)
+
+  for (const chunk of chunks) {
+    const { error } = await supabase
+      .from('schedule_entries')
+      .update({ is_active: false })
+      .in('id', chunk)
+
+    if (error) throw error
+  }
+}
+
+async function insertScheduleEntriesInChunks(rows: Record<string, any>[]) {
+  if (rows.length === 0) return
+
+  const chunks = chunkArray(rows, 200)
+  for (const chunk of chunks) {
+    const { error } = await supabase.from('schedule_entries').insert(chunk)
+    if (error) throw error
+  }
+}
+
 function getVoucherOptionsForChild(childId: number | '', children: ChildRow[]) {
   if (!childId) return ['일반']
 
@@ -545,10 +579,10 @@ export default function Page() {
 
     const { data: existingRows, error: existingError } = await supabase
       .from('schedule_entries')
-      .select('*')
+      .select(
+        'id, date, time_slot, minute_slot, teacher_id, child_id, is_group, group_id, is_active'
+      )
       .like('note', `${tag}%`)
-      .gte('date', payload.startDate)
-      .lte('date', payload.endDate)
       .eq('is_active', true)
 
     if (existingError) throw existingError
@@ -558,12 +592,7 @@ export default function Page() {
     )
 
     if (unloggedRows.length > 0) {
-      const { error } = await supabase
-        .from('schedule_entries')
-        .update({ is_active: false })
-        .in('id', unloggedRows.map((r) => r.id))
-
-      if (error) throw error
+      await deactivateScheduleEntriesByIds(unloggedRows.map((r) => r.id))
     }
 
     const keepKeys = new Set(
@@ -617,10 +646,7 @@ export default function Page() {
         return !keepKeys.has(key)
       })
 
-    if (rowsToInsert.length > 0) {
-      const { error } = await supabase.from('schedule_entries').insert(rowsToInsert)
-      if (error) throw error
-    }
+    await insertScheduleEntriesInChunks(rowsToInsert)
 
     return {
       loggedRows,
@@ -646,7 +672,9 @@ export default function Page() {
   ) {
     const { data: existingRows, error: existingError } = await supabase
       .from('schedule_entries')
-      .select('*')
+      .select(
+        'id, date, time_slot, minute_slot, teacher_id, child_id, is_group, group_id, is_active'
+      )
       .eq('group_id', String(ruleId))
       .eq('is_group', true)
       .eq('is_active', true)
@@ -658,12 +686,7 @@ export default function Page() {
     )
 
     if (unloggedRows.length > 0) {
-      const { error } = await supabase
-        .from('schedule_entries')
-        .update({ is_active: false })
-        .in('id', unloggedRows.map((r) => r.id))
-
-      if (error) throw error
+      await deactivateScheduleEntriesByIds(unloggedRows.map((r) => r.id))
     }
 
     const keepKeys = new Set(
@@ -721,10 +744,7 @@ export default function Page() {
         return !keepKeys.has(key)
       })
 
-    if (rowsToInsert.length > 0) {
-      const { error } = await supabase.from('schedule_entries').insert(rowsToInsert)
-      if (error) throw error
-    }
+    await insertScheduleEntriesInChunks(rowsToInsert)
 
     return {
       loggedRows,
@@ -1017,14 +1037,12 @@ export default function Page() {
         return
       }
 
-      const endForDelete = rule.end_date || addYearsDate(rule.start_date, 5)
-
       const { data: scheduleRows, error: scheduleReadError } = await supabase
         .from('schedule_entries')
-        .select('*')
+        .select(
+          'id, date, time_slot, minute_slot, teacher_id, child_id, is_group, group_id, is_active'
+        )
         .like('note', `${buildRegularNoteTag(id)}%`)
-        .gte('date', rule.start_date)
-        .lte('date', endForDelete)
         .eq('is_active', true)
 
       if (scheduleReadError) throw scheduleReadError
@@ -1034,12 +1052,7 @@ export default function Page() {
       )
 
       if (unloggedRows.length > 0) {
-        const { error } = await supabase
-          .from('schedule_entries')
-          .update({ is_active: false })
-          .in('id', unloggedRows.map((r) => r.id))
-
-        if (error) throw error
+        await deactivateScheduleEntriesByIds(unloggedRows.map((r) => r.id))
       }
 
       const { error } = await supabase
@@ -1070,7 +1083,9 @@ export default function Page() {
 
       const { data: scheduleRows, error: scheduleReadError } = await supabase
         .from('schedule_entries')
-        .select('*')
+        .select(
+          'id, date, time_slot, minute_slot, teacher_id, child_id, is_group, group_id, is_active'
+        )
         .eq('group_id', String(id))
         .eq('is_group', true)
         .eq('is_active', true)
@@ -1082,12 +1097,7 @@ export default function Page() {
       )
 
       if (unloggedRows.length > 0) {
-        const { error } = await supabase
-          .from('schedule_entries')
-          .update({ is_active: false })
-          .in('id', unloggedRows.map((r) => r.id))
-
-        if (error) throw error
+        await deactivateScheduleEntriesByIds(unloggedRows.map((r) => r.id))
       }
 
       const { error } = await supabase
@@ -1689,8 +1699,3 @@ export default function Page() {
     </main>
   )
 }
-
-
-// FIX GUIDE:
-// 1. 기존 일정 삭제 후 재생성 방식으로 변경 필요
-// 2. bulk insert 사용 필요
