@@ -1689,3 +1689,8 @@ export default function Page() {
     </main>
   )
 }
+
+
+// FIX GUIDE:
+// 1. 기존 일정 삭제 후 재생성 방식으로 변경 필요
+// 2. bulk insert 사용 필요
