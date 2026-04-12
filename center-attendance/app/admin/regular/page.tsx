@@ -126,6 +126,16 @@ function addYearsDate(dateString: string, years: number) {
   return toDateString(d)
 }
 
+
+function debugRegularGroup(label: string, payload?: any) {
+  const now = new Date().toISOString()
+  if (payload === undefined) {
+    console.log(`[regular-group][${now}] ${label}`)
+    return
+  }
+  console.log(`[regular-group][${now}] ${label}`, payload)
+}
+
 function getDisplayName(child: ChildRow) {
   if (!child.birth_date) return child.child_name
 
@@ -221,40 +231,6 @@ function buildLogicalAttendanceKey(params: {
     params.isGroup ? 'group' : 'single',
     params.groupId ?? '',
   ].join('|')
-}
-
-
-function chunkArray<T>(items: T[], size: number) {
-  if (items.length === 0) return []
-  const result: T[][] = []
-  for (let i = 0; i < items.length; i += size) {
-    result.push(items.slice(i, i + size))
-  }
-  return result
-}
-
-async function deactivateScheduleEntriesByIds(ids: string[]) {
-  const uniqueIds = Array.from(new Set(ids.filter(Boolean)))
-  const chunks = chunkArray(uniqueIds, 200)
-
-  for (const chunk of chunks) {
-    const { error } = await supabase
-      .from('schedule_entries')
-      .update({ is_active: false })
-      .in('id', chunk)
-
-    if (error) throw error
-  }
-}
-
-async function insertScheduleEntriesInChunks(rows: Record<string, any>[]) {
-  if (rows.length === 0) return
-
-  const chunks = chunkArray(rows, 200)
-  for (const chunk of chunks) {
-    const { error } = await supabase.from('schedule_entries').insert(chunk)
-    if (error) throw error
-  }
 }
 
 function getVoucherOptionsForChild(childId: number | '', children: ChildRow[]) {
@@ -579,10 +555,10 @@ export default function Page() {
 
     const { data: existingRows, error: existingError } = await supabase
       .from('schedule_entries')
-      .select(
-        'id, date, time_slot, minute_slot, teacher_id, child_id, is_group, group_id, is_active'
-      )
+      .select('*')
       .like('note', `${tag}%`)
+      .gte('date', payload.startDate)
+      .lte('date', payload.endDate)
       .eq('is_active', true)
 
     if (existingError) throw existingError
@@ -592,7 +568,12 @@ export default function Page() {
     )
 
     if (unloggedRows.length > 0) {
-      await deactivateScheduleEntriesByIds(unloggedRows.map((r) => r.id))
+      const { error } = await supabase
+        .from('schedule_entries')
+        .update({ is_active: false })
+        .in('id', unloggedRows.map((r) => r.id))
+
+      if (error) throw error
     }
 
     const keepKeys = new Set(
@@ -646,7 +627,10 @@ export default function Page() {
         return !keepKeys.has(key)
       })
 
-    await insertScheduleEntriesInChunks(rowsToInsert)
+    if (rowsToInsert.length > 0) {
+      const { error } = await supabase.from('schedule_entries').insert(rowsToInsert)
+      if (error) throw error
+    }
 
     return {
       loggedRows,
@@ -670,6 +654,20 @@ export default function Page() {
       childIds: number[]
     }
   ) {
+    debugRegularGroup('A. upsertGroupRegularSchedules start', {
+      ruleId,
+      teacherId: payload.teacherId,
+      weekday: payload.weekday,
+      startDate: payload.startDate,
+      endDate: payload.endDate,
+      childIdsCount: payload.childIds.length,
+      timeSlot: payload.timeSlot,
+      minuteSlot: payload.minuteSlot,
+    })
+
+    const readStart = performance.now()
+    debugRegularGroup('B. existing schedule_entries select start')
+
     const { data: existingRows, error: existingError } = await supabase
       .from('schedule_entries')
       .select(
@@ -679,16 +677,43 @@ export default function Page() {
       .eq('is_group', true)
       .eq('is_active', true)
 
+    debugRegularGroup('C. existing schedule_entries select end', {
+      ms: Math.round(performance.now() - readStart),
+      rows: existingRows?.length ?? 0,
+      error: existingError?.message ?? null,
+    })
+
     if (existingError) throw existingError
+
+    const splitStart = performance.now()
+    debugRegularGroup('D. splitLoggedSchedules start')
 
     const { loggedRows, unloggedRows } = await splitLoggedSchedules(
       (existingRows ?? []) as ScheduleEntryRow[]
     )
 
+    debugRegularGroup('E. splitLoggedSchedules end', {
+      ms: Math.round(performance.now() - splitStart),
+      loggedRows: loggedRows.length,
+      unloggedRows: unloggedRows.length,
+    })
+
     if (unloggedRows.length > 0) {
+      const deactivateStart = performance.now()
+      debugRegularGroup('F. deactivate old unlogged rows start', {
+        count: unloggedRows.length,
+      })
+
       await deactivateScheduleEntriesByIds(unloggedRows.map((r) => r.id))
+
+      debugRegularGroup('G. deactivate old unlogged rows end', {
+        ms: Math.round(performance.now() - deactivateStart),
+      })
+    } else {
+      debugRegularGroup('F/G. no unlogged rows to deactivate')
     }
 
+    const keepKeyStart = performance.now()
     const keepKeys = new Set(
       loggedRows.map((row) =>
         buildLogicalAttendanceKey({
@@ -701,13 +726,23 @@ export default function Page() {
         })
       )
     )
+    debugRegularGroup('H. keepKeys built', {
+      ms: Math.round(performance.now() - keepKeyStart),
+      keepKeys: keepKeys.size,
+    })
 
+    const datesBuildStart = performance.now()
     const dates = getDateRangeMatchingWeekday(
       payload.startDate,
       payload.endDate,
       payload.weekday
     )
+    debugRegularGroup('I. matching dates built', {
+      ms: Math.round(performance.now() - datesBuildStart),
+      datesCount: dates.length,
+    })
 
+    const rowBuildStart = performance.now()
     const rowsToInsert = dates
       .flatMap((date) =>
         payload.childIds.map((childId) => ({
@@ -744,7 +779,23 @@ export default function Page() {
         return !keepKeys.has(key)
       })
 
+    debugRegularGroup('J. rowsToInsert built', {
+      ms: Math.round(performance.now() - rowBuildStart),
+      rowsToInsert: rowsToInsert.length,
+    })
+
+    const insertStart = performance.now()
+    debugRegularGroup('K. insertScheduleEntriesInChunks start', {
+      rowsToInsert: rowsToInsert.length,
+    })
+
     await insertScheduleEntriesInChunks(rowsToInsert)
+
+    debugRegularGroup('L. insertScheduleEntriesInChunks end', {
+      ms: Math.round(performance.now() - insertStart),
+    })
+
+    debugRegularGroup('M. upsertGroupRegularSchedules done')
 
     return {
       loggedRows,
@@ -1037,12 +1088,14 @@ export default function Page() {
         return
       }
 
+      const endForDelete = rule.end_date || addYearsDate(rule.start_date, 5)
+
       const { data: scheduleRows, error: scheduleReadError } = await supabase
         .from('schedule_entries')
-        .select(
-          'id, date, time_slot, minute_slot, teacher_id, child_id, is_group, group_id, is_active'
-        )
+        .select('*')
         .like('note', `${buildRegularNoteTag(id)}%`)
+        .gte('date', rule.start_date)
+        .lte('date', endForDelete)
         .eq('is_active', true)
 
       if (scheduleReadError) throw scheduleReadError
@@ -1052,7 +1105,12 @@ export default function Page() {
       )
 
       if (unloggedRows.length > 0) {
-        await deactivateScheduleEntriesByIds(unloggedRows.map((r) => r.id))
+        const { error } = await supabase
+          .from('schedule_entries')
+          .update({ is_active: false })
+          .in('id', unloggedRows.map((r) => r.id))
+
+        if (error) throw error
       }
 
       const { error } = await supabase
@@ -1083,9 +1141,7 @@ export default function Page() {
 
       const { data: scheduleRows, error: scheduleReadError } = await supabase
         .from('schedule_entries')
-        .select(
-          'id, date, time_slot, minute_slot, teacher_id, child_id, is_group, group_id, is_active'
-        )
+        .select('*')
         .eq('group_id', String(id))
         .eq('is_group', true)
         .eq('is_active', true)
@@ -1097,7 +1153,12 @@ export default function Page() {
       )
 
       if (unloggedRows.length > 0) {
-        await deactivateScheduleEntriesByIds(unloggedRows.map((r) => r.id))
+        const { error } = await supabase
+          .from('schedule_entries')
+          .update({ is_active: false })
+          .in('id', unloggedRows.map((r) => r.id))
+
+        if (error) throw error
       }
 
       const { error } = await supabase
