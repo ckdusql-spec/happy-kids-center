@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 
 type StaffRole = 'admin' | 'employee'
@@ -73,26 +74,6 @@ type ScheduleEntryRow = {
   group_id?: string | null
   group_name?: string | null
 }
-
-const SCHEDULE_ENTRY_SELECT_COLUMNS = `
-  id,
-  date,
-  time_slot,
-  minute_slot,
-  room_number,
-  teacher_id,
-  teacher_name,
-  class_type,
-  child_id,
-  voucher_type,
-  status,
-  is_active,
-  note,
-  is_group,
-  group_id,
-  group_name
-`
-
 
 type ClassLogRow = {
   id: number
@@ -288,6 +269,7 @@ function getVoucherOptionsForChild(childId: number | '', children: ChildRow[]) {
 }
 
 export default function Page() {
+  const router = useRouter()
   const [message, setMessage] = useState('')
   const [loading, setLoading] = useState(false)
 
@@ -597,7 +579,16 @@ export default function Page() {
 
     const { data: existingRows, error: existingError } = await supabase
       .from('schedule_entries')
-      .select('*')
+      .select(`
+        id,
+        date,
+        time_slot,
+        minute_slot,
+        teacher_id,
+        child_id,
+        is_group,
+        group_id
+      `)
       .like('note', `${tag}%`)
       .gte('date', payload.startDate)
       .lte('date', payload.endDate)
@@ -708,7 +699,16 @@ export default function Page() {
 
     const { data: existingRows, error: existingError } = await supabase
       .from('schedule_entries')
-      .select(SCHEDULE_ENTRY_SELECT_COLUMNS)
+      .select(`
+        id,
+        date,
+        time_slot,
+        minute_slot,
+        teacher_id,
+        child_id,
+        is_group,
+        group_id
+      `)
       .eq('group_id', String(ruleId))
       .eq('is_group', true)
       .eq('is_active', true)
@@ -1131,7 +1131,7 @@ export default function Page() {
       await Promise.all([
         loadRegularGroupClasses(),
         loadRegularGroupMembers(),
- 
+        loadScheduleEntries(),
       ])
       pushRegularGroupDebug('23. 화면 재조회 완료')
 
@@ -1182,7 +1182,16 @@ export default function Page() {
 
       const { data: scheduleRows, error: scheduleReadError } = await supabase
         .from('schedule_entries')
-        .select('*')
+        .select(`
+          id,
+          date,
+          time_slot,
+          minute_slot,
+          teacher_id,
+          child_id,
+          is_group,
+          group_id
+        `)
         .like('note', `${buildRegularNoteTag(id)}%`)
         .gte('date', rule.start_date)
         .lte('date', endForDelete)
@@ -1231,7 +1240,16 @@ export default function Page() {
 
       const { data: scheduleRows, error: scheduleReadError } = await supabase
         .from('schedule_entries')
-        .select(SCHEDULE_ENTRY_SELECT_COLUMNS)
+        .select(`
+          id,
+          date,
+          time_slot,
+          minute_slot,
+          teacher_id,
+          child_id,
+          is_group,
+          group_id
+        `)
         .eq('group_id', String(id))
         .eq('is_group', true)
         .eq('is_active', true)
