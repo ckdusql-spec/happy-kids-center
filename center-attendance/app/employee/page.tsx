@@ -1430,7 +1430,7 @@ export default function EmployeePage() {
         ) : null}
 
         {tab === 'schedule' ? (
-          <div className="mt-6 border-t pt-6">
+          <div className="mt-0 border-t-0 pt-0">
             <div className="mb-3 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
               <h2 className="text-lg font-bold">주간 시간표</h2>
 
@@ -1463,7 +1463,7 @@ export default function EmployeePage() {
               <table className="w-full table-fixed border text-xs">
                 <thead>
                   <tr>
-                    <th className="w-[64px] border bg-slate-100 px-[2px] py-2">시간</th>
+                    <th className="w-[56px] border bg-slate-100 px-[2px] py-2">시간</th>
                     {weekDates.map((date, idx) => (
                       <th key={idx} className="w-[15.6%] border bg-slate-100 px-[2px] py-2">
                         <div className="text-sm font-semibold">
@@ -1642,18 +1642,12 @@ export default function EmployeePage() {
             <div className="space-y-4 md:hidden">
               {weekDates.map((date) => renderMobileDayCard(date))}
             </div>
-
-            <div className="mt-3 text-sm text-slate-500">
-              파랑=출석/보강, 연빨강=결석/당일결석
-            </div>
           </div>
         ) : null}
 
         {tab === 'week_overview' ? (
-          <div className="mt-6 border-t pt-6">
+          <div className="mt-0 border-t-0 pt-0">
             <div className="mb-3 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-              <h2 className="text-lg font-bold">추가 시간표</h2>
-
               <div className="flex gap-2">
                 <button
                   onClick={() => {
@@ -1679,21 +1673,17 @@ export default function EmployeePage() {
               </div>
             </div>
 
-            <div className="mb-3 text-xs text-slate-500 md:text-sm">
-              휴대폰에서 주간 일정을 한눈에 보는 간단 시간표입니다. 학생 이름만 최소 표기로 표시됩니다.
-            </div>
-
             <div className="overflow-x-auto rounded-2xl border bg-white">
-              <table className="min-w-[560px] table-fixed border-collapse text-[10px] md:min-w-full md:text-xs">
+              <table className="min-w-[520px] table-fixed border-collapse text-[10px] md:min-w-full md:text-xs">
                 <thead>
                   <tr>
-                    <th className="sticky left-0 z-10 w-[40px] border-b border-r bg-slate-100 px-[2px] py-2 text-center font-semibold">
+                    <th className="sticky left-0 z-10 w-[36px] border-b border-r bg-slate-100 px-[2px] py-2 text-center font-semibold">
                       시간
                     </th>
                     {weekDates.map((date, idx) => (
                       <th
                         key={idx}
-                        className="w-[140px] border-b border-r bg-slate-100 px-[2px] py-2 text-center font-semibold"
+                        className="w-[56px] border-b border-r bg-slate-100 px-[2px] py-2 text-center font-semibold"
                       >
                         <div>{['월', '화', '수', '목', '금', '토'][idx]}</div>
                         <div className="text-[10px] text-slate-500 md:text-xs">{toShortMonthDay(date)}</div>
@@ -1738,10 +1728,6 @@ export default function EmployeePage() {
                   ))}
                 </tbody>
               </table>
-            </div>
-
-            <div className="mt-3 text-xs text-slate-500 md:text-sm">
-              파랑=출석/보강, 빨강=결석/당일결석
             </div>
           </div>
         ) : null}
