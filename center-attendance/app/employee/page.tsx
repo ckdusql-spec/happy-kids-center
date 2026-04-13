@@ -898,6 +898,49 @@ export default function EmployeePage() {
     }
   }
 
+
+  function getScheduleCardBgClass(item: DisplayScheduleItem, classLogs: ClassLogRow[]) {
+    const relatedLogs = classLogs.filter((log) => {
+      const minuteTotal = getLogMinuteTotal(log)
+      if (minuteTotal == null) return false
+
+      if (item.isGroup) {
+        return item.rows.some((row) => {
+          const rowMinute = getEntryMinuteTotal(row)
+          return (
+            log.class_date === row.date &&
+            Number(log.staff_id) === Number(row.teacher_id) &&
+            Number(log.child_id) === Number(row.child_id) &&
+            minuteTotal === rowMinute &&
+            Boolean(log.is_group) &&
+            (log.group_id ?? '') === (row.group_id ?? '')
+          )
+        })
+      }
+
+      const row = item.rows[0]
+      if (!row) return false
+
+      return (
+        log.class_date === row.date &&
+        Number(log.staff_id) === Number(row.teacher_id) &&
+        Number(log.child_id) === Number(row.child_id) &&
+        minuteTotal === getEntryMinuteTotal(row) &&
+        !log.is_group
+      )
+    })
+
+    if (relatedLogs.some((log) => log.status === 'attended' || log.status === 'makeup')) {
+      return 'bg-blue-50'
+    }
+
+    if (relatedLogs.some((log) => log.status === 'same_day_absent' || log.status === 'absent')) {
+      return 'bg-red-50'
+    }
+
+    return 'bg-white'
+  }
+
   function renderScheduleCard(item: DisplayScheduleItem, dateStr: string) {
     const firstChild = children.find((c) => c.id === Number(item.rows[0]?.child_id))
     const title = item.isGroup
