@@ -482,11 +482,13 @@ export default function EmployeePage() {
         colorClass = 'text-red-500 font-semibold'
       }
 
-      const label =
+      const label = (
         item.isGroup
-          ? names.length <= 2
+          ? names.length > 1
             ? `${String(item.minuteSlot).padStart(2, '0')} ${names[0] ?? ''}외${names.length - 1}`
+            : `${String(item.minuteSlot).padStart(2, '0')} ${names[0] ?? ''}`
           : `${String(item.minuteSlot).padStart(2, '0')} ${names[0] ?? '-'}`
+      );
 
       return {
         key: item.key,
