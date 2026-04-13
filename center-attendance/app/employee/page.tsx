@@ -916,7 +916,7 @@ export default function EmployeePage() {
       >
         {isEditing ? (
           <div className="space-y-2">
-            <label className="flex items-center gap-2 text-xs">
+            <label className="flex items-center gap-0 text-xs">
               <input
                 type="checkbox"
                 checked={isGroupLesson}
@@ -948,7 +948,7 @@ export default function EmployeePage() {
                   <div className="mb-2 text-[11px] text-slate-500">
                     학생 선택 ({selectedGroupChildIds.length}/8)
                   </div>
-                  <div className="grid max-h-40 grid-cols-1 gap-1 overflow-y-auto">
+                  <div className="grid max-h-40 grid-cols-1 gap-0 overflow-y-auto">
                     {filteredGroupChildren.map((c) => {
                       const active = selectedGroupChildIds.includes(c.id)
                       return (
@@ -1016,7 +1016,7 @@ export default function EmployeePage() {
               className="w-full rounded border bg-white px-[2px] py-1 text-xs"
             />
 
-            <div className="flex gap-1">
+            <div className="flex gap-0">
               <button
                 onClick={() => handleSaveSchedule(dateStr, item.hourSlot)}
                 className="flex-1 rounded bg-indigo-600 px-[2px] py-1 text-xs text-white"
@@ -1044,7 +1044,7 @@ export default function EmployeePage() {
               <div className="font-medium text-slate-800">{title}</div>
             </button>
 
-            <div className="mt-1 flex flex-wrap gap-1">
+            <div className="mt-0 flex flex-wrap gap-0">
               <span className={`rounded-full border px-[2px] py-0.5 text-[11px] ${getVoucherClass(item.voucherType)}`}>
                 {item.voucherType || '일반'}
               </span>
@@ -1056,13 +1056,13 @@ export default function EmployeePage() {
             </div>
 
             {item.note ? (
-              <div className="mt-1 text-[11px] text-slate-500">
+              <div className="mt-0 text-[11px] text-slate-500">
                 {item.note}
               </div>
             ) : null}
 
             {item.isGroup ? (
-              <div className="mt-2 space-y-1 text-[11px] text-slate-600">
+              <div className="mt-0 space-y-1 text-[11px] text-slate-600">
                 {item.rows.map((r) => {
                   const child = children.find((c) => c.id === Number(r.child_id))
                   const log = attendanceMap.get(getAttendanceKey(r))
@@ -1082,7 +1082,7 @@ export default function EmployeePage() {
               </div>
             ) : null}
 
-            <div className="mt-2 flex flex-wrap gap-1">
+            <div className="mt-0 flex flex-wrap gap-0">
               {!item.isGroup && firstChild ? (
                 <button
                   onClick={() => setChildInfoModal({ open: true, child: firstChild })}
@@ -1131,7 +1131,7 @@ export default function EmployeePage() {
 
                 {isEditing ? (
                   <div className="space-y-2">
-                    <label className="flex items-center gap-2 text-xs">
+                    <label className="flex items-center gap-0 text-xs">
                       <input
                         type="checkbox"
                         checked={isGroupLesson}
@@ -1159,7 +1159,7 @@ export default function EmployeePage() {
                           placeholder="학생 이름 검색"
                           className="w-full rounded border bg-white px-[2px] py-2 text-sm"
                         />
-                        <div className="grid max-h-40 grid-cols-1 gap-1 overflow-y-auto rounded border p-2">
+                        <div className="grid max-h-40 grid-cols-1 gap-0 overflow-y-auto rounded border p-2">
                           {filteredGroupChildren.map((c) => {
                             const active = selectedGroupChildIds.includes(c.id)
                             return (
@@ -1226,7 +1226,7 @@ export default function EmployeePage() {
                       className="w-full rounded border bg-white px-[2px] py-2 text-sm"
                     />
 
-                    <div className="flex gap-2">
+                    <div className="flex gap-0">
                       <button
                         onClick={() => handleSaveSchedule(dateStr, hourSlot)}
                         className="flex-1 rounded bg-indigo-600 px-[2px] py-2 text-sm text-white"
@@ -1303,18 +1303,18 @@ export default function EmployeePage() {
 
     return (
       <div key={row.id} className="rounded-2xl border bg-white p-4">
-        <div className="flex items-start justify-between gap-3">
+        <div className="flex items-start justify-between gap-0">
           <div>
             <div className="font-semibold">{timeText}</div>
             <div className="text-sm text-slate-700">
               {row.is_group ? row.group_name || '그룹수업' : child?.child_name ?? '이름없음'}
             </div>
             {row.is_group ? (
-              <div className="mt-1 text-xs text-slate-500">
+              <div className="mt-0 text-xs text-slate-500">
                 학생: {groupChildren.length > 0 ? groupChildren.join(', ') : '이름없음'}
               </div>
             ) : child ? (
-              <div className="mt-1 text-xs text-slate-500">
+              <div className="mt-0 text-xs text-slate-500">
                 나이: {ageText || '-'}
               </div>
             ) : null}
@@ -1330,9 +1330,9 @@ export default function EmployeePage() {
           )}
         </div>
 
-        {row.note ? <div className="mt-2 text-xs text-slate-500">{row.note}</div> : null}
+        {row.note ? <div className="mt-0 text-xs text-slate-500">{row.note}</div> : null}
 
-        <div className="mt-3 flex flex-wrap gap-2">
+        <div className="mt-0 flex flex-wrap gap-0">
           <button
             type="button"
             onClick={() => openRecordModal(row)}
@@ -1362,10 +1362,10 @@ export default function EmployeePage() {
       <div className="pointer-events-none absolute bottom-[80px] right-[10%] h-52 w-52 rounded-full bg-pink-100/50 blur-3xl" />
 
       <div className="relative mx-auto max-w-7xl rounded-[28px] border border-white/70 bg-white/85 p-4 shadow-[0_20px_60px_rgba(0,0,0,0.08)] backdrop-blur md:p-6">
-        <div className="mb-4 flex items-start justify-between gap-3">
+        <div className="mb-4 flex items-start justify-between gap-0">
           <div>
             <h1 className="text-xl font-bold">직원 화면</h1>
-            <p className="mt-1 text-sm text-slate-500">
+            <p className="mt-0 text-sm text-slate-500">
               {user ? `${user.name} (${user.loginId || 'employee'})` : '사용자 없음'}
             </p>
           </div>
@@ -1378,7 +1378,7 @@ export default function EmployeePage() {
           </button>
         </div>
 
-        <div className="mb-4 flex flex-wrap gap-2">
+        <div className="mb-4 flex flex-wrap gap-0">
           <button
             onClick={() => setTab('today')}
             className={`rounded-xl px-4 py-2 ${tab === 'today' ? 'bg-black text-white' : 'bg-slate-200'}`}
@@ -1403,7 +1403,7 @@ export default function EmployeePage() {
 
         {tab === 'today' ? (
           <div>
-            <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <div className="mb-4 flex flex-col gap-0 md:flex-row md:items-center md:justify-between">
               <h2 className="text-lg font-bold">오늘보기 / 날짜선택</h2>
               <input
                 type="date"
@@ -1422,7 +1422,7 @@ export default function EmployeePage() {
                 오늘 데이터 없음
               </div>
             ) : (
-              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+              <div className="grid gap-0 md:grid-cols-2 xl:grid-cols-3">
                 {todayItems.map(({ row }) => renderTodayCard(row))}
               </div>
             )}
@@ -1431,10 +1431,10 @@ export default function EmployeePage() {
 
         {tab === 'schedule' ? (
           <div className="mt-0 border-t-0 pt-0">
-            <div className="mb-3 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <div className="mb-3 flex flex-col gap-0 md:flex-row md:items-center md:justify-between">
               <h2 className="text-lg font-bold">주간 시간표</h2>
 
-              <div className="flex gap-2">
+              <div className="flex gap-0">
                 <button
                   onClick={() => {
                     const d = new Date(weekBaseDate)
@@ -1463,7 +1463,7 @@ export default function EmployeePage() {
               <table className="w-full table-fixed border text-xs">
                 <thead>
                   <tr>
-                    <th className="w-[56px] border bg-slate-100 px-[2px] py-2">시간</th>
+                    <th className="w-[44px] border bg-slate-100 px-[2px] py-2">시간</th>
                     {weekDates.map((date, idx) => (
                       <th key={idx} className="w-[15.6%] border bg-slate-100 px-[2px] py-2">
                         <div className="text-sm font-semibold">
@@ -1493,7 +1493,7 @@ export default function EmployeePage() {
                           >
                             {isEditing ? (
                               <div className="min-h-[88px] space-y-2">
-                                <label className="flex items-center gap-2 text-xs">
+                                <label className="flex items-center gap-0 text-xs">
                                   <input
                                     type="checkbox"
                                     checked={isGroupLesson}
@@ -1521,7 +1521,7 @@ export default function EmployeePage() {
                                       placeholder="학생 이름 검색"
                                       className="w-full rounded border bg-white px-[2px] py-2 text-sm"
                                     />
-                                    <div className="grid max-h-40 grid-cols-1 gap-1 overflow-y-auto rounded border p-2">
+                                    <div className="grid max-h-40 grid-cols-1 gap-0 overflow-y-auto rounded border p-2">
                                       {filteredGroupChildren.map((c) => {
                                         const active = selectedGroupChildIds.includes(c.id)
                                         return (
@@ -1590,7 +1590,7 @@ export default function EmployeePage() {
                                   className="w-full rounded border bg-white px-[2px] py-2 text-sm"
                                 />
 
-                                <div className="flex gap-1">
+                                <div className="flex gap-0">
                                   <button
                                     onClick={() => handleSaveSchedule(dateStr, hourSlot)}
                                     className="flex-1 rounded bg-indigo-600 px-[2px] py-2 text-white"
@@ -1647,8 +1647,8 @@ export default function EmployeePage() {
 
         {tab === 'week_overview' ? (
           <div className="mt-0 border-t-0 pt-0">
-            <div className="mb-3 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-              <div className="flex gap-2">
+            <div className="mb-3 flex flex-col gap-0 md:flex-row md:items-center md:justify-between">
+              <div className="flex gap-0">
                 <button
                   onClick={() => {
                     const d = new Date(weekBaseDate)
@@ -1674,19 +1674,19 @@ export default function EmployeePage() {
             </div>
 
             <div className="overflow-x-auto rounded-2xl border bg-white">
-              <table className="min-w-[520px] table-fixed border-collapse text-[10px] md:min-w-full md:text-xs">
+              <table className="min-w-[420px] table-fixed border-collapse text-[9px] md:min-w-full md:text-xs">
                 <thead>
                   <tr>
-                    <th className="sticky left-0 z-10 w-[36px] border-b border-r bg-slate-100 px-[2px] py-2 text-center font-semibold">
+                    <th className="sticky left-0 z-10 w-[30px] border-b border-r bg-slate-100 px-[2px] py-2 text-center font-semibold">
                       시간
                     </th>
                     {weekDates.map((date, idx) => (
                       <th
                         key={idx}
-                        className="w-[56px] border-b border-r bg-slate-100 px-[2px] py-2 text-center font-semibold"
+                        className="w-[44px] border-b border-r bg-slate-100 px-[2px] py-2 text-center font-semibold"
                       >
                         <div>{['월', '화', '수', '목', '금', '토'][idx]}</div>
-                        <div className="text-[10px] text-slate-500 md:text-xs">{toShortMonthDay(date)}</div>
+                        <div className="text-[9px] text-slate-500 md:text-xs">{toShortMonthDay(date)}</div>
                       </th>
                     ))}
                   </tr>
@@ -1708,7 +1708,7 @@ export default function EmployeePage() {
                             className="align-top border-b border-r px-[2px] py-1"
                           >
                             {compactItems.length === 0 ? (
-                              <div className="min-h-[42px] text-[10px] text-slate-300">-</div>
+                              <div className="min-h-[42px] text-[9px] text-slate-300">-</div>
                             ) : (
                               <div className="space-y-1">
                                 {compactItems.map((item) => (
@@ -1759,7 +1759,7 @@ export default function EmployeePage() {
                 ))}
               </select>
 
-              <div className="flex gap-2">
+              <div className="flex gap-0">
                 <button
                   onClick={handleSaveRecordStatus}
                   className="flex-1 rounded-xl bg-indigo-600 py-3 text-white md:py-2"
@@ -1822,7 +1822,7 @@ export default function EmployeePage() {
                 </div>
               </div>
 
-              <div className="mt-5">
+              <div className="mt-0">
                 <button
                   onClick={() =>
                     setChildInfoModal({
