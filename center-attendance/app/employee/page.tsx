@@ -485,8 +485,7 @@ export default function EmployeePage() {
       const label =
         item.isGroup
           ? names.length <= 2
-            ? `${String(item.minuteSlot).padStart(2, '0')} ${names.join(', ')}`
-            : `${String(item.minuteSlot).padStart(2, '0')} ${names.slice(0, 2).join(', ')} 외${names.length - 2}`
+            ? `${String(item.minuteSlot).padStart(2, '0')} ${names[0] ?? ''}외${names.length - 1}`
           : `${String(item.minuteSlot).padStart(2, '0')} ${names[0] ?? '-'}`
 
       return {
