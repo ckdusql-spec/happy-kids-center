@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 
-type MainTab = 'today' | 'schedule'
+type MainTab = 'today' | 'schedule' | 'week_overview'
 type AttendanceStatus = 'attended' | 'absent' | 'makeup' | 'same_day_absent'
 type StaffRole = 'admin' | 'employee'
 
@@ -179,48 +179,6 @@ function getStatusClass(status: AttendanceStatus) {
   if (status === 'makeup') return 'bg-sky-100 text-sky-700'
   if (status === 'absent') return 'bg-rose-50 text-rose-600'
   return 'bg-red-100 text-red-700'
-}
-
-function getScheduleCardBgClass(item: DisplayScheduleItem, classLogs: ClassLogRow[]) {
-  const relatedLogs = classLogs.filter((log) => {
-    const minuteTotal = getLogMinuteTotal(log)
-    if (minuteTotal == null) return false
-
-    if (item.isGroup) {
-      return item.rows.some((row) => {
-        const rowMinute = getEntryMinuteTotal(row)
-        return (
-          log.class_date === row.date &&
-          Number(log.staff_id) === Number(row.teacher_id) &&
-          Number(log.child_id) === Number(row.child_id) &&
-          minuteTotal === rowMinute &&
-          Boolean(log.is_group) &&
-          (log.group_id ?? '') === (row.group_id ?? '')
-        )
-      })
-    }
-
-    const row = item.rows[0]
-    if (!row) return false
-
-    return (
-      log.class_date === row.date &&
-      Number(log.staff_id) === Number(row.teacher_id) &&
-      Number(log.child_id) === Number(row.child_id) &&
-      minuteTotal === getEntryMinuteTotal(row) &&
-      !log.is_group
-    )
-  })
-
-  if (relatedLogs.some((log) => log.status === 'attended' || log.status === 'makeup')) {
-    return 'bg-blue-50'
-  }
-
-  if (relatedLogs.some((log) => log.status === 'same_day_absent' || log.status === 'absent')) {
-    return 'bg-red-50'
-  }
-
-  return 'bg-white'
 }
 
 function getEntryMinuteTotal(entry: ScheduleEntryRow) {
@@ -496,6 +454,46 @@ export default function EmployeePage() {
     return Array.from(groupMap.values()).sort((a, b) => {
       if (a.minuteSlot !== b.minuteSlot) return a.minuteSlot - b.minuteSlot
       return (a.groupName ?? '').localeCompare(b.groupName ?? '', 'ko')
+    })
+  }
+
+  function buildCompactWeekItems(dateStr: string, hourSlot: string) {
+    const items = buildDisplayItems(dateStr, hourSlot)
+
+    return items.map((item) => {
+      const names = item.isGroup
+        ? item.rows
+            .map((row) => children.find((c) => Number(c.id) === Number(row.child_id))?.child_name ?? '')
+            .filter(Boolean)
+        : [
+            children.find((c) => Number(c.id) === Number(item.rows[0]?.child_id))?.child_name ?? '-',
+          ]
+
+      const relatedLogs = item.rows
+        .map((row) => attendanceMap.get(getAttendanceKey(row)))
+        .filter(Boolean)
+
+      let colorClass = 'text-slate-700'
+      if (relatedLogs.some((log) => log?.status === 'attended' || log?.status === 'makeup')) {
+        colorClass = 'text-blue-600 font-semibold'
+      } else if (
+        relatedLogs.some((log) => log?.status === 'absent' || log?.status === 'same_day_absent')
+      ) {
+        colorClass = 'text-red-500 font-semibold'
+      }
+
+      const label =
+        item.isGroup
+          ? names.length <= 2
+            ? `${String(item.minuteSlot).padStart(2, '0')} ${names.join(', ')}`
+            : `${String(item.minuteSlot).padStart(2, '0')} ${names.slice(0, 2).join(', ')} 외${names.length - 2}`
+          : `${String(item.minuteSlot).padStart(2, '0')} ${names[0] ?? '-'}`
+
+      return {
+        key: item.key,
+        label,
+        colorClass,
+      }
     })
   }
 
@@ -1392,6 +1390,12 @@ export default function EmployeePage() {
           >
             주간시간표
           </button>
+          <button
+            onClick={() => setTab('week_overview')}
+            className={`rounded-xl px-4 py-2 ${tab === 'week_overview' ? 'bg-black text-white' : 'bg-slate-200'}`}
+          >
+            추가 시간표
+          </button>
         </div>
 
         {message ? <p className="mb-4 text-sm text-red-500">{message}</p> : null}
@@ -1640,6 +1644,103 @@ export default function EmployeePage() {
 
             <div className="mt-3 text-sm text-slate-500">
               파랑=출석/보강, 연빨강=결석/당일결석
+            </div>
+          </div>
+        ) : null}
+
+        {tab === 'week_overview' ? (
+          <div className="mt-6 border-t pt-6">
+            <div className="mb-3 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <h2 className="text-lg font-bold">추가 시간표</h2>
+
+              <div className="flex gap-2">
+                <button
+                  onClick={() => {
+                    const d = new Date(weekBaseDate)
+                    d.setDate(d.getDate() - 7)
+                    setWeekBaseDate(d)
+                  }}
+                  className="rounded-lg bg-slate-200 px-3 py-2"
+                >
+                  ◀
+                </button>
+
+                <button
+                  onClick={() => {
+                    const d = new Date(weekBaseDate)
+                    d.setDate(d.getDate() + 7)
+                    setWeekBaseDate(d)
+                  }}
+                  className="rounded-lg bg-slate-200 px-3 py-2"
+                >
+                  ▶
+                </button>
+              </div>
+            </div>
+
+            <div className="mb-3 text-xs text-slate-500 md:text-sm">
+              휴대폰에서 주간 일정을 한눈에 보는 간단 시간표입니다. 학생 이름만 최소 표기로 표시됩니다.
+            </div>
+
+            <div className="overflow-x-auto rounded-2xl border bg-white">
+              <table className="min-w-[900px] table-fixed border-collapse text-[10px] md:min-w-full md:text-xs">
+                <thead>
+                  <tr>
+                    <th className="sticky left-0 z-10 w-[52px] border-b border-r bg-slate-100 px-1 py-2 text-center font-semibold">
+                      시간
+                    </th>
+                    {weekDates.map((date, idx) => (
+                      <th
+                        key={idx}
+                        className="w-[140px] border-b border-r bg-slate-100 px-1 py-2 text-center font-semibold"
+                      >
+                        <div>{['월', '화', '수', '목', '금', '토'][idx]}</div>
+                        <div className="text-[10px] text-slate-500 md:text-xs">{toShortMonthDay(date)}</div>
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {hourSlots.map((hourSlot) => (
+                    <tr key={`overview-${hourSlot}`}>
+                      <td className="sticky left-0 z-10 border-b border-r bg-slate-50 px-1 py-2 text-center font-medium">
+                        {getHourLabel(hourSlot)}
+                      </td>
+
+                      {weekDates.map((date) => {
+                        const dateStr = toDateString(date)
+                        const compactItems = buildCompactWeekItems(dateStr, hourSlot)
+
+                        return (
+                          <td
+                            key={`overview-${dateStr}-${hourSlot}`}
+                            className="align-top border-b border-r px-1 py-1"
+                          >
+                            {compactItems.length === 0 ? (
+                              <div className="min-h-[42px] text-[10px] text-slate-300">-</div>
+                            ) : (
+                              <div className="space-y-1">
+                                {compactItems.map((item) => (
+                                  <div
+                                    key={item.key}
+                                    className={`rounded-md bg-slate-50 px-1.5 py-1 leading-tight ${item.colorClass}`}
+                                  >
+                                    {item.label}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </td>
+                        )
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="mt-3 text-xs text-slate-500 md:text-sm">
+              파랑=출석/보강, 빨강=결석/당일결석
             </div>
           </div>
         ) : null}
