@@ -911,7 +911,7 @@ export default function EmployeePage() {
     return (
       <div
         key={item.key}
-        className={`rounded-lg border border-slate-200 px-1 py-2 text-[11px] shadow-sm ${getScheduleCardBgClass(item, classLogRows)}`}
+        className={`rounded-lg border border-slate-200 px-2 py-2 text-[11px] shadow-sm ${getScheduleCardBgClass(item, classLogRows)}`}
       >
         {isEditing ? (
           <div className="space-y-2">
@@ -935,13 +935,13 @@ export default function EmployeePage() {
                   value={groupName}
                   onChange={(e) => setGroupName(e.target.value)}
                   placeholder="그룹명"
-                  className="w-full rounded border bg-white px-1 py-1 text-xs"
+                  className="w-full rounded border bg-white px-2 py-1 text-xs"
                 />
                 <input
                   value={groupSearch}
                   onChange={(e) => setGroupSearch(e.target.value)}
                   placeholder="학생 이름 검색"
-                  className="w-full rounded border bg-white px-1 py-1 text-xs"
+                  className="w-full rounded border bg-white px-2 py-1 text-xs"
                 />
                 <div className="rounded border bg-white p-2">
                   <div className="mb-2 text-[11px] text-slate-500">
@@ -955,7 +955,7 @@ export default function EmployeePage() {
                           key={c.id}
                           type="button"
                           onClick={() => toggleGroupChild(c.id)}
-                          className={`rounded px-1 py-1 text-left text-[11px] ${
+                          className={`rounded px-2 py-1 text-left text-[11px] ${
                             active ? 'bg-rose-500 text-white' : 'bg-slate-100 text-slate-700'
                           }`}
                         >
@@ -971,7 +971,7 @@ export default function EmployeePage() {
                 <select
                   value={scheduleChildId}
                   onChange={(e) => setScheduleChildId(e.target.value ? Number(e.target.value) : '')}
-                  className="w-full rounded border bg-white px-1 py-1 text-xs"
+                  className="w-full rounded border bg-white px-2 py-1 text-xs"
                 >
                   <option value="">학생 선택</option>
                   {children.filter((c) => c.is_active).map((c) => (
@@ -984,7 +984,7 @@ export default function EmployeePage() {
                 <select
                   value={selectedVoucher}
                   onChange={(e) => setSelectedVoucher(e.target.value)}
-                  className="w-full rounded border bg-white px-1 py-1 text-xs"
+                  className="w-full rounded border bg-white px-2 py-1 text-xs"
                 >
                   <option value="">바우처 선택</option>
                   {getVoucherOptionsForChild(scheduleChildId).map((voucher) => (
@@ -999,7 +999,7 @@ export default function EmployeePage() {
             <select
               value={selectedMinute}
               onChange={(e) => setSelectedMinute(e.target.value)}
-              className="w-full rounded border bg-white px-1 py-1 text-xs"
+              className="w-full rounded border bg-white px-2 py-1 text-xs"
             >
               {getMinutesOptions().map((m) => (
                 <option key={m} value={m}>
@@ -1012,19 +1012,19 @@ export default function EmployeePage() {
               value={scheduleMemo}
               onChange={(e) => setScheduleMemo(e.target.value)}
               placeholder="메모 입력"
-              className="w-full rounded border bg-white px-1 py-1 text-xs"
+              className="w-full rounded border bg-white px-2 py-1 text-xs"
             />
 
             <div className="flex gap-1">
               <button
                 onClick={() => handleSaveSchedule(dateStr, item.hourSlot)}
-                className="flex-1 rounded bg-indigo-600 px-1 py-1 text-xs text-white"
+                className="flex-1 rounded bg-indigo-600 px-2 py-1 text-xs text-white"
               >
                 저장
               </button>
               <button
                 onClick={resetScheduleEditor}
-                className="flex-1 rounded bg-slate-300 px-1 py-1 text-xs"
+                className="flex-1 rounded bg-slate-300 px-2 py-1 text-xs"
               >
                 취소
               </button>
@@ -1044,11 +1044,11 @@ export default function EmployeePage() {
             </button>
 
             <div className="mt-1 flex flex-wrap gap-1">
-              <span className={`rounded-full border px-1 py-0.5 text-[11px] ${getVoucherClass(item.voucherType)}`}>
+              <span className={`rounded-full border px-2 py-0.5 text-[11px] ${getVoucherClass(item.voucherType)}`}>
                 {item.voucherType || '일반'}
               </span>
               {item.isGroup ? (
-                <span className="rounded-full border border-rose-200 bg-rose-50 px-1 py-0.5 text-[11px] text-rose-700">
+                <span className="rounded-full border border-rose-200 bg-rose-50 px-2 py-0.5 text-[11px] text-rose-700">
                   그룹
                 </span>
               ) : null}
@@ -1071,7 +1071,7 @@ export default function EmployeePage() {
                       key={r.id}
                       type="button"
                       onClick={() => openRecordModal(r)}
-                      className="block w-full rounded bg-white/70 px-1 py-1 text-left hover:bg-white"
+                      className="block w-full rounded bg-white/70 px-2 py-1 text-left hover:bg-white"
                     >
                       {child?.child_name ?? `학생(${r.child_id})`}
                       {log?.status ? ` (${getStatusLabel(log.status)})` : ' (미입력)'}
@@ -1085,7 +1085,7 @@ export default function EmployeePage() {
               {!item.isGroup && firstChild ? (
                 <button
                   onClick={() => setChildInfoModal({ open: true, child: firstChild })}
-                  className="rounded bg-slate-100 px-1 py-0.5 text-[11px] text-slate-700"
+                  className="rounded bg-slate-100 px-2 py-0.5 text-[11px] text-slate-700"
                 >
                   아이정보
                 </button>
@@ -1093,14 +1093,14 @@ export default function EmployeePage() {
 
               <button
                 onClick={() => handleEditSchedule(item)}
-                className="rounded bg-blue-50 px-1 py-0.5 text-[11px] text-blue-700"
+                className="rounded bg-blue-50 px-2 py-0.5 text-[11px] text-blue-700"
               >
                 수정
               </button>
 
               <button
                 onClick={() => handleDeleteSchedule(item)}
-                className="rounded bg-rose-50 px-1 py-0.5 text-[11px] text-rose-700"
+                className="rounded bg-rose-50 px-2 py-0.5 text-[11px] text-rose-700"
               >
                 삭제
               </button>
@@ -1150,13 +1150,13 @@ export default function EmployeePage() {
                           value={groupName}
                           onChange={(e) => setGroupName(e.target.value)}
                           placeholder="그룹명"
-                          className="w-full rounded border bg-white px-1 py-2 text-sm"
+                          className="w-full rounded border bg-white px-2 py-2 text-sm"
                         />
                         <input
                           value={groupSearch}
                           onChange={(e) => setGroupSearch(e.target.value)}
                           placeholder="학생 이름 검색"
-                          className="w-full rounded border bg-white px-1 py-2 text-sm"
+                          className="w-full rounded border bg-white px-2 py-2 text-sm"
                         />
                         <div className="grid max-h-40 grid-cols-1 gap-1 overflow-y-auto rounded border p-2">
                           {filteredGroupChildren.map((c) => {
@@ -1166,7 +1166,7 @@ export default function EmployeePage() {
                                 key={c.id}
                                 type="button"
                                 onClick={() => toggleGroupChild(c.id)}
-                                className={`rounded px-1 py-2 text-left text-sm ${
+                                className={`rounded px-2 py-2 text-left text-sm ${
                                   active ? 'bg-rose-500 text-white' : 'bg-slate-100 text-slate-700'
                                 }`}
                               >
@@ -1181,7 +1181,7 @@ export default function EmployeePage() {
                         <select
                           value={scheduleChildId}
                           onChange={(e) => setScheduleChildId(e.target.value ? Number(e.target.value) : '')}
-                          className="w-full rounded border bg-white px-1 py-2 text-sm"
+                          className="w-full rounded border bg-white px-2 py-2 text-sm"
                         >
                           <option value="">학생 선택</option>
                           {children.filter((c) => c.is_active).map((c) => (
@@ -1194,7 +1194,7 @@ export default function EmployeePage() {
                         <select
                           value={selectedVoucher}
                           onChange={(e) => setSelectedVoucher(e.target.value)}
-                          className="w-full rounded border bg-white px-1 py-2 text-sm"
+                          className="w-full rounded border bg-white px-2 py-2 text-sm"
                         >
                           <option value="">바우처 선택</option>
                           {getVoucherOptionsForChild(scheduleChildId).map((voucher) => (
@@ -1209,7 +1209,7 @@ export default function EmployeePage() {
                     <select
                       value={selectedMinute}
                       onChange={(e) => setSelectedMinute(e.target.value)}
-                      className="w-full rounded border bg-white px-1 py-2 text-sm"
+                      className="w-full rounded border bg-white px-2 py-2 text-sm"
                     >
                       {getMinutesOptions().map((m) => (
                         <option key={m} value={m}>
@@ -1222,19 +1222,19 @@ export default function EmployeePage() {
                       value={scheduleMemo}
                       onChange={(e) => setScheduleMemo(e.target.value)}
                       placeholder="메모 입력"
-                      className="w-full rounded border bg-white px-1 py-2 text-sm"
+                      className="w-full rounded border bg-white px-2 py-2 text-sm"
                     />
 
                     <div className="flex gap-2">
                       <button
                         onClick={() => handleSaveSchedule(dateStr, hourSlot)}
-                        className="flex-1 rounded bg-indigo-600 px-1 py-2 text-sm text-white"
+                        className="flex-1 rounded bg-indigo-600 px-3 py-2 text-sm text-white"
                       >
                         저장
                       </button>
                       <button
                         onClick={resetScheduleEditor}
-                        className="flex-1 rounded bg-slate-300 px-1 py-2 text-sm"
+                        className="flex-1 rounded bg-slate-300 px-3 py-2 text-sm"
                       >
                         취소
                       </button>
@@ -1257,7 +1257,7 @@ export default function EmployeePage() {
                         setSelectedGroupChildIds([])
                         setGroupSearch('')
                       }}
-                      className="mb-2 w-full rounded-xl border border-dashed border-slate-300 px-1 py-3 text-left text-sm text-slate-500"
+                      className="mb-2 w-full rounded-xl border border-dashed border-slate-300 px-3 py-3 text-left text-sm text-slate-500"
                     >
                       + 추가
                     </button>
@@ -1319,11 +1319,11 @@ export default function EmployeePage() {
             ) : null}
           </div>
           {status ? (
-            <span className={`rounded-full px-1 py-1 text-xs ${getStatusClass(status)}`}>
+            <span className={`rounded-full px-2 py-1 text-xs ${getStatusClass(status)}`}>
               {getStatusLabel(status)}
             </span>
           ) : (
-            <span className="rounded-full bg-slate-100 px-1 py-1 text-xs text-slate-600">
+            <span className="rounded-full bg-slate-100 px-2 py-1 text-xs text-slate-600">
               미입력
             </span>
           )}
@@ -1335,7 +1335,7 @@ export default function EmployeePage() {
           <button
             type="button"
             onClick={() => openRecordModal(row)}
-            className="rounded-lg bg-slate-200 px-1 py-2 text-xs"
+            className="rounded-lg bg-slate-200 px-3 py-2 text-xs"
           >
             상태입력
           </button>
@@ -1343,7 +1343,7 @@ export default function EmployeePage() {
             <button
               type="button"
               onClick={() => setChildInfoModal({ open: true, child })}
-              className="rounded-lg bg-slate-100 px-1 py-2 text-xs text-slate-700"
+              className="rounded-lg bg-slate-100 px-3 py-2 text-xs text-slate-700"
             >
               아이정보
             </button>
@@ -1408,7 +1408,7 @@ export default function EmployeePage() {
                 type="date"
                 value={selectedTodayDate}
                 onChange={(e) => setSelectedTodayDate(e.target.value)}
-                className="rounded-xl border border-slate-200 bg-white px-1 py-2 text-sm"
+                className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
               />
             </div>
 
@@ -1421,7 +1421,7 @@ export default function EmployeePage() {
                 오늘 데이터 없음
               </div>
             ) : (
-              <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-3">
+              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                 {todayItems.map(({ row }) => renderTodayCard(row))}
               </div>
             )}
@@ -1429,7 +1429,7 @@ export default function EmployeePage() {
         ) : null}
 
         {tab === 'schedule' ? (
-          <div className="mt-6 border-t pt-6">
+          <div className="mt-0 border-t-0 pt-0">
             <div className="mb-3 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
               <h2 className="text-lg font-bold">주간 시간표</h2>
 
@@ -1440,7 +1440,7 @@ export default function EmployeePage() {
                     d.setDate(d.getDate() - 7)
                     setWeekBaseDate(d)
                   }}
-                  className="rounded-lg bg-slate-200 px-1 py-2"
+                  className="rounded-lg bg-slate-200 px-3 py-2"
                 >
                   ◀
                 </button>
@@ -1451,7 +1451,7 @@ export default function EmployeePage() {
                     d.setDate(d.getDate() + 7)
                     setWeekBaseDate(d)
                   }}
-                  className="rounded-lg bg-slate-200 px-1 py-2"
+                  className="rounded-lg bg-slate-200 px-3 py-2"
                 >
                   ▶
                 </button>
@@ -1475,7 +1475,7 @@ export default function EmployeePage() {
                 <tbody>
                   {hourSlots.map((hourSlot) => (
                     <tr key={hourSlot}>
-                      <td className="whitespace-nowrap border bg-slate-50 px-1 py-2 font-medium">
+                      <td className="whitespace-nowrap border bg-slate-50 px-2 py-2 font-medium">
                         {getHourLabel(hourSlot)}
                       </td>
 
@@ -1512,13 +1512,13 @@ export default function EmployeePage() {
                                       value={groupName}
                                       onChange={(e) => setGroupName(e.target.value)}
                                       placeholder="그룹명"
-                                      className="w-full rounded border bg-white px-1 py-2 text-sm"
+                                      className="w-full rounded border bg-white px-2 py-2 text-sm"
                                     />
                                     <input
                                       value={groupSearch}
                                       onChange={(e) => setGroupSearch(e.target.value)}
                                       placeholder="학생 이름 검색"
-                                      className="w-full rounded border bg-white px-1 py-2 text-sm"
+                                      className="w-full rounded border bg-white px-2 py-2 text-sm"
                                     />
                                     <div className="grid max-h-40 grid-cols-1 gap-1 overflow-y-auto rounded border p-2">
                                       {filteredGroupChildren.map((c) => {
@@ -1528,7 +1528,7 @@ export default function EmployeePage() {
                                             key={c.id}
                                             type="button"
                                             onClick={() => toggleGroupChild(c.id)}
-                                            className={`rounded px-1 py-2 text-left text-sm ${
+                                            className={`rounded px-2 py-2 text-left text-sm ${
                                               active ? 'bg-rose-500 text-white' : 'bg-slate-100 text-slate-700'
                                             }`}
                                           >
@@ -1543,7 +1543,7 @@ export default function EmployeePage() {
                                     <select
                                       value={scheduleChildId}
                                       onChange={(e) => setScheduleChildId(e.target.value ? Number(e.target.value) : '')}
-                                      className="w-full rounded border bg-white px-1 py-2 text-sm"
+                                      className="w-full rounded border bg-white px-2 py-2 text-sm"
                                     >
                                       <option value="">학생 선택</option>
                                       {children
@@ -1558,7 +1558,7 @@ export default function EmployeePage() {
                                     <select
                                       value={selectedVoucher}
                                       onChange={(e) => setSelectedVoucher(e.target.value)}
-                                      className="w-full rounded border bg-white px-1 py-2 text-sm"
+                                      className="w-full rounded border bg-white px-2 py-2 text-sm"
                                     >
                                       <option value="">바우처 선택</option>
                                       {getVoucherOptionsForChild(scheduleChildId).map((voucher) => (
@@ -1573,7 +1573,7 @@ export default function EmployeePage() {
                                 <select
                                   value={selectedMinute}
                                   onChange={(e) => setSelectedMinute(e.target.value)}
-                                  className="w-full rounded border bg-white px-1 py-2 text-sm"
+                                  className="w-full rounded border bg-white px-2 py-2 text-sm"
                                 >
                                   {getMinutesOptions().map((m) => (
                                     <option key={m} value={m}>
@@ -1586,19 +1586,19 @@ export default function EmployeePage() {
                                   value={scheduleMemo}
                                   onChange={(e) => setScheduleMemo(e.target.value)}
                                   placeholder="메모 입력"
-                                  className="w-full rounded border bg-white px-1 py-2 text-sm"
+                                  className="w-full rounded border bg-white px-2 py-2 text-sm"
                                 />
 
                                 <div className="flex gap-1">
                                   <button
                                     onClick={() => handleSaveSchedule(dateStr, hourSlot)}
-                                    className="flex-1 rounded bg-indigo-600 px-1 py-2 text-white"
+                                    className="flex-1 rounded bg-indigo-600 px-2 py-2 text-white"
                                   >
                                     저장
                                   </button>
                                   <button
                                     onClick={resetScheduleEditor}
-                                    className="flex-1 rounded bg-slate-300 px-1 py-2"
+                                    className="flex-1 rounded bg-slate-300 px-2 py-2"
                                   >
                                     취소
                                   </button>
@@ -1649,9 +1649,9 @@ export default function EmployeePage() {
         ) : null}
 
         {tab === 'week_overview' ? (
-          <div className="mt-6 border-t pt-6">
+          <div className="mt-0 border-t-0 pt-0">
             <div className="mb-3 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-              <h2 className="text-lg font-bold">추가 시간표</h2>
+              
 
               <div className="flex gap-2">
                 <button
@@ -1660,7 +1660,7 @@ export default function EmployeePage() {
                     d.setDate(d.getDate() - 7)
                     setWeekBaseDate(d)
                   }}
-                  className="rounded-lg bg-slate-200 px-1 py-2"
+                  className="rounded-lg bg-slate-200 px-3 py-2"
                 >
                   ◀
                 </button>
@@ -1671,19 +1671,15 @@ export default function EmployeePage() {
                     d.setDate(d.getDate() + 7)
                     setWeekBaseDate(d)
                   }}
-                  className="rounded-lg bg-slate-200 px-1 py-2"
+                  className="rounded-lg bg-slate-200 px-3 py-2"
                 >
                   ▶
                 </button>
               </div>
             </div>
 
-            <div className="mb-3 text-xs text-slate-500 md:text-sm">
-              휴대폰에서 주간 일정을 한눈에 보는 간단 시간표입니다. 학생 이름만 최소 표기로 표시됩니다.
-            </div>
-
             <div className="overflow-x-auto rounded-2xl border bg-white">
-              <table className="min-w-[900px] table-fixed border-collapse text-[10px] md:min-w-full md:text-xs">
+              <table className="min-w-[720px] table-fixed border-collapse text-[10px] md:min-w-full md:text-xs">
                 <thead>
                   <tr>
                     <th className="sticky left-0 z-10 w-[52px] border-b border-r bg-slate-100 px-1 py-2 text-center font-semibold">
@@ -1692,7 +1688,7 @@ export default function EmployeePage() {
                     {weekDates.map((date, idx) => (
                       <th
                         key={idx}
-                        className="w-[140px] border-b border-r bg-slate-100 px-1 py-2 text-center font-semibold"
+                        className="w-[90px] border-b border-r bg-slate-100 px-0.5 py-2 text-center font-semibold"
                       >
                         <div>{['월', '화', '수', '목', '금', '토'][idx]}</div>
                         <div className="text-[10px] text-slate-500 md:text-xs">{toShortMonthDay(date)}</div>
@@ -1714,7 +1710,7 @@ export default function EmployeePage() {
                         return (
                           <td
                             key={`overview-${dateStr}-${hourSlot}`}
-                            className="align-top border-b border-r px-1 py-1"
+                            className="align-top border-b border-r px-0.5 py-1"
                           >
                             {compactItems.length === 0 ? (
                               <div className="min-h-[42px] text-[10px] text-slate-300">-</div>
@@ -1723,7 +1719,7 @@ export default function EmployeePage() {
                                 {compactItems.map((item) => (
                                   <div
                                     key={item.key}
-                                    className={`rounded-md bg-slate-50 px-1.5 py-1 leading-tight ${item.colorClass}`}
+                                    className={`rounded-md bg-slate-50 px-0.5 py-1 leading-tight ${item.colorClass}`}
                                   >
                                     {item.label}
                                   </div>
@@ -1763,7 +1759,7 @@ export default function EmployeePage() {
                     status: e.target.value as AttendanceStatus,
                   }))
                 }
-                className="mb-4 w-full rounded-xl border px-1 py-3 md:py-2"
+                className="mb-4 w-full rounded-xl border px-3 py-3 md:py-2"
               >
                 {STATUS_OPTIONS.map((status) => (
                   <option key={status} value={status}>
