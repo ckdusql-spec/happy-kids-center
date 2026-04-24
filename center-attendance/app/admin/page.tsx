@@ -1137,6 +1137,35 @@ export default function AdminPage() {
     )
   }, [csvMonth])
 
+
+  async function deleteUnloggedRegularClassSchedulesOnServer(ruleId: number) {
+    for (;;) {
+      const { data, error } = await supabase.rpc('delete_unlogged_regular_class_schedules', {
+        p_rule_id: ruleId,
+        p_batch_size: 200,
+      })
+
+      if (error) throw error
+
+      const deletedCount = Number(data ?? 0)
+      if (deletedCount <= 0) break
+    }
+  }
+
+  async function deleteUnloggedRegularGroupSchedulesOnServer(ruleId: number) {
+    for (;;) {
+      const { data, error } = await supabase.rpc('delete_unlogged_regular_group_schedules', {
+        p_rule_id: ruleId,
+        p_batch_size: 200,
+      })
+
+      if (error) throw error
+
+      const deletedCount = Number(data ?? 0)
+      if (deletedCount <= 0) break
+    }
+  }
+
   function resetScheduleEditor() {
     setEditingCell(null)
     setEditingEntryId(null)
@@ -1790,23 +1819,7 @@ async function handleDeleteRegularGroupClass(id: number) {
       const ok = window.confirm('정기 그룹수업을 삭제할까요? 출결체크된 일정은 유지되고 미출결 일정만 삭제됩니다.')
       if (!ok) return
 
-      const { data: scheduleRows, error: scheduleReadError } = await supabase
-        .from('schedule_entries')
-        .select('*')
-        .eq('is_group', true)
-        .eq('group_id', String(id))
-        .eq('is_active', true)
-
-      if (scheduleReadError) throw scheduleReadError
-
-      const { loggedRows, unloggedRows } = splitLoggedSchedules(
-        (scheduleRows ?? []) as ScheduleEntryRow[],
-        classLogs
-      )
-
-      if (unloggedRows.length > 0) {
-        await deleteScheduleEntriesByIds(unloggedRows.map((r) => r.id))
-      }
+      await deleteUnloggedRegularGroupSchedulesOnServer(id)
 
       const { error } = await supabase
         .from('regular_group_classes')
@@ -1837,12 +1850,10 @@ async function handleDeleteRegularGroupClass(id: number) {
           isActive: true,
           childIds: [],
         })
+        setRegularGroupChildInputs(Array(6).fill(''))
       }
-      setMessage(
-        loggedRows.length > 0
-          ? `정기 그룹수업 규칙은 중지되었고 출결 ${loggedRows.length}건은 유지, 미출결 ${unloggedRows.length}건만 삭제되었습니다.`
-          : '정기 그룹수업이 삭제되었습니다.'
-      )
+
+      setMessage('정기 그룹수업 규칙은 중지되었고 출결체크된 일정은 유지, 미출결 일정만 삭제되었습니다.')
     } catch (err: any) {
       setMessage(err?.message ?? '정기 그룹수업 삭제 실패')
     }
@@ -1853,31 +1864,7 @@ async function handleDeleteRegularGroupClass(id: number) {
       const ok = window.confirm('이 정기수업을 삭제할까요? 출결체크된 일정은 유지되고 미출결 일정만 삭제됩니다.')
       if (!ok) return
 
-      const rule = regularClasses.find((row) => Number(row.id) === Number(id))
-      if (!rule) {
-        setMessage('정기수업 정보를 찾을 수 없습니다.')
-        return
-      }
-
-      const endForDelete = rule.end_date || addYearsDate(rule.start_date, 5)
-      const { data: scheduleRows, error: scheduleReadError } = await supabase
-        .from('schedule_entries')
-        .select('*')
-        .like('note', `${buildRegularNoteTag(id)}%`)
-        .gte('date', rule.start_date)
-        .lte('date', endForDelete)
-        .eq('is_active', true)
-
-      if (scheduleReadError) throw scheduleReadError
-
-      const { loggedRows, unloggedRows } = splitLoggedSchedules(
-        (scheduleRows ?? []) as ScheduleEntryRow[],
-        classLogs
-      )
-
-      if (unloggedRows.length > 0) {
-        await deleteScheduleEntriesByIds(unloggedRows.map((r) => r.id))
-      }
+      await deleteUnloggedRegularClassSchedulesOnServer(id)
 
       const { error } = await supabase
         .from('regular_classes')
@@ -1901,12 +1888,11 @@ async function handleDeleteRegularGroupClass(id: number) {
           note: '',
           isActive: true,
         })
+        setRegularChildQuery('')
+        setRegularTeacherQuery('')
       }
-      setMessage(
-        loggedRows.length > 0
-          ? `정기수업 규칙은 중지되었고 출결 ${loggedRows.length}건은 유지, 미출결 ${unloggedRows.length}건만 삭제되었습니다.`
-          : '정기수업이 삭제되었습니다.'
-      )
+
+      setMessage('정기수업 규칙은 중지되었고 출결체크된 일정은 유지, 미출결 일정만 삭제되었습니다.')
     } catch (err: any) {
       setMessage(err?.message ?? '정기수업 삭제 실패')
     }
