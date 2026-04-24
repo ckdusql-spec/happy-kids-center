@@ -988,8 +988,20 @@ export default function AdminPage() {
   async function loadSchedules() {
     const weekStart = toDateString(weekDates[0])
     const weekEnd = toDateString(weekDates[weekDates.length - 1])
-    const start = weekStart < dailyDate ? weekStart : dailyDate
-    const end = weekEnd > dailyDate ? weekEnd : dailyDate
+
+    let start = dailyDate
+    let end = dailyDate
+
+    if (tab === 'summary') {
+      start = `${csvMonth}-01`
+      const endDate = new Date(start)
+      endDate.setMonth(endDate.getMonth() + 1)
+      endDate.setDate(0)
+      end = toDateString(endDate)
+    } else if (viewMode === 'staff') {
+      start = weekStart
+      end = weekEnd
+    }
 
     const { data, error } = await supabase
       .from('schedule_entries')
@@ -1068,7 +1080,7 @@ export default function AdminPage() {
 
   useEffect(() => {
     loadSchedules().catch((err: any) => setMessage(err?.message ?? '시간표 불러오기 실패'))
-  }, [weekBaseDate, dailyDate])
+  }, [weekBaseDate, dailyDate, viewMode, tab, csvMonth])
 
   useEffect(() => {
     Promise.all([loadClassLogsForMonth(), loadMonthlyGroupPrices()]).catch((err: any) =>
@@ -2994,7 +3006,7 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
                   </button>
 
                   <button
-                    onClick={() => { window.location.href = '/admin/staff-week' }}
+                    onClick={() => setViewMode('staff')}
                     className={`rounded-xl px-4 py-2 text-sm font-medium ${
                       viewMode === 'staff' ? 'bg-indigo-500 text-white' : 'bg-slate-200 text-slate-700'
                     }`}
@@ -3106,7 +3118,7 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
                       <tr>
                         <th className="border bg-slate-100 px-1 py-2">시간</th>
 
-                        {false && selectedStaff ? (
+                        {viewMode === 'staff' && selectedStaff ? (
                           weekDates.map((date, idx) => (
                             <th
                               key={`staff-${idx}`}
@@ -3142,7 +3154,7 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
                             {hourSlot}
                           </td>
 
-                          {false && selectedStaff
+                          {viewMode === 'staff' && selectedStaff
                             ? weekDates.map((date) => {
                                 const dateStr = toDateString(date)
                                 const items = buildDisplayItems(dateStr, hourSlot, Number(selectedStaff.id))
@@ -3473,7 +3485,7 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
                   </table>                </div>
 
                 <div className="space-y-4 md:hidden">
-                  {false && selectedStaff
+                  {viewMode === 'staff' && selectedStaff
                     ? [renderMobileDayCard(new Date(dailyDate), Number(selectedStaff.id))]
                     : allViewStaffs.map((staff) =>
                         renderMobileDayCard(new Date(dailyDate), Number(staff.id))
