@@ -434,6 +434,45 @@ function buildLogicalAttendanceKey(params: {
   ].join('|')
 }
 
+
+function chunkArray<T>(items: T[], size: number) {
+  const result: T[][] = []
+
+  for (let i = 0; i < items.length; i += size) {
+    result.push(items.slice(i, i + size))
+  }
+
+  return result
+}
+
+async function deleteScheduleEntriesByIds(ids: string[]) {
+  const uniqueIds = Array.from(new Set(ids.filter(Boolean)))
+  const chunks = chunkArray(uniqueIds, 200)
+
+  for (const chunk of chunks) {
+    const { error } = await supabase
+      .from('schedule_entries')
+      .delete()
+      .in('id', chunk)
+
+    if (error) throw error
+  }
+}
+
+async function deactivateScheduleEntriesByIds(ids: string[]) {
+  const uniqueIds = Array.from(new Set(ids.filter(Boolean)))
+  const chunks = chunkArray(uniqueIds, 200)
+
+  for (const chunk of chunks) {
+    const { error } = await supabase
+      .from('schedule_entries')
+      .update({ is_active: false })
+      .in('id', chunk)
+
+    if (error) throw error
+  }
+}
+
 function splitLoggedSchedules(
   scheduleRows: ScheduleEntryRow[],
   logs: ClassLogRow[]
@@ -1481,12 +1520,7 @@ export default function AdminPage() {
       )
 
       if (unloggedRows.length > 0) {
-        const { error: deactivateError } = await supabase
-          .from('schedule_entries')
-          .update({ is_active: false })
-          .in('id', unloggedRows.map((r) => r.id))
-
-        if (deactivateError) throw deactivateError
+        await deleteScheduleEntriesByIds(unloggedRows.map((r) => r.id))
       }
 
       const keepKeys = new Set(
@@ -1558,7 +1592,7 @@ export default function AdminPage() {
       setRegularTeacherQuery('')
       setMessage(
         regularForm.id
-          ? `정기수업이 수정되었습니다. 출결체크 ${loggedRows.length}건은 유지되고 미출결 일정만 갱신되었습니다.`
+          ? `정기수업이 수정되었습니다. 출결체크 ${loggedRows.length}건은 유지되고 미출결 일정만 삭제 후 재생성되었습니다.`
           : '정기수업이 저장되었습니다.'
       )
     } catch (err: any) {
@@ -1670,12 +1704,7 @@ export default function AdminPage() {
       )
 
       if (unloggedRows.length > 0) {
-        const { error: scheduleOffError } = await supabase
-          .from('schedule_entries')
-          .update({ is_active: false })
-          .in('id', unloggedRows.map((r) => r.id))
-
-        if (scheduleOffError) throw scheduleOffError
+        await deleteScheduleEntriesByIds(unloggedRows.map((r) => r.id))
       }
 
       const keepKeys = new Set(
@@ -1747,7 +1776,7 @@ export default function AdminPage() {
       })
       setMessage(
         regularGroupForm.id
-          ? `정기 그룹수업이 수정되었습니다. 출결체크 ${loggedRows.length}건은 유지되고 미출결 일정만 갱신되었습니다.`
+          ? `정기 그룹수업이 수정되었습니다. 출결체크 ${loggedRows.length}건은 유지되고 미출결 일정만 삭제 후 재생성되었습니다.`
           : '정기 그룹수업이 저장되었습니다.'
       )
     } catch (err: any) {
@@ -1776,12 +1805,7 @@ async function handleDeleteRegularGroupClass(id: number) {
       )
 
       if (unloggedRows.length > 0) {
-        const { error: scheduleError } = await supabase
-          .from('schedule_entries')
-          .update({ is_active: false })
-          .in('id', unloggedRows.map((r) => r.id))
-
-        if (scheduleError) throw scheduleError
+        await deleteScheduleEntriesByIds(unloggedRows.map((r) => r.id))
       }
 
       const { error } = await supabase
@@ -1852,12 +1876,7 @@ async function handleDeleteRegularGroupClass(id: number) {
       )
 
       if (unloggedRows.length > 0) {
-        const { error: scheduleError } = await supabase
-          .from('schedule_entries')
-          .update({ is_active: false })
-          .in('id', unloggedRows.map((r) => r.id))
-
-        if (scheduleError) throw scheduleError
+        await deleteScheduleEntriesByIds(unloggedRows.map((r) => r.id))
       }
 
       const { error } = await supabase
