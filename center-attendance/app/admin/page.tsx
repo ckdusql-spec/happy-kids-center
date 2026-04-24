@@ -356,6 +356,16 @@ function uniqueDateList(values: string[]) {
   return Array.from(new Set(values.filter(Boolean))).sort().join(', ')
 }
 
+function toMonthDayDate(value: string) {
+  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})$/)
+  if (!match) return value
+  return `${match[2]}-${match[3]}`
+}
+
+function uniqueMonthDayList(values: string[]) {
+  return Array.from(new Set(values.filter(Boolean).map(toMonthDayDate))).sort().join(', ')
+}
+
 
 function getWeekdayLabel(weekday: number) {
   return ['일', '월', '화', '수', '목', '금', '토'][weekday] ?? ''
@@ -2374,14 +2384,14 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
           makeup_count: individualRows.filter((r) => r.status === 'makeup').length,
           absent_count: individualRows.filter((r) => r.status === 'absent').length,
           same_day_absent_count: individualRows.filter((r) => r.status === 'same_day_absent').length,
-          attended_dates: uniqueDateList(individualRows.filter((r) => r.status === 'attended').map((r) => r.class_date)),
-          makeup_dates: uniqueDateList(individualRows.filter((r) => r.status === 'makeup').map((r) => r.class_date)),
-          absent_dates: uniqueDateList(individualRows.filter((r) => r.status === 'absent').map((r) => r.class_date)),
-          same_day_absent_dates: uniqueDateList(individualRows.filter((r) => r.status === 'same_day_absent').map((r) => r.class_date)),
-          group_attended_dates: uniqueDateList(
+          attended_dates: uniqueMonthDayList(individualRows.filter((r) => r.status === 'attended').map((r) => r.class_date)),
+          makeup_dates: uniqueMonthDayList(individualRows.filter((r) => r.status === 'makeup').map((r) => r.class_date)),
+          absent_dates: uniqueMonthDayList(individualRows.filter((r) => r.status === 'absent').map((r) => r.class_date)),
+          same_day_absent_dates: uniqueMonthDayList(individualRows.filter((r) => r.status === 'same_day_absent').map((r) => r.class_date)),
+          group_attended_dates: uniqueMonthDayList(
             groupRows.filter((r) => r.status === 'attended' || r.status === 'makeup').map((r) => r.class_date)
           ),
-          group_absent_dates: uniqueDateList(
+          group_absent_dates: uniqueMonthDayList(
             groupRows.filter((r) => r.status === 'absent' || r.status === 'same_day_absent').map((r) => r.class_date)
           ),
         }
@@ -2414,14 +2424,14 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
           key,
           teacher_name: teacherMap.get(Number(first.staff_id)) ?? `선생님(${first.staff_id})`,
           child_name: childMap.get(Number(first.child_id)) ?? `학생(${first.child_id})`,
-          attended_dates: uniqueDateList(individualRows.filter((r) => r.status === 'attended').map((r) => r.class_date)),
-          makeup_dates: uniqueDateList(individualRows.filter((r) => r.status === 'makeup').map((r) => r.class_date)),
-          absent_dates: uniqueDateList(individualRows.filter((r) => r.status === 'absent').map((r) => r.class_date)),
-          same_day_absent_dates: uniqueDateList(individualRows.filter((r) => r.status === 'same_day_absent').map((r) => r.class_date)),
-          group_attended_dates: uniqueDateList(
+          attended_dates: uniqueMonthDayList(individualRows.filter((r) => r.status === 'attended').map((r) => r.class_date)),
+          makeup_dates: uniqueMonthDayList(individualRows.filter((r) => r.status === 'makeup').map((r) => r.class_date)),
+          absent_dates: uniqueMonthDayList(individualRows.filter((r) => r.status === 'absent').map((r) => r.class_date)),
+          same_day_absent_dates: uniqueMonthDayList(individualRows.filter((r) => r.status === 'same_day_absent').map((r) => r.class_date)),
+          group_attended_dates: uniqueMonthDayList(
             groupRows.filter((r) => r.status === 'attended' || r.status === 'makeup').map((r) => r.class_date)
           ),
-          group_absent_dates: uniqueDateList(
+          group_absent_dates: uniqueMonthDayList(
             groupRows.filter((r) => r.status === 'absent' || r.status === 'same_day_absent').map((r) => r.class_date)
           ),
         }
