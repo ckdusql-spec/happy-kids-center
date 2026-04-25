@@ -1155,7 +1155,7 @@ export default function AdminPage() {
   async function deleteUnloggedRegularGroupSchedulesOnServer(ruleId: number) {
     for (;;) {
       const { data, error } = await supabase.rpc('delete_unlogged_regular_group_schedules', {
-        p_rule_id: ruleId,
+        p_rule_id: Number(ruleId),
         p_batch_size: 20,
       })
 
