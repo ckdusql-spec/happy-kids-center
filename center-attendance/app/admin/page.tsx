@@ -1156,7 +1156,7 @@ export default function AdminPage() {
     for (;;) {
       const { data, error } = await supabase.rpc('delete_unlogged_regular_group_schedules', {
         p_rule_id: ruleId,
-        p_batch_size: 200,
+        p_batch_size: 50,
       })
 
       if (error) throw error
