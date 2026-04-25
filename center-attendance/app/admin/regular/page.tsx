@@ -1094,6 +1094,45 @@ export default function Page() {
     }
   }
 
+
+  async function deleteUnloggedRegularClassSchedulesOnServer(ruleId: number) {
+    for (;;) {
+      const { data, error } = await supabase.rpc(
+        'delete_unlogged_regular_class_schedules',
+        {
+          p_rule_id: String(ruleId),
+          p_batch_size: 20,
+        }
+      )
+
+      if (error) {
+        throw new Error(error.message || JSON.stringify(error))
+      }
+
+      const deletedCount = Number(data ?? 0)
+      if (deletedCount <= 0) break
+    }
+  }
+
+  async function deleteUnloggedRegularGroupSchedulesOnServer(ruleId: number) {
+    for (;;) {
+      const { data, error } = await supabase.rpc(
+        'delete_unlogged_regular_group_schedules',
+        {
+          p_rule_id: String(ruleId),
+          p_batch_size: 20,
+        }
+      )
+
+      if (error) {
+        throw new Error(error.message || JSON.stringify(error))
+      }
+
+      const deletedCount = Number(data ?? 0)
+      if (deletedCount <= 0) break
+    }
+  }
+
   async function handleDeleteRegularClass(id: number) {
     try {
       const ok = window.confirm(
@@ -1101,45 +1140,7 @@ export default function Page() {
       )
       if (!ok) return
 
-      const rule = regularClasses.find((row) => Number(row.id) === Number(id))
-      if (!rule) {
-        setMessage('정기수업 정보를 찾을 수 없습니다.')
-        return
-      }
-
-      const endForDelete = rule.end_date || addYearsDate(rule.start_date, 5)
-
-      const { data: scheduleRows, error: scheduleReadError } = await supabase
-        .from('schedule_entries')
-        .select(`
-          id,
-          date,
-          time_slot,
-          minute_slot,
-          teacher_id,
-          child_id,
-          is_group,
-          group_id
-        `)
-        .like('note', `${buildRegularNoteTag(id)}%`)
-        .gte('date', rule.start_date)
-        .lte('date', endForDelete)
-        .eq('is_active', true)
-
-      if (scheduleReadError) throw scheduleReadError
-
-      const { loggedRows, unloggedRows } = await splitLoggedSchedules(
-        (scheduleRows ?? []) as ScheduleEntryRow[]
-      )
-
-      if (unloggedRows.length > 0) {
-        const { error } = await supabase
-          .from('schedule_entries')
-          .update({ is_active: false })
-          .in('id', unloggedRows.map((r) => r.id))
-
-        if (error) throw error
-      }
+      await deleteUnloggedRegularClassSchedulesOnServer(id)
 
       const { error } = await supabase
         .from('regular_classes')
@@ -1151,9 +1152,7 @@ export default function Page() {
       await loadRegularClasses()
 
       setMessage(
-        loggedRows.length > 0
-          ? `정기수업 규칙은 중지되었고 출결체크 ${loggedRows.length}건은 유지, 미출결 ${unloggedRows.length}건만 삭제되었습니다.`
-          : '정기수업이 삭제되었습니다.'
+        '정기수업 규칙은 중지되었고 출결체크된 일정은 유지, 미출결 일정만 삭제되었습니다.'
       )
     } catch (err: any) {
       setMessage(err?.message ?? '정기수업 삭제 실패')
@@ -1167,36 +1166,7 @@ export default function Page() {
       )
       if (!ok) return
 
-      const { data: scheduleRows, error: scheduleReadError } = await supabase
-        .from('schedule_entries')
-        .select(`
-          id,
-          date,
-          time_slot,
-          minute_slot,
-          teacher_id,
-          child_id,
-          is_group,
-          group_id
-        `)
-        .eq('group_id', String(id))
-        .eq('is_group', true)
-        .eq('is_active', true)
-
-      if (scheduleReadError) throw scheduleReadError
-
-      const { loggedRows, unloggedRows } = await splitLoggedSchedules(
-        (scheduleRows ?? []) as ScheduleEntryRow[]
-      )
-
-      if (unloggedRows.length > 0) {
-        const { error } = await supabase
-          .from('schedule_entries')
-          .update({ is_active: false })
-          .in('id', unloggedRows.map((r) => r.id))
-
-        if (error) throw error
-      }
+      await deleteUnloggedRegularGroupSchedulesOnServer(id)
 
       const { error } = await supabase
         .from('regular_group_classes')
@@ -1215,9 +1185,7 @@ export default function Page() {
       await Promise.all([loadRegularGroupClasses(), loadRegularGroupMembers()])
 
       setMessage(
-        loggedRows.length > 0
-          ? `정기 그룹수업 규칙은 중지되었고 출결체크 ${loggedRows.length}건은 유지, 미출결 ${unloggedRows.length}건만 삭제되었습니다.`
-          : '정기 그룹수업이 삭제되었습니다.'
+        '정기 그룹수업 규칙은 중지되었고 출결체크된 일정은 유지, 미출결 일정만 삭제되었습니다.'
       )
     } catch (err: any) {
       setMessage(err?.message ?? '정기 그룹수업 삭제 실패')
