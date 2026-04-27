@@ -322,6 +322,40 @@ function getStatusLabel(status: AttendanceStatus) {
   return '당일결석'
 }
 
+function isMakeupScheduleStatus(status?: string | null) {
+  return status === 'makeup'
+}
+
+function getCleanScheduleMemo(note?: string | null) {
+  const value = note ?? ''
+  return value
+    .replace(/\[정기수업:\d+\]/g, '')
+    .replace(/\[정기그룹:\d+\]/g, '')
+    .trim()
+}
+
+function getDisplayScheduleMemo(item: DisplayScheduleItem) {
+  const note = item.rows.map((row) => getCleanScheduleMemo(row.note)).find(Boolean)
+  return note ?? ''
+}
+
+function getScheduleNotePrefix(note?: string | null) {
+  const value = note ?? ''
+  const match = value.match(/^(\[정기수업:\d+\]|\[정기그룹:\d+\])/)
+  return match?.[0] ?? ''
+}
+
+function mergeScheduleNoteWithMemo(note: string | null | undefined, memo: string) {
+  const prefix = getScheduleNotePrefix(note)
+  const cleanMemo = memo.trim()
+  if (!prefix) return cleanMemo || null
+  return cleanMemo ? `${prefix} ${cleanMemo}` : prefix
+}
+
+function isMakeupScheduleItem(item: DisplayScheduleItem) {
+  return item.rows.some((row) => isMakeupScheduleStatus(row.status))
+}
+
 function csvEscape(value: string | number | null | undefined) {
   const str = value == null ? '' : String(value)
   return `"${str.replace(/"/g, '""')}"`
@@ -537,6 +571,8 @@ function getScheduleCardBgClass(
   item: DisplayScheduleItem,
   classLogs: ClassLogRow[]
 ) {
+  if (isMakeupScheduleItem(item)) return 'bg-orange-50'
+
   const relatedLogs = classLogs
     .filter((log) => {
       const sameDate = log.class_date === item.date
@@ -727,6 +763,11 @@ function AdminDailySchedule({
                                     <span className={`rounded-full border px-2 py-0.5 text-[11px] ${getVoucherClass(item.voucherType)}`}>
                                       {item.voucherType || '일반'}
                                     </span>
+                                    {isMakeupScheduleItem(item) ? (
+                                      <span className="rounded-full border border-orange-200 bg-orange-50 px-2 py-0.5 text-[11px] font-semibold text-orange-700">
+                                        보강
+                                      </span>
+                                    ) : null}
                                   </div>
 
                                   {item.isGroup ? (
@@ -796,6 +837,8 @@ export default function AdminPage() {
   const [scheduleChildId, setScheduleChildId] = useState<number | ''>('')
   const [selectedMinute, setSelectedMinute] = useState('00')
   const [selectedVoucher, setSelectedVoucher] = useState('')
+  const [isScheduleMakeup, setIsScheduleMakeup] = useState(false)
+  const [scheduleMemo, setScheduleMemo] = useState('')
   const [isGroupLesson, setIsGroupLesson] = useState(false)
   const [groupName, setGroupName] = useState('')
   const [selectedGroupChildIds, setSelectedGroupChildIds] = useState<number[]>([])
@@ -1173,6 +1216,8 @@ export default function AdminPage() {
     setScheduleChildId('')
     setSelectedMinute('00')
     setSelectedVoucher('')
+    setIsScheduleMakeup(false)
+    setScheduleMemo('')
     setIsGroupLesson(false)
     setGroupName('')
     setSelectedGroupChildIds([])
@@ -1948,10 +1993,10 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
           child_id: Number(childId),
           child_ids: [],
           voucher_type: '그룹수업',
-          status: 'scheduled',
+          status: isScheduleMakeup ? 'makeup' : 'scheduled',
           minute_slot: minute,
           is_active: true,
-          note: null,
+          note: scheduleMemo.trim() || null,
           is_group: true,
           group_id: groupId,
           group_name: groupName || '그룹수업',
@@ -1981,10 +2026,10 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
             class_type: 'individual',
             child_id: Number(scheduleChildId),
             voucher_type: selectedVoucher,
-            status: 'scheduled',
+            status: isScheduleMakeup ? 'makeup' : 'scheduled',
             minute_slot: minute,
             is_active: true,
-            note: null,
+            note: scheduleMemo.trim() || null,
             is_group: false,
             group_id: null,
             group_name: null,
@@ -2016,10 +2061,10 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
             class_type: 'individual',
             child_id: Number(scheduleChildId),
             voucher_type: selectedVoucher,
-            status: 'scheduled',
+            status: isScheduleMakeup ? 'makeup' : 'scheduled',
             minute_slot: minute,
             is_active: true,
-            note: null,
+            note: scheduleMemo.trim() || null,
             is_group: false,
             group_id: null,
             group_name: null,
@@ -2036,6 +2081,28 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
       setMessage('시간표가 저장되었습니다.')
     } catch (err: any) {
       setMessage(err?.message ?? '시간표 저장 실패')
+    }
+  }
+
+  async function handleUpdateScheduleMemo(item: DisplayScheduleItem) {
+    try {
+      const currentMemo = getDisplayScheduleMemo(item)
+      const nextMemo = window.prompt('수업 메모를 입력하세요.', currentMemo)
+      if (nextMemo == null) return
+
+      for (const row of item.rows) {
+        const { error } = await supabase
+          .from('schedule_entries')
+          .update({ note: mergeScheduleNoteWithMemo(row.note, nextMemo) })
+          .eq('id', row.id)
+
+        if (error) throw error
+      }
+
+      await loadSchedules()
+      setMessage('메모가 수정되었습니다.')
+    } catch (err: any) {
+      setMessage(err?.message ?? '메모 수정 실패')
     }
   }
 
@@ -2110,6 +2177,8 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
       setSelectedMinute(String(item.minuteSlot).padStart(2, '0'))
       setScheduleChildId('')
       setSelectedVoucher('')
+      setIsScheduleMakeup(isMakeupScheduleItem(item))
+      setScheduleMemo(getDisplayScheduleMemo(item))
     } else {
       const row = item.rows[0]
       setIsGroupLesson(false)
@@ -2118,6 +2187,8 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
       setScheduleChildId(row.child_id ? Number(row.child_id) : '')
       setSelectedMinute(String(row.minute_slot ?? 0).padStart(2, '0'))
       setSelectedVoucher(row.voucher_type ?? '')
+      setIsScheduleMakeup(isMakeupScheduleStatus(row.status))
+      setScheduleMemo(getCleanScheduleMemo(row.note))
       setSelectedGroupChildIds([])
       setGroupName('')
     }
@@ -2210,36 +2281,49 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
 
       const entry = recordModal.entry
       const status = recordModal.status
-      const classTime = buildClassTimestamp(entry.date, entry.time_slot, entry.minute_slot)
-      const existing = findExistingClassLog(entry)
+      const targetEntries =
+        entry.is_group && entry.group_id
+          ? allScheduleEntries.filter((row) => {
+              const sameGroup = Boolean(row.is_group) && (row.group_id ?? '') === (entry.group_id ?? '')
+              const sameDate = row.date === entry.date
+              const sameTime = row.time_slot === entry.time_slot && Number(row.minute_slot ?? 0) === Number(entry.minute_slot ?? 0)
+              const sameChild = Number(row.child_id) === Number(entry.child_id)
+              return sameGroup && sameDate && sameTime && sameChild && row.is_active
+            })
+          : [entry]
 
-      if (existing?.id) {
-        const { error } = await supabase
-          .from('class_logs')
-          .update({
+      for (const targetEntry of targetEntries) {
+        const targetClassTime = buildClassTimestamp(targetEntry.date, targetEntry.time_slot, targetEntry.minute_slot)
+        const existing = findExistingClassLog(targetEntry)
+
+        if (existing?.id) {
+          const { error } = await supabase
+            .from('class_logs')
+            .update({
+              status,
+              voucher_type: targetEntry.voucher_type ?? null,
+              is_group: Boolean(targetEntry.is_group),
+              group_id: targetEntry.group_id ?? null,
+              group_name: targetEntry.group_name ?? null,
+            })
+            .eq('id', existing.id)
+
+          if (error) throw error
+        } else {
+          const { error } = await supabase.from('class_logs').insert({
+            staff_id: Number(targetEntry.teacher_id),
+            child_id: Number(targetEntry.child_id),
+            class_date: targetEntry.date,
+            class_time: targetClassTime,
             status,
-            voucher_type: entry.voucher_type ?? null,
-            is_group: Boolean(entry.is_group),
-            group_id: entry.group_id ?? null,
-            group_name: entry.group_name ?? null,
+            voucher_type: targetEntry.voucher_type ?? null,
+            is_group: Boolean(targetEntry.is_group),
+            group_id: targetEntry.group_id ?? null,
+            group_name: targetEntry.group_name ?? null,
           })
-          .eq('id', existing.id)
 
-        if (error) throw error
-      } else {
-        const { error } = await supabase.from('class_logs').insert({
-          staff_id: Number(entry.teacher_id),
-          child_id: Number(entry.child_id),
-          class_date: entry.date,
-          class_time: classTime,
-          status,
-          voucher_type: entry.voucher_type ?? null,
-          is_group: Boolean(entry.is_group),
-          group_id: entry.group_id ?? null,
-          group_name: entry.group_name ?? null,
-        })
-
-        if (error) throw error
+          if (error) throw error
+        }
       }
 
       await loadClassLogsForMonth()
@@ -2248,7 +2332,7 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
         entry: null,
         status: 'attended',
       })
-      setMessage('출결이 저장되었습니다.')
+      setMessage(entry.is_group && targetEntries.length > 1 ? '그룹 출결이 모든 담당 선생님에게 저장되었습니다.' : '출결이 저장되었습니다.')
     } catch (err: any) {
       setMessage(err?.message ?? '출결 저장 실패')
     }
@@ -2606,6 +2690,15 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
               그룹수업
             </label>
 
+            <label className="flex items-center gap-2 text-xs text-orange-700">
+              <input
+                type="checkbox"
+                checked={isScheduleMakeup}
+                onChange={(e) => setIsScheduleMakeup(e.target.checked)}
+              />
+              보강
+            </label>
+
             {isGroupLesson ? (
               <>
                 <input
@@ -2685,6 +2778,13 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
               ))}
             </select>
 
+            <input
+              value={scheduleMemo}
+              onChange={(e) => setScheduleMemo(e.target.value)}
+              placeholder="메모 입력"
+              className="w-full rounded border bg-white px-2 py-1 text-xs"
+            />
+
             <div className="flex gap-1">
               <button
                 onClick={() => handleSaveSchedule(dateStr, item.hourSlot, staffId)}
@@ -2717,6 +2817,11 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
               <span className={`rounded-full border px-2 py-0.5 text-[11px] ${getVoucherClass(item.voucherType)}`}>
                 {item.voucherType || '일반'}
               </span>
+              {isMakeupScheduleItem(item) ? (
+                <span className="rounded-full border border-orange-200 bg-orange-50 px-2 py-0.5 text-[11px] font-semibold text-orange-700">
+                  보강
+                </span>
+              ) : null}
               {item.isGroup ? (
                 <span className="rounded-full border border-rose-200 bg-rose-50 px-2 py-0.5 text-[11px] text-rose-700">
                   그룹
@@ -2754,6 +2859,24 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
                   아이정보
                 </button>
               ) : null}
+
+              {getDisplayScheduleMemo(item) ? (
+                <button
+                  onClick={() => handleUpdateScheduleMemo(item)}
+                  className="rounded bg-amber-50 px-2 py-0.5 text-[11px] text-amber-700"
+                  title="메모 클릭 시 수정"
+                >
+                  메모: {getDisplayScheduleMemo(item)}
+                </button>
+              ) : (
+                <button
+                  onClick={() => handleUpdateScheduleMemo(item)}
+                  className="rounded bg-slate-50 px-2 py-0.5 text-[11px] text-slate-500"
+                  title="메모 추가"
+                >
+                  메모
+                </button>
+              )}
 
               <button
                 onClick={() => handleEditSchedule(item)}
@@ -2811,6 +2934,15 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
                         }}
                       />
                       그룹수업
+                    </label>
+
+                    <label className="flex items-center gap-2 text-xs text-orange-700">
+                      <input
+                        type="checkbox"
+                        checked={isScheduleMakeup}
+                        onChange={(e) => setIsScheduleMakeup(e.target.checked)}
+                      />
+                      보강
                     </label>
 
                     {isGroupLesson ? (
@@ -2887,6 +3019,13 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
                       ))}
                     </select>
 
+                    <input
+                      value={scheduleMemo}
+                      onChange={(e) => setScheduleMemo(e.target.value)}
+                      placeholder="메모 입력"
+                      className="w-full rounded border bg-white px-2 py-2 text-sm"
+                    />
+
                     <div className="flex gap-2">
                       <button
                         onClick={() => handleSaveSchedule(dateStr, hourSlot, staffId)}
@@ -2913,6 +3052,8 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
                         setScheduleChildId('')
                         setSelectedMinute('00')
                         setSelectedVoucher('')
+                        setIsScheduleMakeup(false)
+                        setScheduleMemo('')
                         setIsGroupLesson(false)
                         setGroupName('')
                         setSelectedGroupChildIds([])
@@ -3199,6 +3340,15 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
                                           그룹수업
                                         </label>
 
+                                        <label className="flex items-center gap-2 text-xs text-orange-700">
+                                          <input
+                                            type="checkbox"
+                                            checked={isScheduleMakeup}
+                                            onChange={(e) => setIsScheduleMakeup(e.target.checked)}
+                                          />
+                                          보강
+                                        </label>
+
                                         {isGroupLesson ? (
                                           <>
                                             <input
@@ -3317,6 +3467,7 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
                                             setScheduleChildId('')
                                             setSelectedMinute('00')
                                             setSelectedVoucher('')
+                                            setIsScheduleMakeup(false)
                                             setScheduleMemo('')
                                             setIsGroupLesson(false)
                                             setGroupName('')
@@ -3361,6 +3512,15 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
                                             }}
                                           />
                                           그룹수업
+                                        </label>
+
+                                        <label className="flex items-center gap-2 text-xs text-orange-700">
+                                          <input
+                                            type="checkbox"
+                                            checked={isScheduleMakeup}
+                                            onChange={(e) => setIsScheduleMakeup(e.target.checked)}
+                                          />
+                                          보강
                                         </label>
 
                                         {isGroupLesson ? (
@@ -3444,6 +3604,13 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
                                           ))}
                                         </select>
 
+                                        <input
+                                          value={scheduleMemo}
+                                          onChange={(e) => setScheduleMemo(e.target.value)}
+                                          placeholder="메모 입력"
+                                          className="w-full rounded border bg-white px-2 py-1 text-xs"
+                                        />
+
                                         <div className="flex gap-1">
                                           <button
                                             onClick={() =>
@@ -3476,6 +3643,8 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
                                             setScheduleChildId('')
                                             setSelectedMinute('00')
                                             setSelectedVoucher('')
+                                            setIsScheduleMakeup(false)
+                                            setScheduleMemo('')
                                             setIsGroupLesson(false)
                                             setGroupName('')
                                             setSelectedGroupChildIds([])
