@@ -571,7 +571,7 @@ function getScheduleCardBgClass(
   item: DisplayScheduleItem,
   classLogs: ClassLogRow[]
 ) {
-  if (isMakeupScheduleItem(item)) return 'bg-orange-50'
+ //if (isMakeupScheduleItem(item)) return 'bg-orange-50'
 
   const relatedLogs = classLogs
     .filter((log) => {
