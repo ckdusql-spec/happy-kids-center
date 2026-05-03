@@ -306,6 +306,11 @@ export default function Page() {
     Array(6).fill('')
   )
 
+  const [editingRegularClassId, setEditingRegularClassId] = useState<number | null>(null)
+  const [regularChangeStartDate, setRegularChangeStartDate] = useState(toDateString(new Date()))
+  const [editingRegularGroupClassId, setEditingRegularGroupClassId] = useState<number | null>(null)
+  const [regularGroupChangeStartDate, setRegularGroupChangeStartDate] = useState(toDateString(new Date()))
+
   const [regularForm, setRegularForm] = useState<RegularClassForm>({
     childId: '',
     teacherId: '',
@@ -862,6 +867,105 @@ export default function Page() {
     }))
   }
 
+  function resetRegularClassForm() {
+    setEditingRegularClassId(null)
+    setRegularChangeStartDate(toDateString(new Date()))
+    setRegularForm({
+      childId: '',
+      teacherId: '',
+      weekday: '',
+      timeSlot: '09:00',
+      minuteSlot: '00',
+      startDate: toDateString(new Date()),
+      endDate: addYearsDate(toDateString(new Date()), 5),
+      voucherType: '',
+      note: '',
+      isActive: true,
+    })
+    setRegularChildQuery('')
+    setRegularTeacherQuery('')
+  }
+
+  function resetRegularGroupClassForm() {
+    setEditingRegularGroupClassId(null)
+    setRegularGroupChangeStartDate(toDateString(new Date()))
+    setRegularGroupForm({
+      teacherId: '',
+      teacherId2: '',
+      weekday: '',
+      timeSlot: '09:00',
+      minuteSlot: '00',
+      startDate: toDateString(new Date()),
+      endDate: addYearsDate(toDateString(new Date()), 5),
+      groupName: '',
+      note: '',
+      isActive: true,
+      childIds: [],
+    })
+    setRegularGroupTeacherQuery('')
+    setRegularGroupTeacherQuery2('')
+    setRegularGroupChildInputs(Array(6).fill(''))
+  }
+
+  function startEditRegularClass(row: RegularClassRow) {
+    const child = children.find((c) => Number(c.id) === Number(row.child_id))
+    const staff = staffs.find((s) => Number(s.id) === Number(row.teacher_id))
+
+    setEditingRegularClassId(row.id)
+    setRegularChangeStartDate(toDateString(new Date()))
+    setRegularForm({
+      childId: Number(row.child_id),
+      teacherId: Number(row.teacher_id),
+      weekday: Number(row.weekday),
+      timeSlot: row.time_slot,
+      minuteSlot: String(row.minute_slot ?? 0).padStart(2, '0'),
+      startDate: row.start_date,
+      endDate: row.end_date ?? addYearsDate(row.start_date, 5),
+      voucherType: row.voucher_type ?? '일반',
+      note: row.note ?? '',
+      isActive: row.is_active,
+    })
+    setRegularChildQuery(child ? getDisplayName(child) : '')
+    setRegularTeacherQuery(staff?.name ?? '')
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
+  function startEditRegularGroupClass(row: RegularGroupClassRow) {
+    const teacher1 = staffs.find((s) => Number(s.id) === Number(row.teacher_id))
+    const teacher2Id = parseAssistantTeacherId(row.note)
+    const teacher2 = staffs.find((s) => Number(s.id) === Number(teacher2Id))
+    const members = regularGroupMembers
+      .filter((m) => Number(m.regular_group_class_id) === Number(row.id) && m.is_active)
+      .map((m) => Number(m.child_id))
+      .slice(0, 6)
+
+    const nextInputs = Array(6).fill('')
+    members.forEach((childId, index) => {
+      const child = children.find((c) => Number(c.id) === Number(childId))
+      nextInputs[index] = child ? getDisplayName(child) : ''
+    })
+
+    setEditingRegularGroupClassId(row.id)
+    setRegularGroupChangeStartDate(toDateString(new Date()))
+    setRegularGroupForm({
+      teacherId: Number(row.teacher_id),
+      teacherId2: teacher2Id ?? '',
+      weekday: Number(row.weekday),
+      timeSlot: row.time_slot,
+      minuteSlot: String(row.minute_slot ?? 0).padStart(2, '0'),
+      startDate: row.start_date,
+      endDate: row.end_date ?? addYearsDate(row.start_date, 5),
+      groupName: row.group_name,
+      note: stripAssistantTeacherTag(row.note),
+      isActive: row.is_active,
+      childIds: members,
+    })
+    setRegularGroupTeacherQuery(teacher1?.name ?? '')
+    setRegularGroupTeacherQuery2(teacher2?.name ?? '')
+    setRegularGroupChildInputs(nextInputs)
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
   async function handleSaveRegularClass() {
     try {
       if (
@@ -875,8 +979,21 @@ export default function Page() {
         return
       }
 
+      if (editingRegularClassId && !regularChangeStartDate) {
+        setMessage('수업변경 시작 날짜를 선택하세요.')
+        return
+      }
+
       const endDate =
         regularForm.endDate || addYearsDate(regularForm.startDate, 5)
+      const effectiveStartDate = editingRegularClassId
+        ? regularChangeStartDate
+        : regularForm.startDate
+
+      if (effectiveStartDate > endDate) {
+        setMessage('수업변경 시작 날짜가 종료일보다 늦을 수 없습니다.')
+        return
+      }
 
       const payload = {
         child_id: Number(regularForm.childId),
@@ -884,22 +1001,33 @@ export default function Page() {
         weekday: Number(regularForm.weekday),
         time_slot: regularForm.timeSlot,
         minute_slot: Number(regularForm.minuteSlot),
-        start_date: regularForm.startDate,
+        start_date: editingRegularClassId ? regularForm.startDate : regularForm.startDate,
         end_date: endDate,
         voucher_type: regularForm.voucherType,
         note: regularForm.note || null,
         is_active: regularForm.isActive,
       }
 
-      const { data, error } = await supabase
-        .from('regular_classes')
-        .insert(payload)
-        .select('id')
-        .single()
+      let ruleId = editingRegularClassId
 
-      if (error) throw error
+      if (editingRegularClassId) {
+        const { error } = await supabase
+          .from('regular_classes')
+          .update(payload)
+          .eq('id', editingRegularClassId)
 
-      const ruleId = data?.id ?? null
+        if (error) throw error
+      } else {
+        const { data, error } = await supabase
+          .from('regular_classes')
+          .insert(payload)
+          .select('id')
+          .single()
+
+        if (error) throw error
+        ruleId = data?.id ?? null
+      }
+
       if (!ruleId) {
         setMessage('정기수업 rule id를 찾지 못했습니다.')
         return
@@ -910,37 +1038,27 @@ export default function Page() {
       )
       const teacherName = teacher?.name ?? ''
 
-      await upsertSingleRegularSchedules(ruleId, {
+      const result = await upsertSingleRegularSchedules(ruleId, {
         childId: Number(regularForm.childId),
         teacherId: Number(regularForm.teacherId),
         teacherName,
         weekday: Number(regularForm.weekday),
         timeSlot: regularForm.timeSlot,
         minuteSlot: Number(regularForm.minuteSlot),
-        startDate: regularForm.startDate,
+        startDate: effectiveStartDate,
         endDate,
         voucherType: regularForm.voucherType,
         note: regularForm.note || '',
       })
 
       await loadRegularClasses()
+      resetRegularClassForm()
 
-      setRegularForm({
-        childId: '',
-        teacherId: '',
-        weekday: '',
-        timeSlot: '09:00',
-        minuteSlot: '00',
-        startDate: toDateString(new Date()),
-        endDate: addYearsDate(toDateString(new Date()), 5),
-        voucherType: '',
-        note: '',
-        isActive: true,
-      })
-
-      setRegularChildQuery('')
-      setRegularTeacherQuery('')
-      setMessage('정기수업이 등록되었습니다.')
+      setMessage(
+        editingRegularClassId
+          ? `정기수업이 수정되었습니다. 변경 시작일(${effectiveStartDate}) 이후 미출결 ${result.unloggedRows.length}건은 중지, 출결 ${result.loggedRows.length}건은 유지, 새 일정 ${result.insertedCount}건 생성되었습니다.`
+          : '정기수업이 등록되었습니다.'
+      )
     } catch (err: any) {
       setMessage(err?.message ?? '정기수업 저장 실패')
     }
@@ -949,11 +1067,13 @@ export default function Page() {
   async function handleSaveRegularGroupClass() {
     setRegularGroupDebugSteps([])
     try {
-      pushRegularGroupDebug('1. 정기그룹수업 저장 시작', {
+      pushRegularGroupDebug(editingRegularGroupClassId ? '1. 정기그룹수업 수정 시작' : '1. 정기그룹수업 저장 시작', {
+        editingRegularGroupClassId,
         teacherId: regularGroupForm.teacherId,
         teacherId2: regularGroupForm.teacherId2,
         weekday: regularGroupForm.weekday,
         startDate: regularGroupForm.startDate,
+        changeStartDate: regularGroupChangeStartDate,
         endDate: regularGroupForm.endDate,
         selectedChildIds: regularGroupForm.childIds.length,
       })
@@ -981,6 +1101,11 @@ export default function Page() {
         return
       }
 
+      if (editingRegularGroupClassId && !regularGroupChangeStartDate) {
+        setMessage('수업변경 시작 날짜를 선택하세요.')
+        return
+      }
+
       if (!regularGroupForm.groupName.trim()) {
         setMessage('그룹명을 입력하세요.')
         return
@@ -993,6 +1118,14 @@ export default function Page() {
 
       const endDate =
         regularGroupForm.endDate || addYearsDate(regularGroupForm.startDate, 5)
+      const effectiveStartDate = editingRegularGroupClassId
+        ? regularGroupChangeStartDate
+        : regularGroupForm.startDate
+
+      if (effectiveStartDate > endDate) {
+        setMessage('수업변경 시작 날짜가 종료일보다 늦을 수 없습니다.')
+        return
+      }
 
       const teacher1 = staffs.find(
         (s) => Number(s.id) === Number(regularGroupForm.teacherId)
@@ -1020,15 +1153,33 @@ export default function Page() {
         is_active: regularGroupForm.isActive,
       }
 
-      const { data, error } = await supabase
-        .from('regular_group_classes')
-        .insert(payload)
-        .select('id')
-        .single()
+      let ruleId = editingRegularGroupClassId
 
-      if (error) throw error
+      if (editingRegularGroupClassId) {
+        const { error } = await supabase
+          .from('regular_group_classes')
+          .update(payload)
+          .eq('id', editingRegularGroupClassId)
 
-      const ruleId = data?.id ?? null
+        if (error) throw error
+
+        const { error: memberOffError } = await supabase
+          .from('regular_group_class_members')
+          .update({ is_active: false })
+          .eq('regular_group_class_id', editingRegularGroupClassId)
+
+        if (memberOffError) throw memberOffError
+      } else {
+        const { data, error } = await supabase
+          .from('regular_group_classes')
+          .insert(payload)
+          .select('id')
+          .single()
+
+        if (error) throw error
+        ruleId = data?.id ?? null
+      }
+
       if (!ruleId) {
         setMessage('정기 그룹수업 rule id를 찾지 못했습니다.')
         return
@@ -1054,7 +1205,7 @@ export default function Page() {
         weekday: Number(regularGroupForm.weekday),
         timeSlot: regularGroupForm.timeSlot,
         minuteSlot: Number(regularGroupForm.minuteSlot),
-        startDate: regularGroupForm.startDate,
+        startDate: effectiveStartDate,
         endDate,
         groupName: regularGroupForm.groupName,
         note: stripAssistantTeacherTag(regularGroupForm.note || ''),
@@ -1067,26 +1218,13 @@ export default function Page() {
         loadScheduleEntries(),
       ])
 
-      setRegularGroupForm({
-        teacherId: '',
-        teacherId2: '',
-        weekday: '',
-        timeSlot: '09:00',
-        minuteSlot: '00',
-        startDate: toDateString(new Date()),
-        endDate: addYearsDate(toDateString(new Date()), 5),
-        groupName: '',
-        note: '',
-        isActive: true,
-        childIds: [],
-      })
-
-      setRegularGroupTeacherQuery('')
-      setRegularGroupTeacherQuery2('')
-      setRegularGroupChildInputs(Array(6).fill(''))
+      const wasEditing = Boolean(editingRegularGroupClassId)
+      resetRegularGroupClassForm()
 
       setMessage(
-        `정기 그룹수업이 등록되었습니다. 시간표 생성 ${result.insertedCount}건`
+        wasEditing
+          ? `정기 그룹수업이 수정되었습니다. 변경 시작일(${effectiveStartDate}) 이후 미출결 ${result.unloggedRows.length}건은 중지, 출결 ${result.loggedRows.length}건은 유지, 새 일정 ${result.insertedCount}건 생성되었습니다.`
+          : `정기 그룹수업이 등록되었습니다. 시간표 생성 ${result.insertedCount}건`
       )
     } catch (err: any) {
       pushRegularGroupDebug('ERROR. 정기그룹수업 저장 실패', err?.message ?? String(err))
@@ -1218,7 +1356,7 @@ export default function Page() {
           <>
             <div className="grid gap-6 md:grid-cols-2">
               <div className="rounded-2xl border p-4">
-                <h2 className="mb-3 text-xl font-bold">정기수업 등록</h2>
+                <h2 className="mb-3 text-xl font-bold">{editingRegularClassId ? '정기수업 수정' : '정기수업 등록'}</h2>
                 <div className="space-y-3">
                   <div className="space-y-2">
                     <label className="text-sm font-medium text-slate-700">학생:</label>
@@ -1364,29 +1502,52 @@ export default function Page() {
                   </div>
 
                   <div className="grid gap-3 md:grid-cols-2">
-                    <input
-                      type="date"
-                      value={regularForm.startDate}
-                      onChange={(e) => {
-                        const nextStart = e.target.value
-                        setRegularForm((p) => ({
-                          ...p,
-                          startDate: nextStart,
-                          endDate: p.endDate || addYearsDate(nextStart, 5),
-                        }))
-                      }}
-                      className="w-full rounded-xl border px-3 py-3 md:py-2"
-                    />
+                    <div className="space-y-1">
+                      <div className="text-xs text-slate-500">기존 시작일</div>
+                      <input
+                        type="date"
+                        value={regularForm.startDate}
+                        onChange={(e) => {
+                          const nextStart = e.target.value
+                          setRegularForm((p) => ({
+                            ...p,
+                            startDate: nextStart,
+                            endDate: p.endDate || addYearsDate(nextStart, 5),
+                          }))
+                        }}
+                        className="w-full rounded-xl border px-3 py-3 md:py-2"
+                      />
+                    </div>
 
-                    <input
-                      type="date"
-                      value={regularForm.endDate}
-                      onChange={(e) =>
-                        setRegularForm((p) => ({ ...p, endDate: e.target.value }))
-                      }
-                      className="w-full rounded-xl border px-3 py-3 md:py-2"
-                    />
+                    <div className="space-y-1">
+                      <div className="text-xs text-slate-500">종료일</div>
+                      <input
+                        type="date"
+                        value={regularForm.endDate}
+                        onChange={(e) =>
+                          setRegularForm((p) => ({ ...p, endDate: e.target.value }))
+                        }
+                        className="w-full rounded-xl border px-3 py-3 md:py-2"
+                      />
+                    </div>
                   </div>
+
+                  {editingRegularClassId ? (
+                    <div className="rounded-xl border border-amber-200 bg-amber-50 p-3">
+                      <div className="mb-2 text-sm font-semibold text-amber-800">
+                        수업변경 시작 날짜
+                      </div>
+                      <input
+                        type="date"
+                        value={regularChangeStartDate}
+                        onChange={(e) => setRegularChangeStartDate(e.target.value)}
+                        className="w-full rounded-xl border px-3 py-3 md:py-2"
+                      />
+                      <div className="mt-2 text-xs text-amber-700">
+                        이 날짜 이전 수업은 그대로 두고, 이 날짜 이후 미출결 수업만 새 요일/시간으로 바뀝니다. 출결된 수업은 유지됩니다.
+                      </div>
+                    </div>
+                  ) : null}
 
                   <input
                     value={regularForm.note}
@@ -1397,12 +1558,22 @@ export default function Page() {
                     className="w-full rounded-xl border px-3 py-3 md:py-2"
                   />
 
-                  <button
-                    onClick={handleSaveRegularClass}
-                    className="w-full rounded-xl bg-black py-3 text-white md:py-2"
-                  >
-                    정기수업 등록
-                  </button>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={handleSaveRegularClass}
+                      className="flex-1 rounded-xl bg-black py-3 text-white md:py-2"
+                    >
+                      {editingRegularClassId ? '정기수업 수정 적용' : '정기수업 등록'}
+                    </button>
+                    {editingRegularClassId ? (
+                      <button
+                        onClick={resetRegularClassForm}
+                        className="rounded-xl bg-slate-200 px-4 py-3 text-slate-700 md:py-2"
+                      >
+                        취소
+                      </button>
+                    ) : null}
+                  </div>
                 </div>
               </div>
 
@@ -1450,6 +1621,12 @@ export default function Page() {
 
                             <div className="mt-2 flex gap-2">
                               <button
+                                onClick={() => startEditRegularClass(row)}
+                                className="rounded bg-blue-50 px-2 py-1 text-xs text-blue-700"
+                              >
+                                수정
+                              </button>
+                              <button
                                 onClick={() => void handleDeleteRegularClass(row.id)}
                                 className="rounded bg-rose-50 px-2 py-1 text-xs text-rose-700"
                               >
@@ -1467,7 +1644,7 @@ export default function Page() {
 
             <div className="mt-8 grid gap-6 md:grid-cols-2">
               <div className="rounded-2xl border p-4">
-                <h2 className="mb-3 text-xl font-bold">정기 그룹수업 등록</h2>
+                <h2 className="mb-3 text-xl font-bold">{editingRegularGroupClassId ? '정기 그룹수업 수정' : '정기 그룹수업 등록'}</h2>
 
                 {regularGroupDebugSteps.length > 0 && (
                   <div
@@ -1624,17 +1801,37 @@ export default function Page() {
                     />
                   </div>
 
-                  <input
-                    type="date"
-                    value={regularGroupForm.endDate}
-                    onChange={(e) =>
-                      setRegularGroupForm((p) => ({
-                        ...p,
-                        endDate: e.target.value,
-                      }))
-                    }
-                    className="w-full rounded-xl border px-3 py-3 md:py-2"
-                  />
+                  <div className="space-y-1">
+                    <div className="text-xs text-slate-500">종료일</div>
+                    <input
+                      type="date"
+                      value={regularGroupForm.endDate}
+                      onChange={(e) =>
+                        setRegularGroupForm((p) => ({
+                          ...p,
+                          endDate: e.target.value,
+                        }))
+                      }
+                      className="w-full rounded-xl border px-3 py-3 md:py-2"
+                    />
+                  </div>
+
+                  {editingRegularGroupClassId ? (
+                    <div className="rounded-xl border border-amber-200 bg-amber-50 p-3">
+                      <div className="mb-2 text-sm font-semibold text-amber-800">
+                        수업변경 시작 날짜
+                      </div>
+                      <input
+                        type="date"
+                        value={regularGroupChangeStartDate}
+                        onChange={(e) => setRegularGroupChangeStartDate(e.target.value)}
+                        className="w-full rounded-xl border px-3 py-3 md:py-2"
+                      />
+                      <div className="mt-2 text-xs text-amber-700">
+                        이 날짜 이전 수업은 그대로 두고, 이 날짜 이후 미출결 그룹수업만 새 요일/시간/선생님/학생으로 바뀝니다. 출결된 수업은 유지됩니다.
+                      </div>
+                    </div>
+                  ) : null}
 
                   <div className="grid gap-2 md:grid-cols-3">
                     {Array.from({ length: 6 }, (_, index) => (
@@ -1672,12 +1869,22 @@ export default function Page() {
                     className="w-full rounded-xl border px-3 py-3 md:py-2"
                   />
 
-                  <button
-                    onClick={handleSaveRegularGroupClass}
-                    className="w-full rounded-xl bg-black py-3 text-white md:py-2"
-                  >
-                    정기 그룹수업 등록
-                  </button>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={handleSaveRegularGroupClass}
+                      className="flex-1 rounded-xl bg-black py-3 text-white md:py-2"
+                    >
+                      {editingRegularGroupClassId ? '정기 그룹수업 수정 적용' : '정기 그룹수업 등록'}
+                    </button>
+                    {editingRegularGroupClassId ? (
+                      <button
+                        onClick={resetRegularGroupClassForm}
+                        className="rounded-xl bg-slate-200 px-4 py-3 text-slate-700 md:py-2"
+                      >
+                        취소
+                      </button>
+                    ) : null}
+                  </div>
                 </div>
               </div>
 
@@ -1740,7 +1947,13 @@ export default function Page() {
                               메모: {stripAssistantTeacherTag(row.note) || '-'}
                             </div>
 
-                            <div className="mt-2">
+                            <div className="mt-2 flex gap-2">
+                              <button
+                                onClick={() => startEditRegularGroupClass(row)}
+                                className="rounded bg-blue-50 px-2 py-1 text-xs text-blue-700"
+                              >
+                                수정
+                              </button>
                               <button
                                 onClick={() =>
                                   void handleDeleteRegularGroupClass(row.id)
