@@ -507,6 +507,24 @@ async function deactivateScheduleEntriesByIds(ids: string[]) {
   }
 }
 
+
+async function fetchClassLogsForScheduleRows(scheduleRows: ScheduleEntryRow[]) {
+  const dates = scheduleRows.map((row) => row.date).filter(Boolean).sort()
+  if (dates.length === 0) return [] as ClassLogRow[]
+
+  const startDate = dates[0]
+  const endDate = dates[dates.length - 1]
+
+  const { data, error } = await supabase
+    .from('class_logs')
+    .select('*')
+    .gte('class_date', startDate)
+    .lte('class_date', endDate)
+
+  if (error) throw error
+  return (data ?? []) as ClassLogRow[]
+}
+
 function splitLoggedSchedules(
   scheduleRows: ScheduleEntryRow[],
   logs: ClassLogRow[]
@@ -1501,6 +1519,75 @@ export default function AdminPage() {
     setRegularGroupChildInputs(next)
   }
 
+  function beginEditRegularClass(row: RegularClassRow) {
+    const child = children.find((c) => Number(c.id) === Number(row.child_id))
+    const staff = staffs.find((s) => Number(s.id) === Number(row.teacher_id))
+    const defaultChangeDate = toDateString(new Date())
+    const changeStartDate = window.prompt(
+      '수업변경 시작 날짜를 입력하세요. 이 날짜 이후 미출결 일정만 삭제 후 새 요일/시간으로 재생성됩니다.',
+      defaultChangeDate
+    )
+
+    if (changeStartDate == null) return
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(changeStartDate)) {
+      setMessage('수업변경 시작 날짜는 YYYY-MM-DD 형식으로 입력하세요.')
+      return
+    }
+
+    setRegularForm({
+      id: row.id,
+      childId: row.child_id,
+      teacherId: row.teacher_id,
+      weekday: row.weekday,
+      timeSlot: row.time_slot,
+      minuteSlot: String(row.minute_slot ?? 0).padStart(2, '0'),
+      startDate: changeStartDate,
+      endDate: row.end_date ?? addYearsDate(changeStartDate, 5),
+      voucherType: row.voucher_type ?? '일반',
+      note: row.note ?? '',
+      isActive: row.is_active,
+    })
+    setRegularChildQuery(child?.child_name ? getDisplayName(child) : '')
+    setRegularTeacherQuery(staff?.name ?? '')
+    setMessage('변경할 요일/시간을 선택한 뒤 정기수업 수정을 누르세요.')
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
+  function beginEditRegularGroupClass(row: RegularGroupClassRow) {
+    const memberRows = regularGroupMembers.filter(
+      (m) => Number(m.regular_group_class_id) === Number(row.id) && m.is_active
+    )
+    const nextChildIds = memberRows.map((m) => Number(m.child_id)).slice(0, 6)
+    const defaultChangeDate = toDateString(new Date())
+    const changeStartDate = window.prompt(
+      '수업변경 시작 날짜를 입력하세요. 이 날짜 이후 미출결 일정만 삭제 후 새 요일/시간으로 재생성됩니다.',
+      defaultChangeDate
+    )
+
+    if (changeStartDate == null) return
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(changeStartDate)) {
+      setMessage('수업변경 시작 날짜는 YYYY-MM-DD 형식으로 입력하세요.')
+      return
+    }
+
+    setRegularGroupForm({
+      id: row.id,
+      teacherId: row.teacher_id,
+      weekday: row.weekday,
+      timeSlot: row.time_slot,
+      minuteSlot: String(row.minute_slot ?? 0).padStart(2, '0'),
+      startDate: changeStartDate,
+      endDate: row.end_date ?? addYearsDate(changeStartDate, 5),
+      groupName: row.group_name,
+      note: row.note ?? '',
+      isActive: row.is_active,
+      childIds: nextChildIds,
+    })
+    fillRegularGroupChildInputsByIds(nextChildIds)
+    setMessage('변경할 요일/시간을 선택한 뒤 정기 그룹수업 수정을 누르세요.')
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
   async function handleSaveRegularClass() {
     try {
       if (!regularForm.childId) {
@@ -1588,9 +1675,11 @@ export default function AdminPage() {
 
       if (existingError) throw existingError
 
+      const existingScheduleRows = (existingRows ?? []) as ScheduleEntryRow[]
+      const existingClassLogs = await fetchClassLogsForScheduleRows(existingScheduleRows)
       const { loggedRows, unloggedRows } = splitLoggedSchedules(
-        (existingRows ?? []) as ScheduleEntryRow[],
-        classLogs
+        existingScheduleRows,
+        existingClassLogs
       )
 
       if (unloggedRows.length > 0) {
@@ -1768,13 +1857,17 @@ export default function AdminPage() {
         .select('*')
         .eq('group_id', String(ruleId))
         .eq('is_group', true)
+        .gte('date', regularGroupForm.startDate)
+        .lte('date', endDate)
         .eq('is_active', true)
 
       if (existingError) throw existingError
 
+      const existingScheduleRows = (existingRows ?? []) as ScheduleEntryRow[]
+      const existingClassLogs = await fetchClassLogsForScheduleRows(existingScheduleRows)
       const { loggedRows, unloggedRows } = splitLoggedSchedules(
-        (existingRows ?? []) as ScheduleEntryRow[],
-        classLogs
+        existingScheduleRows,
+        existingClassLogs
       )
 
       if (unloggedRows.length > 0) {
@@ -4169,23 +4262,7 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
                       >
                         <button
                           type="button"
-                          onClick={() => {
-                            setRegularForm({
-                              id: row.id,
-                              childId: row.child_id,
-                              teacherId: row.teacher_id,
-                              weekday: row.weekday,
-                              timeSlot: row.time_slot,
-                              minuteSlot: String(row.minute_slot ?? 0).padStart(2, '0'),
-                              startDate: row.start_date,
-                              endDate: row.end_date ?? '',
-                              voucherType: row.voucher_type ?? '일반',
-                              note: row.note ?? '',
-                              isActive: row.is_active,
-                            })
-                            setRegularChildQuery(child?.child_name ? getDisplayName(child) : '')
-                            setRegularTeacherQuery(staff?.name ?? '')
-                          }}
+                          onClick={() => beginEditRegularClass(row)}
                           className="w-full text-left"
                         >
                           <div className="font-medium">
@@ -4199,6 +4276,12 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
                           </div>
                         </button>
                         <div className="mt-2 flex gap-2">
+                          <button
+                            onClick={() => beginEditRegularClass(row)}
+                            className="rounded bg-blue-50 px-2 py-1 text-xs text-blue-700"
+                          >
+                            수정
+                          </button>
                           <button
                             onClick={() => handleDeleteRegularClass(row.id)}
                             className="rounded bg-rose-50 px-2 py-1 text-xs text-rose-700"
@@ -4399,23 +4482,7 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
                         <div key={row.id} className="w-full rounded-xl border p-3 text-left hover:bg-slate-50">
                           <button
                             type="button"
-                            onClick={() => {
-                              const nextChildIds = memberRows.map((m) => Number(m.child_id)).slice(0, 6)
-                              setRegularGroupForm({
-                                id: row.id,
-                                teacherId: row.teacher_id,
-                                weekday: row.weekday,
-                                timeSlot: row.time_slot,
-                                minuteSlot: String(row.minute_slot ?? 0).padStart(2, '0'),
-                                startDate: row.start_date,
-                                endDate: row.end_date ?? '',
-                                groupName: row.group_name,
-                                note: row.note ?? '',
-                                isActive: row.is_active,
-                                childIds: nextChildIds,
-                              })
-                              fillRegularGroupChildInputsByIds(nextChildIds)
-                            }}
+                            onClick={() => beginEditRegularGroupClass(row)}
                             className="w-full text-left"
                           >
                             <div className="font-medium">
@@ -4429,6 +4496,12 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
                             </div>
                           </button>
                           <div className="mt-2 flex gap-2">
+                            <button
+                              onClick={() => beginEditRegularGroupClass(row)}
+                              className="rounded bg-blue-50 px-2 py-1 text-xs text-blue-700"
+                            >
+                              수정
+                            </button>
                             <button
                               onClick={() => handleDeleteRegularGroupClass(row.id)}
                               className="rounded bg-rose-50 px-2 py-1 text-xs text-rose-700"
