@@ -1024,33 +1024,51 @@ export default function EmployeePage() {
     }
   }
 
+  async function deleteScheduleRowOnly(row: ScheduleEntryRow) {
+    if (!user) return
+    const { error } = await supabase
+      .from('schedule_entries')
+      .delete()
+      .eq('id', row.id)
+
+    if (error) throw error
+  }
+
   async function handleDeleteSchedule(item: DisplayScheduleItem) {
     try {
       if (!user) return
-      const ok = window.confirm('이 시간표를 삭제할까요?')
+      const targetRow = item.rows[0]
+      if (!targetRow) return
+
+      const ok = window.confirm(
+        item.isGroup
+          ? '이 그룹수업의 선택된 학생 일정 1건만 DB에서 삭제할까요?'
+          : '이 일정 1건만 DB에서 삭제할까요?'
+      )
       if (!ok) return
 
-      if (item.isGroup && item.groupId) {
-        const { error } = await supabase
-          .from('schedule_entries')
-          .update({ is_active: false })
-          .eq('group_id', item.groupId)
-
-        if (error) throw error
-      } else {
-        const targetId = item.rows[0]?.id
-        if (!targetId) return
-
-        const { error } = await supabase
-          .from('schedule_entries')
-          .update({ is_active: false })
-          .eq('id', targetId)
-
-        if (error) throw error
-      }
+      await deleteScheduleRowOnly(targetRow)
 
       await Promise.all([loadSchedules(user.id), loadMakeupSchedules(user.id)])
-      setMessage('시간표가 삭제되었습니다.')
+      setMessage('선택한 일정 row 1건만 DB에서 삭제되었습니다.')
+    } catch (err: any) {
+      setMessage(err?.message ?? '삭제 실패')
+    }
+  }
+
+  async function handleDeleteScheduleRow(row: ScheduleEntryRow) {
+    try {
+      if (!user) return
+      const child = children.find((c) => Number(c.id) === Number(row.child_id))
+      const ok = window.confirm(
+        `${row.date} ${row.time_slot.slice(0, 2)}:${String(row.minute_slot ?? 0).padStart(2, '0')} ${child?.child_name ?? '학생'} 일정 1건만 DB에서 삭제할까요?`
+      )
+      if (!ok) return
+
+      await deleteScheduleRowOnly(row)
+
+      await Promise.all([loadSchedules(user.id), loadMakeupSchedules(user.id)])
+      setMessage('선택한 일정 row 1건만 DB에서 삭제되었습니다.')
     } catch (err: any) {
       setMessage(err?.message ?? '삭제 실패')
     }
@@ -1370,15 +1388,23 @@ export default function EmployeePage() {
                   const log = attendanceMap.get(getAttendanceKey(r))
 
                   return (
-                    <button
-                      key={r.id}
-                      type="button"
-                      onClick={() => openRecordModal(r)}
-                      className="block w-full rounded bg-white/70 px-[2px] py-1 text-left hover:bg-white"
-                    >
-                      {child?.child_name ?? `학생(${r.child_id})`}
-                      {log?.status ? ` (${getStatusLabel(log.status)})` : ' (미입력)'}
-                    </button>
+                    <div key={r.id} className="flex items-center gap-1 rounded bg-white/70 px-[2px] py-1">
+                      <button
+                        type="button"
+                        onClick={() => openRecordModal(r)}
+                        className="flex-1 text-left hover:bg-white"
+                      >
+                        {child?.child_name ?? `학생(${r.child_id})`}
+                        {log?.status ? ` (${getStatusLabel(log.status)})` : ' (미입력)'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteScheduleRow(r)}
+                        className="rounded bg-rose-50 px-1.5 py-0.5 text-[10px] text-rose-700"
+                      >
+                        삭제
+                      </button>
+                    </div>
                   )
                 })}
               </div>
@@ -1401,12 +1427,14 @@ export default function EmployeePage() {
                 수정
               </button>
 
-              <button
-                onClick={() => handleDeleteSchedule(item)}
-                className="rounded-lg bg-rose-50 px-2 py-1 text-[11px] text-rose-700"
-              >
-                삭제
-              </button>
+              {!item.isGroup ? (
+                <button
+                  onClick={() => handleDeleteSchedule(item)}
+                  className="rounded-lg bg-rose-50 px-2 py-1 text-[11px] text-rose-700"
+                >
+                  삭제
+                </button>
+              ) : null}
             </div>
           </>
         )}
@@ -1754,7 +1782,7 @@ export default function EmployeePage() {
                 <button
                   onClick={() => {
                     const d = new Date(weekBaseDate)
-                    d.setDate(d.getDate() - 7)
+                    d.setDate(d.getDate() - 1)
                     setWeekBaseDate(d)
                   }}
                   className="rounded-lg bg-slate-200 px-[2px] py-2"
@@ -1765,7 +1793,7 @@ export default function EmployeePage() {
                 <button
                   onClick={() => {
                     const d = new Date(weekBaseDate)
-                    d.setDate(d.getDate() + 7)
+                    d.setDate(d.getDate() + 1)
                     setWeekBaseDate(d)
                   }}
                   className="rounded-lg bg-slate-200 px-[2px] py-2"
@@ -1780,13 +1808,11 @@ export default function EmployeePage() {
                 <thead>
                   <tr>
                     <th className="w-[44px] border bg-slate-100 px-[2px] py-2">시간</th>
-                    {weekDates.map((date, idx) => (
-                      <th key={idx} className="w-[15.6%] border bg-slate-100 px-[2px] py-2">
-                        <div className="text-sm font-semibold">
-                          {['월', '화', '수', '목', '금', '토'][idx]} {toShortMonthDay(date)}
-                        </div>
-                      </th>
-                    ))}
+                    <th className="border bg-slate-100 px-[2px] py-2">
+                      <div className="text-sm font-semibold">
+                        {['일', '월', '화', '수', '목', '금', '토'][weekBaseDate.getDay()]} {toShortMonthDay(weekBaseDate)}
+                      </div>
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1796,8 +1822,8 @@ export default function EmployeePage() {
                         {getHourLabel(hourSlot)}
                       </td>
 
-                      {weekDates.map((date) => {
-                        const dateStr = toDateString(date)
+                      {(() => {
+                        const dateStr = toDateString(weekBaseDate)
                         const items = buildDisplayItems(dateStr, hourSlot)
                         const isEditing =
                           editingCell?.date === dateStr && editingCell?.hour === hourSlot
@@ -1946,7 +1972,7 @@ export default function EmployeePage() {
                             )}
                           </td>
                         )
-                      })}
+                      })()}
                     </tr>
                   ))}
                 </tbody>
@@ -1954,7 +1980,7 @@ export default function EmployeePage() {
             </div>
 
             <div className="space-y-4 md:hidden">
-              {weekDates.map((date) => renderMobileDayCard(date))}
+              {renderMobileDayCard(weekBaseDate)}
             </div>
           </div>
         ) : null}
