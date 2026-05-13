@@ -240,15 +240,32 @@ function buildLogicalAttendanceKey(args: {
   ].join('|')
 }
 
-function uniqueDateList(values: string[]) {
-  return Array.from(new Set(values)).sort().join(', ')
+function toMonthDayText(value: string) {
+  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})$/)
+  if (!match) return value
+  return `${match[2]}-${match[3]}`
 }
 
-
-function uniqueDateListWithMakeupComplete(values: string[], completedDateSet: Set<string>) {
-  return Array.from(new Set(values))
+function uniqueDateList(values: string[]) {
+  return Array.from(new Set(values.filter(Boolean)))
     .sort()
-    .map((date) => (completedDateSet.has(date) ? `${date}(보강완료)` : date))
+    .map(toMonthDayText)
+    .join(', ')
+}
+
+function uniqueAbsentDateListWithMakeupDate(values: string[], makeupDateMap: Map<string, string[]>) {
+  return Array.from(new Set(values.filter(Boolean)))
+    .sort()
+    .map((date) => {
+      const makeupDates = Array.from(new Set(makeupDateMap.get(date) ?? []))
+        .filter(Boolean)
+        .sort()
+        .map(toMonthDayText)
+
+      return makeupDates.length > 0
+        ? `${toMonthDayText(date)}(보 ${makeupDates.join('/')})`
+        : toMonthDayText(date)
+    })
     .join(', ')
 }
 
@@ -440,29 +457,34 @@ export default function EmployeePage() {
     const groupRows = selectedChildMonthlyLogs.filter((r) => Boolean(r.is_group))
     const childId = Number(childInfoModal.child?.id)
 
-    const makeupCompletedAbsentDateSet = new Set(
-      makeupScheduleRows
-        .filter(
-          (row) =>
-            row.is_active &&
-            !row.is_group &&
-            Number(row.child_id) === childId &&
-            isMakeupScheduleNote(row.note)
-        )
-        .map((row) => parseMakeupAbsentDate(row.note))
-        .filter(Boolean)
-    )
+    const makeupDateMap = new Map<string, string[]>()
+
+    makeupScheduleRows
+      .filter(
+        (row) =>
+          row.is_active &&
+          !row.is_group &&
+          Number(row.child_id) === childId &&
+          isMakeupScheduleNote(row.note)
+      )
+      .forEach((row) => {
+        const absentDate = parseMakeupAbsentDate(row.note)
+        if (!absentDate) return
+        const current = makeupDateMap.get(absentDate) ?? []
+        current.push(row.date)
+        makeupDateMap.set(absentDate, current)
+      })
 
     return {
       attended: uniqueDateList(individualRows.filter((r) => r.status === 'attended').map((r) => r.class_date)),
       makeup: uniqueDateList(individualRows.filter((r) => r.status === 'makeup').map((r) => r.class_date)),
-      absent: uniqueDateListWithMakeupComplete(
+      absent: uniqueAbsentDateListWithMakeupDate(
         individualRows.filter((r) => r.status === 'absent').map((r) => r.class_date),
-        makeupCompletedAbsentDateSet
+        makeupDateMap
       ),
-      sameDayAbsent: uniqueDateListWithMakeupComplete(
+      sameDayAbsent: uniqueAbsentDateListWithMakeupDate(
         individualRows.filter((r) => r.status === 'same_day_absent').map((r) => r.class_date),
-        makeupCompletedAbsentDateSet
+        makeupDateMap
       ),
       groupAttended: uniqueDateList(
         groupRows.filter((r) => r.status === 'attended' || r.status === 'makeup').map((r) => r.class_date)
@@ -1683,13 +1705,13 @@ export default function EmployeePage() {
             onClick={() => setTab('schedule')}
             className={`rounded-2xl px-4 py-2 text-sm font-semibold shadow-sm transition ${tab === 'schedule' ? 'bg-black text-white' : 'bg-white text-slate-700 border border-slate-200'}`}
           >
-            주간시간표
+            일정추가
           </button>
           <button
             onClick={() => setTab('week_overview')}
             className={`rounded-2xl px-4 py-2 text-sm font-semibold shadow-sm transition ${tab === 'week_overview' ? 'bg-black text-white' : 'bg-white text-slate-700 border border-slate-200'}`}
           >
-            추가 시간표
+            주간보기
           </button>
         </div>
 
@@ -1726,7 +1748,7 @@ export default function EmployeePage() {
         {tab === 'schedule' ? (
           <div className="mt-0 border-t-0 pt-0">
             <div className="mb-3 flex flex-col gap-0 md:flex-row md:items-center md:justify-between">
-              <h2 className="text-lg font-bold">주간 시간표</h2>
+              <h2 className="text-lg font-bold">일간</h2>
 
               <div className="flex gap-0">
                 <button
@@ -2143,8 +2165,7 @@ export default function EmployeePage() {
                 <div className="border-t pt-3">
                   <div className="mb-2 font-semibold">이번 달 출결</div>
                   <div><span className="font-medium">출석:</span> {childInfoDates.attended || '-'}</div>
-                  <div><span className="font-medium">보강:</span> {childInfoDates.makeup || '-'}</div>
-                  <div><span className="font-medium">결석:</span> {childInfoDates.absent || '-'}</div>
+                  <div><span className="font-medium">결석/보강:</span> {childInfoDates.absent || '-'}</div>
                   <div><span className="font-medium">당일결석:</span> {childInfoDates.sameDayAbsent || '-'}</div>
                   <div><span className="font-medium">그룹출석/보강:</span> {childInfoDates.groupAttended || '-'}</div>
                   <div><span className="font-medium">그룹결석/당일결석:</span> {childInfoDates.groupAbsent || '-'}</div>
