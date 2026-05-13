@@ -327,7 +327,7 @@ function isMakeupScheduleStatus(status?: string | null) {
 }
 
 function getCleanScheduleMemo(note?: string | null) {
-  const value = note ?? ''
+  const value = stripMakeupTags(note ?? '')
   return value
     .replace(/\[정기수업:\d+\]/g, '')
     .replace(/\[정기그룹:\d+\]/g, '')
@@ -347,13 +347,16 @@ function getScheduleNotePrefix(note?: string | null) {
 
 function mergeScheduleNoteWithMemo(note: string | null | undefined, memo: string) {
   const prefix = getScheduleNotePrefix(note)
+  const isMakeup = isMakeupScheduleNote(note)
+  const absentDate = parseMakeupAbsentDate(note)
   const cleanMemo = memo.trim()
-  if (!prefix) return cleanMemo || null
-  return cleanMemo ? `${prefix} ${cleanMemo}` : prefix
+  const memoWithMakeup = buildScheduleNoteWithMakeup(cleanMemo, isMakeup, absentDate)
+  if (!prefix) return memoWithMakeup
+  return memoWithMakeup ? `${prefix} ${memoWithMakeup}` : prefix
 }
 
 function isMakeupScheduleItem(item: DisplayScheduleItem) {
-  return item.rows.some((row) => isMakeupScheduleStatus(row.status))
+  return item.rows.some((row) => isMakeupScheduleStatus(row.status) || isMakeupScheduleNote(row.note))
 }
 
 function csvEscape(value: string | number | null | undefined) {
@@ -388,6 +391,44 @@ function buildClassTimestamp(
 
 function uniqueDateList(values: string[]) {
   return Array.from(new Set(values.filter(Boolean))).sort().join(', ')
+}
+
+function uniqueDateListWithMakeupComplete(values: string[], completedDateSet: Set<string>) {
+  return Array.from(new Set(values.filter(Boolean)))
+    .sort()
+    .map((date) => (completedDateSet.has(date) ? `${date}(보강완료)` : date))
+    .join(', ')
+}
+
+const MAKEUP_NOTE_TAG = '[보강]'
+const MAKEUP_ABSENT_DATE_PREFIX = '[결석일:'
+
+function isMakeupScheduleNote(note?: string | null) {
+  return Boolean(note?.includes(MAKEUP_NOTE_TAG))
+}
+
+function parseMakeupAbsentDate(note?: string | null) {
+  if (!note) return ''
+  const matched = note.match(/\[결석일:([^\]]+)\]/)
+  if (!matched) return ''
+  return matched[1] === '없음' ? '' : matched[1]
+}
+
+function stripMakeupTags(note?: string | null) {
+  if (!note) return ''
+  return note
+    .replace(/\[보강\]/g, '')
+    .replace(/\s*\[결석일:[^\]]+\]\s*/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function buildScheduleNoteWithMakeup(baseNote: string, isMakeup: boolean, absentDate: string) {
+  const cleanNote = stripMakeupTags(baseNote)
+  if (!isMakeup) return cleanNote || null
+
+  const tags = [MAKEUP_NOTE_TAG, `${MAKEUP_ABSENT_DATE_PREFIX}${absentDate || '없음'}]`]
+  return [tags.join(' '), cleanNote].filter(Boolean).join(' ').trim()
 }
 
 function toMonthDayDate(value: string) {
@@ -827,6 +868,7 @@ export default function AdminPage() {
   const [staffs, setStaffs] = useState<StaffRow[]>([])
   const [children, setChildren] = useState<ChildRow[]>([])
   const [allScheduleEntries, setAllScheduleEntries] = useState<ScheduleEntryRow[]>([])
+  const [makeupScheduleRows, setMakeupScheduleRows] = useState<ScheduleEntryRow[]>([])
   const [classLogs, setClassLogs] = useState<ClassLogRow[]>([])
   const [monthlyGroupPrices, setMonthlyGroupPrices] = useState<Record<number, string>>({})
 
@@ -838,6 +880,7 @@ export default function AdminPage() {
   const [selectedMinute, setSelectedMinute] = useState('00')
   const [selectedVoucher, setSelectedVoucher] = useState('')
   const [isScheduleMakeup, setIsScheduleMakeup] = useState(false)
+  const [makeupAbsentDate, setMakeupAbsentDate] = useState('')
   const [scheduleMemo, setScheduleMemo] = useState('')
   const [isGroupLesson, setIsGroupLesson] = useState(false)
   const [groupName, setGroupName] = useState('')
@@ -850,6 +893,9 @@ export default function AdminPage() {
     entry: null,
     status: 'attended',
   })
+  const [recordMakeupDate, setRecordMakeupDate] = useState('')
+  const [recordMakeupHour, setRecordMakeupHour] = useState('09:00')
+  const [recordMakeupMinute, setRecordMakeupMinute] = useState('00')
 
   const [childInfoModal, setChildInfoModal] = useState<{
     open: boolean
@@ -1109,6 +1155,18 @@ export default function AdminPage() {
     setAllScheduleEntries((data ?? []) as ScheduleEntryRow[])
   }
 
+  async function loadMakeupSchedules() {
+    const { data, error } = await supabase
+      .from('schedule_entries')
+      .select('*')
+      .eq('is_active', true)
+      .or('status.eq.makeup,note.ilike.%[보강]%')
+      .order('date', { ascending: true })
+
+    if (error) throw error
+    setMakeupScheduleRows((data ?? []) as ScheduleEntryRow[])
+  }
+
   async function loadClassLogsForMonth() {
     const start = `${csvMonth}-01`
     const endDate = new Date(start)
@@ -1153,6 +1211,7 @@ export default function AdminPage() {
         loadStaffs(),
         loadChildren(),
         loadSchedules(),
+        loadMakeupSchedules(),
         loadClassLogsForMonth(),
         loadMonthlyGroupPrices(),
         loadRegularClasses(),
@@ -1171,7 +1230,7 @@ export default function AdminPage() {
   }, [])
 
   useEffect(() => {
-    loadSchedules().catch((err: any) => setMessage(err?.message ?? '시간표 불러오기 실패'))
+    Promise.all([loadSchedules(), loadMakeupSchedules()]).catch((err: any) => setMessage(err?.message ?? '시간표 불러오기 실패'))
   }, [weekBaseDate, dailyDate, viewMode, tab, csvMonth])
 
   useEffect(() => {
@@ -1217,6 +1276,7 @@ export default function AdminPage() {
     setSelectedMinute('00')
     setSelectedVoucher('')
     setIsScheduleMakeup(false)
+    setMakeupAbsentDate('')
     setScheduleMemo('')
     setIsGroupLesson(false)
     setGroupName('')
@@ -1263,6 +1323,79 @@ export default function AdminPage() {
       if (a.minuteSlot !== b.minuteSlot) return a.minuteSlot - b.minuteSlot
       return (a.groupName ?? '').localeCompare(b.groupName ?? '', 'ko')
     })
+  }
+
+  const usedMakeupAbsentDateSet = useMemo(() => {
+    if (!scheduleChildId) return new Set<string>()
+
+    return new Set(
+      makeupScheduleRows
+        .filter(
+          (row) =>
+            Number(row.child_id) === Number(scheduleChildId) &&
+            row.id !== editingEntryId &&
+            row.is_active &&
+            (isMakeupScheduleStatus(row.status) || isMakeupScheduleNote(row.note))
+        )
+        .map((row) => parseMakeupAbsentDate(row.note))
+        .filter(Boolean)
+    )
+  }, [makeupScheduleRows, scheduleChildId, editingEntryId])
+
+  const makeupAbsentDateOptions = useMemo(() => {
+    if (!scheduleChildId) return []
+    return classLogs
+      .filter(
+        (log) =>
+          Number(log.child_id) === Number(scheduleChildId) &&
+          (log.status === 'absent' || log.status === 'same_day_absent')
+      )
+      .map((log) => log.class_date)
+      .filter((value, index, array) => array.indexOf(value) === index)
+      .filter((date) => !usedMakeupAbsentDateSet.has(date) || date === makeupAbsentDate)
+      .sort()
+      .reverse()
+  }, [classLogs, scheduleChildId, usedMakeupAbsentDateSet, makeupAbsentDate])
+
+  function renderMakeupScheduleFields(inputClassName: string) {
+    return (
+      <>
+        <label className="flex items-center gap-2 rounded border border-orange-200 bg-orange-50 px-2 py-1 text-xs font-semibold text-orange-700">
+          <input
+            type="checkbox"
+            checked={isScheduleMakeup}
+            onChange={(e) => {
+              setIsScheduleMakeup(e.target.checked)
+              if (!e.target.checked) setMakeupAbsentDate('')
+            }}
+          />
+          보강
+        </label>
+
+        {isScheduleMakeup && scheduleChildId ? (
+          <div className="space-y-1">
+            <div className="text-[11px] font-semibold text-orange-700">결석날짜 선택</div>
+            <select
+              value={makeupAbsentDate}
+              onChange={(e) => setMakeupAbsentDate(e.target.value)}
+              className={inputClassName}
+            >
+              <option value="">없음</option>
+              {makeupAbsentDateOptions.map((date) => (
+                <option key={date} value={date}>
+                  {date}
+                </option>
+              ))}
+            </select>
+            {makeupAbsentDateOptions.length === 0 ? (
+              <div className="text-[11px] text-orange-600">
+                선택 가능한 미보강 결석일이 없습니다.
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+      </>
+    )
   }
 
   function getVoucherOptionsForChild(childId: number | '') {
@@ -1996,7 +2129,7 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
           status: isScheduleMakeup ? 'makeup' : 'scheduled',
           minute_slot: minute,
           is_active: true,
-          note: scheduleMemo.trim() || null,
+          note: buildScheduleNoteWithMakeup(scheduleMemo, isScheduleMakeup, makeupAbsentDate),
           is_group: true,
           group_id: groupId,
           group_name: groupName || '그룹수업',
@@ -2029,7 +2162,7 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
             status: isScheduleMakeup ? 'makeup' : 'scheduled',
             minute_slot: minute,
             is_active: true,
-            note: scheduleMemo.trim() || null,
+            note: buildScheduleNoteWithMakeup(scheduleMemo, isScheduleMakeup, makeupAbsentDate),
             is_group: false,
             group_id: null,
             group_name: null,
@@ -2064,7 +2197,7 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
             status: isScheduleMakeup ? 'makeup' : 'scheduled',
             minute_slot: minute,
             is_active: true,
-            note: scheduleMemo.trim() || null,
+            note: buildScheduleNoteWithMakeup(scheduleMemo, isScheduleMakeup, makeupAbsentDate),
             is_group: false,
             group_id: null,
             group_name: null,
@@ -2077,6 +2210,7 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
 
       resetScheduleEditor()
       await loadSchedules()
+      await loadMakeupSchedules()
       await loadClassLogsForMonth()
       setMessage('시간표가 저장되었습니다.')
     } catch (err: any) {
@@ -2154,6 +2288,7 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
       }
 
       await loadSchedules()
+      await loadMakeupSchedules()
       await loadClassLogsForMonth()
       setMessage('시간표가 삭제되었습니다.')
     } catch (err: any) {
@@ -2178,6 +2313,7 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
       setScheduleChildId('')
       setSelectedVoucher('')
       setIsScheduleMakeup(isMakeupScheduleItem(item))
+      setMakeupAbsentDate(parseMakeupAbsentDate(item.note))
       setScheduleMemo(getDisplayScheduleMemo(item))
     } else {
       const row = item.rows[0]
@@ -2187,7 +2323,8 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
       setScheduleChildId(row.child_id ? Number(row.child_id) : '')
       setSelectedMinute(String(row.minute_slot ?? 0).padStart(2, '0'))
       setSelectedVoucher(row.voucher_type ?? '')
-      setIsScheduleMakeup(isMakeupScheduleStatus(row.status))
+      setIsScheduleMakeup(isMakeupScheduleStatus(row.status) || isMakeupScheduleNote(row.note))
+      setMakeupAbsentDate(parseMakeupAbsentDate(row.note))
       setScheduleMemo(getCleanScheduleMemo(row.note))
       setSelectedGroupChildIds([])
       setGroupName('')
@@ -2268,6 +2405,9 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
 
   function openRecordModal(entry: ScheduleEntryRow) {
     const existing = findExistingClassLog(entry)
+    setRecordMakeupDate('')
+    setRecordMakeupHour(entry.time_slot || '09:00')
+    setRecordMakeupMinute(String(entry.minute_slot ?? 0).padStart(2, '0'))
     setRecordModal({
       open: true,
       entry,
@@ -2326,7 +2466,31 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
         }
       }
 
+      if ((status === 'absent' || status === 'same_day_absent') && recordMakeupDate) {
+        const { error: makeupScheduleError } = await supabase.from('schedule_entries').insert({
+          date: recordMakeupDate,
+          time_slot: recordMakeupHour,
+          minute_slot: Number(recordMakeupMinute),
+          room_number: 1,
+          teacher_id: Number(entry.teacher_id),
+          teacher_name: entry.teacher_name ?? '',
+          class_type: 'individual',
+          child_id: Number(entry.child_id),
+          voucher_type: entry.voucher_type ?? '일반',
+          status: 'makeup',
+          note: buildScheduleNoteWithMakeup(`결석 ${entry.date} 수업 보강`, true, entry.date),
+          is_active: true,
+          is_group: false,
+          group_id: null,
+          group_name: null,
+        })
+
+        if (makeupScheduleError) throw makeupScheduleError
+      }
+
       await loadClassLogsForMonth()
+      await loadSchedules()
+      await loadMakeupSchedules()
       setRecordModal({
         open: false,
         entry: null,
@@ -2591,12 +2755,32 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
   const childInfoDates = useMemo(() => {
     const individualRows = selectedChildMonthlyLogs.filter((r) => !r.is_group)
     const groupRows = selectedChildMonthlyLogs.filter((r) => Boolean(r.is_group))
+    const childId = Number(childInfoModal.child?.id)
+
+    const makeupCompletedAbsentDateSet = new Set(
+      makeupScheduleRows
+        .filter(
+          (row) =>
+            row.is_active &&
+            !row.is_group &&
+            Number(row.child_id) === childId &&
+            (isMakeupScheduleStatus(row.status) || isMakeupScheduleNote(row.note))
+        )
+        .map((row) => parseMakeupAbsentDate(row.note))
+        .filter(Boolean)
+    )
 
     return {
       attended: uniqueDateList(individualRows.filter((r) => r.status === 'attended').map((r) => r.class_date)),
       makeup: uniqueDateList(individualRows.filter((r) => r.status === 'makeup').map((r) => r.class_date)),
-      absent: uniqueDateList(individualRows.filter((r) => r.status === 'absent').map((r) => r.class_date)),
-      sameDayAbsent: uniqueDateList(individualRows.filter((r) => r.status === 'same_day_absent').map((r) => r.class_date)),
+      absent: uniqueDateListWithMakeupComplete(
+        individualRows.filter((r) => r.status === 'absent').map((r) => r.class_date),
+        makeupCompletedAbsentDateSet
+      ),
+      sameDayAbsent: uniqueDateListWithMakeupComplete(
+        individualRows.filter((r) => r.status === 'same_day_absent').map((r) => r.class_date),
+        makeupCompletedAbsentDateSet
+      ),
       groupAttended: uniqueDateList(
         groupRows.filter((r) => r.status === 'attended' || r.status === 'makeup').map((r) => r.class_date)
       ),
@@ -2604,7 +2788,7 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
         groupRows.filter((r) => r.status === 'absent' || r.status === 'same_day_absent').map((r) => r.class_date)
       ),
     }
-  }, [selectedChildMonthlyLogs])
+  }, [selectedChildMonthlyLogs, childInfoModal.child, makeupScheduleRows])
 
   function downloadStudentCsv() {
     const monthRows = settlementRows.map((row) => [
@@ -2689,15 +2873,7 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
               />
               그룹수업
             </label>
-
-            <label className="flex items-center gap-2 text-xs text-orange-700">
-              <input
-                type="checkbox"
-                checked={isScheduleMakeup}
-                onChange={(e) => setIsScheduleMakeup(e.target.checked)}
-              />
-              보강
-            </label>
+            {renderMakeupScheduleFields('w-full rounded border bg-white px-2 py-1 text-xs')}
 
             {isGroupLesson ? (
               <>
@@ -2822,6 +2998,11 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
                   보강
                 </span>
               ) : null}
+              {isMakeupScheduleItem(item) && parseMakeupAbsentDate(item.note) ? (
+                <span className="rounded-full border border-orange-200 bg-white px-2 py-0.5 text-[11px] text-orange-700">
+                  결석일 {parseMakeupAbsentDate(item.note)}
+                </span>
+              ) : null}
               {item.isGroup ? (
                 <span className="rounded-full border border-rose-200 bg-rose-50 px-2 py-0.5 text-[11px] text-rose-700">
                   그룹
@@ -2935,15 +3116,7 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
                       />
                       그룹수업
                     </label>
-
-                    <label className="flex items-center gap-2 text-xs text-orange-700">
-                      <input
-                        type="checkbox"
-                        checked={isScheduleMakeup}
-                        onChange={(e) => setIsScheduleMakeup(e.target.checked)}
-                      />
-                      보강
-                    </label>
+            {renderMakeupScheduleFields('w-full rounded border bg-white px-2 py-1 text-xs')}
 
                     {isGroupLesson ? (
                       <>
@@ -3053,6 +3226,7 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
                         setSelectedMinute('00')
                         setSelectedVoucher('')
                         setIsScheduleMakeup(false)
+                        setMakeupAbsentDate('')
                         setScheduleMemo('')
                         setIsGroupLesson(false)
                         setGroupName('')
@@ -3339,15 +3513,7 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
                                           />
                                           그룹수업
                                         </label>
-
-                                        <label className="flex items-center gap-2 text-xs text-orange-700">
-                                          <input
-                                            type="checkbox"
-                                            checked={isScheduleMakeup}
-                                            onChange={(e) => setIsScheduleMakeup(e.target.checked)}
-                                          />
-                                          보강
-                                        </label>
+            {renderMakeupScheduleFields('w-full rounded border bg-white px-2 py-1 text-xs')}
 
                                         {isGroupLesson ? (
                                           <>
@@ -3468,6 +3634,7 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
                                             setSelectedMinute('00')
                                             setSelectedVoucher('')
                                             setIsScheduleMakeup(false)
+                                            setMakeupAbsentDate('')
                                             setScheduleMemo('')
                                             setIsGroupLesson(false)
                                             setGroupName('')
@@ -3513,15 +3680,7 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
                                           />
                                           그룹수업
                                         </label>
-
-                                        <label className="flex items-center gap-2 text-xs text-orange-700">
-                                          <input
-                                            type="checkbox"
-                                            checked={isScheduleMakeup}
-                                            onChange={(e) => setIsScheduleMakeup(e.target.checked)}
-                                          />
-                                          보강
-                                        </label>
+            {renderMakeupScheduleFields('w-full rounded border bg-white px-2 py-1 text-xs')}
 
                                         {isGroupLesson ? (
                                           <>
@@ -3644,6 +3803,7 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
                                             setSelectedMinute('00')
                                             setSelectedVoucher('')
                                             setIsScheduleMakeup(false)
+                                            setMakeupAbsentDate('')
                                             setScheduleMemo('')
                                             setIsGroupLesson(false)
                                             setGroupName('')
@@ -4641,6 +4801,45 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
                 <option value="same_day_absent">당일결석</option>
               </select>
 
+              {recordModal.status === 'absent' || recordModal.status === 'same_day_absent' ? (
+                <div className="mb-5 rounded-2xl border border-orange-200 bg-orange-50 p-4">
+                  <div className="mb-3 text-base font-bold text-orange-800">보강 일정 바로 입력</div>
+                  <div className="grid gap-2 md:grid-cols-3">
+                    <input
+                      type="date"
+                      value={recordMakeupDate}
+                      onChange={(e) => setRecordMakeupDate(e.target.value)}
+                      className="rounded-xl border bg-white px-3 py-3 text-base"
+                    />
+                    <select
+                      value={recordMakeupHour}
+                      onChange={(e) => setRecordMakeupHour(e.target.value)}
+                      className="rounded-xl border bg-white px-3 py-3 text-base"
+                    >
+                      {hourSlots.map((slot) => (
+                        <option key={slot} value={slot}>
+                          {slot}
+                        </option>
+                      ))}
+                    </select>
+                    <select
+                      value={recordMakeupMinute}
+                      onChange={(e) => setRecordMakeupMinute(e.target.value)}
+                      className="rounded-xl border bg-white px-3 py-3 text-base"
+                    >
+                      {getMinutesOptions().map((m) => (
+                        <option key={m} value={m}>
+                          {m}분
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="mt-2 text-xs text-orange-700">
+                    날짜를 비워두면 결석 출결만 저장됩니다.
+                  </div>
+                </div>
+              ) : null}
+
               <div className="flex gap-3">
                 <button
                   onClick={handleSaveAttendanceFromModal}
@@ -4649,13 +4848,14 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
                   저장
                 </button>
                 <button
-                  onClick={() =>
+                  onClick={() => {
                     setRecordModal({
                       open: false,
                       entry: null,
                       status: 'attended',
                     })
-                  }
+                    setRecordMakeupDate('')
+                  }}
                   className="flex-1 rounded-2xl bg-slate-100 px-4 py-4 text-2xl font-bold text-slate-700"
                 >
                   취소
