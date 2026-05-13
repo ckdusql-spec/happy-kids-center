@@ -235,6 +235,14 @@ function uniqueDateList(values: string[]) {
   return Array.from(new Set(values)).sort().join(', ')
 }
 
+
+function uniqueDateListWithMakeupComplete(values: string[], completedDateSet: Set<string>) {
+  return Array.from(new Set(values))
+    .sort()
+    .map((date) => (completedDateSet.has(date) ? `${date}(보강완료)` : date))
+    .join(', ')
+}
+
 const MAKEUP_NOTE_TAG = '[보강]'
 const MAKEUP_ABSENT_DATE_PREFIX = '[결석일:'
 
@@ -281,6 +289,7 @@ export default function EmployeePage() {
   const [children, setChildren] = useState<ChildRow[]>([])
   const [staffs, setStaffs] = useState<StaffRow[]>([])
   const [scheduleRows, setScheduleRows] = useState<ScheduleEntryRow[]>([])
+  const [makeupScheduleRows, setMakeupScheduleRows] = useState<ScheduleEntryRow[]>([])
   const [classLogRows, setClassLogRows] = useState<ClassLogRow[]>([])
 
   const [weekBaseDate, setWeekBaseDate] = useState(new Date())
@@ -410,12 +419,32 @@ export default function EmployeePage() {
   const childInfoDates = useMemo(() => {
     const individualRows = selectedChildMonthlyLogs.filter((r) => !r.is_group)
     const groupRows = selectedChildMonthlyLogs.filter((r) => Boolean(r.is_group))
+    const childId = Number(childInfoModal.child?.id)
+
+    const makeupCompletedAbsentDateSet = new Set(
+      makeupScheduleRows
+        .filter(
+          (row) =>
+            row.is_active &&
+            !row.is_group &&
+            Number(row.child_id) === childId &&
+            isMakeupScheduleNote(row.note)
+        )
+        .map((row) => parseMakeupAbsentDate(row.note))
+        .filter(Boolean)
+    )
 
     return {
       attended: uniqueDateList(individualRows.filter((r) => r.status === 'attended').map((r) => r.class_date)),
       makeup: uniqueDateList(individualRows.filter((r) => r.status === 'makeup').map((r) => r.class_date)),
-      absent: uniqueDateList(individualRows.filter((r) => r.status === 'absent').map((r) => r.class_date)),
-      sameDayAbsent: uniqueDateList(individualRows.filter((r) => r.status === 'same_day_absent').map((r) => r.class_date)),
+      absent: uniqueDateListWithMakeupComplete(
+        individualRows.filter((r) => r.status === 'absent').map((r) => r.class_date),
+        makeupCompletedAbsentDateSet
+      ),
+      sameDayAbsent: uniqueDateListWithMakeupComplete(
+        individualRows.filter((r) => r.status === 'same_day_absent').map((r) => r.class_date),
+        makeupCompletedAbsentDateSet
+      ),
       groupAttended: uniqueDateList(
         groupRows.filter((r) => r.status === 'attended' || r.status === 'makeup').map((r) => r.class_date)
       ),
@@ -423,7 +452,24 @@ export default function EmployeePage() {
         groupRows.filter((r) => r.status === 'absent' || r.status === 'same_day_absent').map((r) => r.class_date)
       ),
     }
-  }, [selectedChildMonthlyLogs])
+  }, [selectedChildMonthlyLogs, childInfoModal.child, makeupScheduleRows])
+
+  const usedMakeupAbsentDateSet = useMemo(() => {
+    if (!scheduleChildId) return new Set<string>()
+
+    return new Set(
+      makeupScheduleRows
+        .filter(
+          (row) =>
+            Number(row.child_id) === Number(scheduleChildId) &&
+            row.id !== editingEntryId &&
+            row.is_active &&
+            isMakeupScheduleNote(row.note)
+        )
+        .map((row) => parseMakeupAbsentDate(row.note))
+        .filter(Boolean)
+    )
+  }, [makeupScheduleRows, scheduleChildId, editingEntryId])
 
   const makeupAbsentDateOptions = useMemo(() => {
     if (!scheduleChildId) return []
@@ -435,9 +481,10 @@ export default function EmployeePage() {
       )
       .map((log) => log.class_date)
       .filter((value, index, array) => array.indexOf(value) === index)
+      .filter((date) => !usedMakeupAbsentDateSet.has(date) || date === makeupAbsentDate)
       .sort()
       .reverse()
-  }, [classLogRows, scheduleChildId])
+  }, [classLogRows, scheduleChildId, usedMakeupAbsentDateSet, makeupAbsentDate])
 
   function getAttendanceKey(entry: ScheduleEntryRow) {
     return buildLogicalAttendanceKey({
@@ -713,6 +760,22 @@ export default function EmployeePage() {
     setScheduleRows((data ?? []) as ScheduleEntryRow[])
   }
 
+  async function loadMakeupSchedules(staffId: number) {
+    const { data, error } = await supabase
+      .from('schedule_entries')
+      .select('*')
+      .eq('teacher_id', staffId)
+      .eq('is_active', true)
+      .eq('is_group', false)
+      .ilike('note', `%${MAKEUP_NOTE_TAG}%`)
+      .order('date', { ascending: false })
+      .order('time_slot', { ascending: true })
+      .order('minute_slot', { ascending: true })
+
+    if (error) throw error
+    setMakeupScheduleRows((data ?? []) as ScheduleEntryRow[])
+  }
+
   async function loadClassLogs(staffId: number) {
     const { data, error } = await supabase
       .from('class_logs')
@@ -731,7 +794,7 @@ export default function EmployeePage() {
     try {
       setLoading(true)
       setMessage('')
-      await Promise.all([loadStaffs(staffId), loadChildren(), loadSchedules(staffId), loadClassLogs(staffId)])
+      await Promise.all([loadStaffs(staffId), loadChildren(), loadSchedules(staffId), loadMakeupSchedules(staffId), loadClassLogs(staffId)])
     } catch (err: any) {
       setMessage(err?.message ?? '데이터 불러오기 실패')
     } finally {
@@ -755,7 +818,7 @@ export default function EmployeePage() {
 
   useEffect(() => {
     if (!user?.id) return
-    Promise.all([loadSchedules(user.id), loadClassLogs(user.id)]).catch((err: any) =>
+    Promise.all([loadSchedules(user.id), loadMakeupSchedules(user.id), loadClassLogs(user.id)]).catch((err: any) =>
       setMessage(err?.message ?? '주간 데이터 불러오기 실패')
     )
   }, [weekRange.start, weekRange.end, selectedTodayDate, user?.id])
@@ -790,6 +853,11 @@ export default function EmployeePage() {
                 </option>
               ))}
             </select>
+            {makeupAbsentDateOptions.length === 0 ? (
+              <div className="text-[11px] text-orange-600">
+                선택 가능한 미보강 결석일이 없습니다.
+              </div>
+            ) : null}
           </div>
         ) : null}
       </>
@@ -908,7 +976,7 @@ export default function EmployeePage() {
       }
 
       resetScheduleEditor()
-      await loadSchedules(user.id)
+      await Promise.all([loadSchedules(user.id), loadMakeupSchedules(user.id)])
       setMessage('시간표가 저장되었습니다.')
     } catch (err: any) {
       setMessage(err?.message ?? '시간표 저장 실패')
@@ -940,7 +1008,7 @@ export default function EmployeePage() {
         if (error) throw error
       }
 
-      await loadSchedules(user.id)
+      await Promise.all([loadSchedules(user.id), loadMakeupSchedules(user.id)])
       setMessage('시간표가 삭제되었습니다.')
     } catch (err: any) {
       setMessage(err?.message ?? '삭제 실패')
@@ -1015,7 +1083,7 @@ export default function EmployeePage() {
         if (makeupScheduleError) throw makeupScheduleError
       }
 
-      await Promise.all([loadClassLogs(user.id), loadSchedules(user.id)])
+      await Promise.all([loadClassLogs(user.id), loadSchedules(user.id), loadMakeupSchedules(user.id)])
       setRecordModal({
         open: false,
         entry: null,
