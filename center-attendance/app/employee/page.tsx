@@ -175,10 +175,19 @@ function getStatusLabel(status: AttendanceStatus) {
 }
 
 function getStatusClass(status: AttendanceStatus) {
-  if (status === 'attended') return 'bg-blue-100 text-blue-700'
-  if (status === 'makeup') return 'bg-sky-100 text-sky-700'
-  if (status === 'absent') return 'bg-rose-50 text-rose-600'
-  return 'bg-red-100 text-red-700'
+  if (status === 'attended') return 'border border-blue-200 bg-blue-100 text-blue-700'
+  if (status === 'makeup') return 'border border-orange-200 bg-orange-100 text-orange-700'
+  if (status === 'absent') return 'border border-rose-200 bg-rose-50 text-rose-600'
+  return 'border border-red-200 bg-red-100 text-red-700'
+}
+
+function getTodayCardBgClass(status: AttendanceStatus | null, note?: string | null) {
+  if (status === 'attended') return 'border-blue-200 bg-blue-50 shadow-blue-100'
+  if (status === 'makeup') return 'border-orange-300 bg-orange-50 shadow-orange-100'
+  if (status === 'absent') return 'border-rose-200 bg-rose-50 shadow-rose-100'
+  if (status === 'same_day_absent') return 'border-red-300 bg-red-50 shadow-red-100'
+  if (isMakeupScheduleNote(note)) return 'border-orange-200 bg-orange-50 shadow-orange-100'
+  return 'border-slate-200 bg-white shadow-slate-100'
 }
 
 function getEntryMinuteTotal(entry: ScheduleEntryRow) {
@@ -262,6 +271,16 @@ function stripMakeupTags(note: string | null | undefined) {
   return note
     .replace(/\[보강\]/g, '')
     .replace(/\s*\[결석일:[^\]]+\]\s*/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function stripSystemScheduleTags(note: string | null | undefined) {
+  if (!note) return ''
+  return stripMakeupTags(note)
+    .replace(/\s*\[정기수업:\d+\]\s*/g, ' ')
+    .replace(/\s*\[정기그룹:\d+\]\s*/g, ' ')
+    .replace(/\s*\[보조교사:\d+:.*?\]\s*/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
 }
@@ -839,7 +858,7 @@ export default function EmployeePage() {
         </label>
 
         {isMakeupSchedule && scheduleChildId ? (
-          <div className="space-y-1">
+          <div className="space-y-1.5">
             <div className="text-[11px] font-semibold text-orange-700">결석날짜 선택</div>
             <select
               value={makeupAbsentDate}
@@ -1156,7 +1175,7 @@ export default function EmployeePage() {
     return (
       <div
         key={item.key}
-        className={`rounded-lg border px-[2px] py-2 text-[11px] shadow-sm ${isMakeupScheduleNote(item.note) ? 'border-orange-300' : 'border-slate-200'} ${getScheduleCardBgClass(item, classLogRows)}`}
+        className={`rounded-xl border px-2 py-2 text-[11px] shadow-sm transition ${isMakeupScheduleNote(item.note) ? 'border-orange-300 ring-1 ring-orange-100' : 'border-slate-200'} ${getScheduleCardBgClass(item, classLogRows)}`}
       >
         {isEditing ? (
           <div className="space-y-2">
@@ -1292,10 +1311,10 @@ export default function EmployeePage() {
               }}
               className="w-full text-left"
             >
-              <div className="font-medium text-slate-800">{title}</div>
+              <div className="font-semibold leading-tight text-slate-800">{title}</div>
             </button>
 
-            <div className="mt-0 flex flex-wrap gap-0">
+            <div className="mt-1 flex flex-wrap gap-1">
               <span className={`rounded-full border px-[2px] py-0.5 text-[11px] ${getVoucherClass(item.voucherType)}`}>
                 {item.voucherType || '일반'}
               </span>
@@ -1311,9 +1330,9 @@ export default function EmployeePage() {
               ) : null}
             </div>
 
-            {stripMakeupTags(item.note) ? (
-              <div className="mt-0 text-[11px] text-slate-500">
-                {stripMakeupTags(item.note)}
+            {stripSystemScheduleTags(item.note) ? (
+              <div className="mt-1 rounded-lg border border-slate-200 bg-white/70 px-2 py-1 text-[11px] leading-snug text-slate-600">
+                메모: {stripSystemScheduleTags(item.note)}
               </div>
             ) : null}
             {isMakeupScheduleNote(item.note) && parseMakeupAbsentDate(item.note) ? (
@@ -1323,7 +1342,7 @@ export default function EmployeePage() {
             ) : null}
 
             {item.isGroup ? (
-              <div className="mt-0 space-y-1 text-[11px] text-slate-600">
+              <div className="mt-1 space-y-1 text-[11px] text-slate-600">
                 {item.rows.map((r) => {
                   const child = children.find((c) => c.id === Number(r.child_id))
                   const log = attendanceMap.get(getAttendanceKey(r))
@@ -1343,11 +1362,11 @@ export default function EmployeePage() {
               </div>
             ) : null}
 
-            <div className="mt-0 flex flex-wrap gap-0">
+            <div className="mt-2 flex flex-wrap gap-1">
               {!item.isGroup && firstChild ? (
                 <button
                   onClick={() => setChildInfoModal({ open: true, child: firstChild })}
-                  className="rounded bg-slate-100 px-[2px] py-0.5 text-[11px] text-slate-700"
+                  className="rounded-lg bg-slate-100 px-2 py-1 text-[11px] text-slate-700"
                 >
                   아이정보
                 </button>
@@ -1355,14 +1374,14 @@ export default function EmployeePage() {
 
               <button
                 onClick={() => handleEditSchedule(item)}
-                className="rounded bg-blue-50 px-[2px] py-0.5 text-[11px] text-blue-700"
+                className="rounded-lg bg-blue-50 px-2 py-1 text-[11px] text-blue-700"
               >
                 수정
               </button>
 
               <button
                 onClick={() => handleDeleteSchedule(item)}
-                className="rounded bg-rose-50 px-[2px] py-0.5 text-[11px] text-rose-700"
+                className="rounded-lg bg-rose-50 px-2 py-1 text-[11px] text-rose-700"
               >
                 삭제
               </button>
@@ -1560,8 +1579,10 @@ export default function EmployeePage() {
           .filter((name): name is string => Boolean(name))
       : []
 
+    const displayMemo = stripSystemScheduleTags(row.note)
+
     return (
-      <div key={row.id} className="rounded-2xl border bg-white p-4">
+      <div key={row.id} className={`rounded-2xl border p-4 shadow-sm transition ${getTodayCardBgClass(status, row.note)}`}>
         <div className="flex items-start justify-between gap-0">
           <div>
             <div className="font-semibold">{timeText}</div>
@@ -1589,13 +1610,27 @@ export default function EmployeePage() {
           )}
         </div>
 
-        {row.note ? <div className="mt-0 text-xs text-slate-500">{row.note}</div> : null}
+        {displayMemo ? (
+          <div className="mt-3 rounded-xl border border-white/70 bg-white/75 px-3 py-2 text-xs leading-relaxed text-slate-600">
+            메모: {displayMemo}
+          </div>
+        ) : null}
+        {isMakeupScheduleNote(row.note) ? (
+          <div className="mt-2 flex flex-wrap gap-1">
+            <span className="rounded-full border border-orange-200 bg-orange-100 px-2 py-1 text-xs font-semibold text-orange-700">보강</span>
+            {parseMakeupAbsentDate(row.note) ? (
+              <span className="rounded-full border border-orange-200 bg-white px-2 py-1 text-xs text-orange-700">
+                결석일: {parseMakeupAbsentDate(row.note)}
+              </span>
+            ) : null}
+          </div>
+        ) : null}
 
-        <div className="mt-0 flex flex-wrap gap-0">
+        <div className="mt-2 flex flex-wrap gap-1">
           <button
             type="button"
             onClick={() => openRecordModal(row)}
-            className="rounded-lg bg-slate-200 px-[2px] py-2 text-xs"
+            className="rounded-xl bg-slate-800 px-3 py-2 text-xs font-semibold text-white"
           >
             상태입력
           </button>
@@ -1603,7 +1638,7 @@ export default function EmployeePage() {
             <button
               type="button"
               onClick={() => setChildInfoModal({ open: true, child })}
-              className="rounded-lg bg-slate-100 px-[2px] py-2 text-xs text-slate-700"
+              className="rounded-xl bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm"
             >
               아이정보
             </button>
@@ -1637,22 +1672,22 @@ export default function EmployeePage() {
           </button>
         </div>
 
-        <div className="mb-4 flex flex-wrap gap-0">
+        <div className="mb-4 flex flex-wrap gap-2">
           <button
             onClick={() => setTab('today')}
-            className={`rounded-xl px-4 py-2 ${tab === 'today' ? 'bg-black text-white' : 'bg-slate-200'}`}
+            className={`rounded-2xl px-4 py-2 text-sm font-semibold shadow-sm transition ${tab === 'today' ? 'bg-black text-white' : 'bg-white text-slate-700 border border-slate-200'}`}
           >
             오늘보기
           </button>
           <button
             onClick={() => setTab('schedule')}
-            className={`rounded-xl px-4 py-2 ${tab === 'schedule' ? 'bg-black text-white' : 'bg-slate-200'}`}
+            className={`rounded-2xl px-4 py-2 text-sm font-semibold shadow-sm transition ${tab === 'schedule' ? 'bg-black text-white' : 'bg-white text-slate-700 border border-slate-200'}`}
           >
             주간시간표
           </button>
           <button
             onClick={() => setTab('week_overview')}
-            className={`rounded-xl px-4 py-2 ${tab === 'week_overview' ? 'bg-black text-white' : 'bg-slate-200'}`}
+            className={`rounded-2xl px-4 py-2 text-sm font-semibold shadow-sm transition ${tab === 'week_overview' ? 'bg-black text-white' : 'bg-white text-slate-700 border border-slate-200'}`}
           >
             추가 시간표
           </button>
@@ -1681,7 +1716,7 @@ export default function EmployeePage() {
                 오늘 데이터 없음
               </div>
             ) : (
-              <div className="grid gap-0 md:grid-cols-2 xl:grid-cols-3">
+              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                 {todayItems.map(({ row }) => renderTodayCard(row))}
               </div>
             )}
@@ -1719,7 +1754,7 @@ export default function EmployeePage() {
             </div>
 
             <div className="hidden md:block">
-              <table className="w-full table-fixed border text-xs">
+              <table className="w-full table-fixed overflow-hidden rounded-2xl border text-xs shadow-sm">
                 <thead>
                   <tr>
                     <th className="w-[44px] border bg-slate-100 px-[2px] py-2">시간</th>
@@ -1748,7 +1783,7 @@ export default function EmployeePage() {
                         return (
                           <td
                             key={`${dateStr}-${hourSlot}`}
-                            className="border px-[2px] py-2 align-top"
+                            className="border bg-white/80 px-1.5 py-2 align-top"
                           >
                             {isEditing ? (
                               <div className="min-h-[88px] space-y-2">
@@ -1872,7 +1907,7 @@ export default function EmployeePage() {
                                 </div>
                               </div>
                             ) : (
-                              <div className="space-y-1">
+                              <div className="space-y-1.5">
                                 <button
                                   type="button"
                                   onClick={() => {
@@ -1967,7 +2002,7 @@ export default function EmployeePage() {
                             {compactItems.length === 0 ? (
                               <div className="min-h-[42px] text-[9px] text-slate-300">-</div>
                             ) : (
-                              <div className="space-y-1">
+                              <div className="space-y-1.5">
                                 {compactItems.map((item) => (
                                   <div
                                     key={item.key}
