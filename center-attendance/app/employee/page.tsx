@@ -235,6 +235,37 @@ function uniqueDateList(values: string[]) {
   return Array.from(new Set(values)).sort().join(', ')
 }
 
+const MAKEUP_NOTE_TAG = '[보강]'
+const MAKEUP_ABSENT_DATE_PREFIX = '[결석일:'
+
+function isMakeupScheduleNote(note: string | null | undefined) {
+  return Boolean(note?.includes(MAKEUP_NOTE_TAG))
+}
+
+function parseMakeupAbsentDate(note: string | null | undefined) {
+  if (!note) return ''
+  const matched = note.match(/\[결석일:([^\]]+)\]/)
+  if (!matched) return ''
+  return matched[1] === '없음' ? '' : matched[1]
+}
+
+function stripMakeupTags(note: string | null | undefined) {
+  if (!note) return ''
+  return note
+    .replace(/\[보강\]/g, '')
+    .replace(/\s*\[결석일:[^\]]+\]\s*/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function buildScheduleNote(baseNote: string, isMakeup: boolean, absentDate: string) {
+  const cleanNote = stripMakeupTags(baseNote)
+  if (!isMakeup) return cleanNote || null
+
+  const tags = [MAKEUP_NOTE_TAG, `${MAKEUP_ABSENT_DATE_PREFIX}${absentDate || '없음'}]`]
+  return [tags.join(' '), cleanNote].filter(Boolean).join(' ').trim()
+}
+
 function getMonthStartEnd(base: Date) {
   const start = new Date(base.getFullYear(), base.getMonth(), 1)
   const end = new Date(base.getFullYear(), base.getMonth() + 1, 0)
@@ -263,6 +294,8 @@ export default function EmployeePage() {
   const [selectedMinute, setSelectedMinute] = useState('00')
   const [selectedVoucher, setSelectedVoucher] = useState('')
   const [scheduleMemo, setScheduleMemo] = useState('')
+  const [isMakeupSchedule, setIsMakeupSchedule] = useState(false)
+  const [makeupAbsentDate, setMakeupAbsentDate] = useState('')
   const [isGroupLesson, setIsGroupLesson] = useState(false)
   const [groupName, setGroupName] = useState('')
   const [groupSearch, setGroupSearch] = useState('')
@@ -277,6 +310,9 @@ export default function EmployeePage() {
     entry: null,
     status: 'attended',
   })
+  const [recordMakeupDate, setRecordMakeupDate] = useState('')
+  const [recordMakeupHour, setRecordMakeupHour] = useState('09:00')
+  const [recordMakeupMinute, setRecordMakeupMinute] = useState('00')
 
   const [childInfoModal, setChildInfoModal] = useState<{
     open: boolean
@@ -389,6 +425,20 @@ export default function EmployeePage() {
     }
   }, [selectedChildMonthlyLogs])
 
+  const makeupAbsentDateOptions = useMemo(() => {
+    if (!scheduleChildId) return []
+    return classLogRows
+      .filter(
+        (log) =>
+          Number(log.child_id) === Number(scheduleChildId) &&
+          (log.status === 'absent' || log.status === 'same_day_absent')
+      )
+      .map((log) => log.class_date)
+      .filter((value, index, array) => array.indexOf(value) === index)
+      .sort()
+      .reverse()
+  }, [classLogRows, scheduleChildId])
+
   function getAttendanceKey(entry: ScheduleEntryRow) {
     return buildLogicalAttendanceKey({
       classDate: entry.date,
@@ -408,6 +458,8 @@ export default function EmployeePage() {
     setSelectedMinute('00')
     setSelectedVoucher('')
     setScheduleMemo('')
+    setIsMakeupSchedule(false)
+    setMakeupAbsentDate('')
     setIsGroupLesson(false)
     setGroupName('')
     setGroupSearch('')
@@ -521,7 +573,9 @@ export default function EmployeePage() {
       hour: item.hourSlot,
     })
 
-    setScheduleMemo(item.note ?? '')
+    setScheduleMemo(stripMakeupTags(item.note))
+    setIsMakeupSchedule(isMakeupScheduleNote(item.note))
+    setMakeupAbsentDate(parseMakeupAbsentDate(item.note))
 
     if (item.isGroup) {
       setIsGroupLesson(true)
@@ -532,6 +586,8 @@ export default function EmployeePage() {
       setSelectedMinute(String(item.minuteSlot).padStart(2, '0'))
       setScheduleChildId('')
       setSelectedVoucher('')
+      setIsMakeupSchedule(false)
+      setMakeupAbsentDate('')
       setGroupSearch('')
     } else {
       const row = item.rows[0]
@@ -704,6 +760,57 @@ export default function EmployeePage() {
     )
   }, [weekRange.start, weekRange.end, selectedTodayDate, user?.id])
 
+  function renderMakeupScheduleFields(inputClassName: string) {
+    return (
+      <>
+        <label className="flex items-center gap-1 rounded border border-orange-200 bg-orange-50 px-2 py-1 text-xs font-semibold text-orange-700">
+          <input
+            type="checkbox"
+            checked={isMakeupSchedule}
+            onChange={(e) => {
+              setIsMakeupSchedule(e.target.checked)
+              if (!e.target.checked) setMakeupAbsentDate('')
+            }}
+          />
+          보강
+        </label>
+
+        {isMakeupSchedule && scheduleChildId ? (
+          <div className="space-y-1">
+            <div className="text-[11px] font-semibold text-orange-700">결석날짜 선택</div>
+            <select
+              value={makeupAbsentDate}
+              onChange={(e) => setMakeupAbsentDate(e.target.value)}
+              className={inputClassName}
+            >
+              <option value="">없음</option>
+              {makeupAbsentDateOptions.map((date) => (
+                <option key={date} value={date}>
+                  {date}
+                </option>
+              ))}
+            </select>
+          </div>
+        ) : null}
+      </>
+    )
+  }
+
+  function resetNewScheduleState() {
+    setEditingEntryId(null)
+    setEditingGroupId(null)
+    setScheduleChildId('')
+    setSelectedMinute('00')
+    setSelectedVoucher('')
+    setScheduleMemo('')
+    setIsMakeupSchedule(false)
+    setMakeupAbsentDate('')
+    setIsGroupLesson(false)
+    setGroupName('')
+    setSelectedGroupChildIds([])
+    setGroupSearch('')
+  }
+
   async function handleLogout() {
     localStorage.removeItem('staff_id')
     localStorage.removeItem('staff_name')
@@ -772,7 +879,7 @@ export default function EmployeePage() {
               child_id: Number(scheduleChildId),
               minute_slot: minute,
               voucher_type: selectedVoucher,
-              note: scheduleMemo || null,
+              note: buildScheduleNote(scheduleMemo, isMakeupSchedule, makeupAbsentDate),
               is_group: false,
               group_id: null,
               group_name: null,
@@ -789,7 +896,7 @@ export default function EmployeePage() {
             teacher_name: staff?.name ?? user.name,
             child_id: Number(scheduleChildId),
             voucher_type: selectedVoucher,
-            note: scheduleMemo || null,
+            note: buildScheduleNote(scheduleMemo, isMakeupSchedule, makeupAbsentDate),
             is_active: true,
             is_group: false,
             group_id: null,
@@ -847,6 +954,9 @@ export default function EmployeePage() {
       entry,
       status: existing?.status ?? 'attended',
     })
+    setRecordMakeupDate('')
+    setRecordMakeupHour(entry.time_slot || '09:00')
+    setRecordMakeupMinute(String(entry.minute_slot ?? 0).padStart(2, '0'))
   }
 
   async function handleSaveRecordStatus() {
@@ -886,7 +996,26 @@ export default function EmployeePage() {
         if (error) throw error
       }
 
-      await loadClassLogs(user.id)
+      if ((recordModal.status === 'absent' || recordModal.status === 'same_day_absent') && recordMakeupDate) {
+        const { error: makeupScheduleError } = await supabase.from('schedule_entries').insert({
+          date: recordMakeupDate,
+          time_slot: recordMakeupHour,
+          minute_slot: Number(recordMakeupMinute),
+          teacher_id: Number(entry.teacher_id),
+          teacher_name: entry.teacher_name ?? user.name,
+          child_id: Number(entry.child_id),
+          voucher_type: entry.voucher_type ?? '일반',
+          note: buildScheduleNote(`결석 ${entry.date} 수업 보강`, true, entry.date),
+          is_active: true,
+          is_group: false,
+          group_id: null,
+          group_name: null,
+        })
+
+        if (makeupScheduleError) throw makeupScheduleError
+      }
+
+      await Promise.all([loadClassLogs(user.id), loadSchedules(user.id)])
       setRecordModal({
         open: false,
         entry: null,
@@ -938,6 +1067,10 @@ export default function EmployeePage() {
       return 'bg-red-50'
     }
 
+    if (isMakeupScheduleNote(item.note)) {
+      return 'bg-orange-50'
+    }
+
     return 'bg-white'
   }
 
@@ -955,7 +1088,7 @@ export default function EmployeePage() {
     return (
       <div
         key={item.key}
-        className={`rounded-lg border border-slate-200 px-[2px] py-2 text-[11px] shadow-sm ${getScheduleCardBgClass(item, classLogRows)}`}
+        className={`rounded-lg border px-[2px] py-2 text-[11px] shadow-sm ${isMakeupScheduleNote(item.note) ? 'border-orange-300' : 'border-slate-200'} ${getScheduleCardBgClass(item, classLogRows)}`}
       >
         {isEditing ? (
           <div className="space-y-2">
@@ -968,6 +1101,8 @@ export default function EmployeePage() {
                   setSelectedVoucher('')
                   setScheduleChildId('')
                   setSelectedGroupChildIds([])
+                  setIsMakeupSchedule(false)
+                  setMakeupAbsentDate('')
                 }}
               />
               그룹수업
@@ -1012,9 +1147,14 @@ export default function EmployeePage() {
               </>
             ) : (
               <>
+                {renderMakeupScheduleFields('w-full rounded border bg-white px-[2px] py-1 text-xs')}
+
                 <select
                   value={scheduleChildId}
-                  onChange={(e) => setScheduleChildId(e.target.value ? Number(e.target.value) : '')}
+                  onChange={(e) => {
+                    setScheduleChildId(e.target.value ? Number(e.target.value) : '')
+                    setMakeupAbsentDate('')
+                  }}
                   className="w-full rounded border bg-white px-[2px] py-1 text-xs"
                 >
                   <option value="">학생 선택</option>
@@ -1096,11 +1236,21 @@ export default function EmployeePage() {
                   그룹
                 </span>
               ) : null}
+              {isMakeupScheduleNote(item.note) ? (
+                <span className="rounded-full border border-orange-200 bg-orange-50 px-[2px] py-0.5 text-[11px] font-semibold text-orange-700">
+                  보강
+                </span>
+              ) : null}
             </div>
 
-            {item.note ? (
+            {stripMakeupTags(item.note) ? (
               <div className="mt-0 text-[11px] text-slate-500">
-                {item.note}
+                {stripMakeupTags(item.note)}
+              </div>
+            ) : null}
+            {isMakeupScheduleNote(item.note) && parseMakeupAbsentDate(item.note) ? (
+              <div className="mt-0 text-[11px] font-semibold text-orange-700">
+                결석일: {parseMakeupAbsentDate(item.note)}
               </div>
             ) : null}
 
@@ -1183,6 +1333,8 @@ export default function EmployeePage() {
                           setSelectedVoucher('')
                           setScheduleChildId('')
                           setSelectedGroupChildIds([])
+                          setIsMakeupSchedule(false)
+                          setMakeupAbsentDate('')
                         }}
                       />
                       그룹수업
@@ -1222,9 +1374,14 @@ export default function EmployeePage() {
                       </>
                     ) : (
                       <>
+                        {renderMakeupScheduleFields('w-full rounded border bg-white px-[2px] py-2 text-sm')}
+
                         <select
                           value={scheduleChildId}
-                          onChange={(e) => setScheduleChildId(e.target.value ? Number(e.target.value) : '')}
+                          onChange={(e) => {
+                            setScheduleChildId(e.target.value ? Number(e.target.value) : '')
+                            setMakeupAbsentDate('')
+                          }}
                           className="w-full rounded border bg-white px-[2px] py-2 text-sm"
                         >
                           <option value="">학생 선택</option>
@@ -1290,16 +1447,7 @@ export default function EmployeePage() {
                       type="button"
                       onClick={() => {
                         setEditingCell({ date: dateStr, hour: hourSlot })
-                        setEditingEntryId(null)
-                        setEditingGroupId(null)
-                        setScheduleChildId('')
-                        setSelectedMinute('00')
-                        setSelectedVoucher('')
-                        setScheduleMemo('')
-                        setIsGroupLesson(false)
-                        setGroupName('')
-                        setSelectedGroupChildIds([])
-                        setGroupSearch('')
+                        resetNewScheduleState()
                       }}
                       className="mb-2 w-full rounded-xl border border-dashed border-slate-300 px-[2px] py-3 text-left text-sm text-slate-500"
                     >
@@ -1545,6 +1693,8 @@ export default function EmployeePage() {
                                       setSelectedVoucher('')
                                       setScheduleChildId('')
                                       setSelectedGroupChildIds([])
+                                      setIsMakeupSchedule(false)
+                                      setMakeupAbsentDate('')
                                     }}
                                   />
                                   그룹수업
@@ -1584,9 +1734,14 @@ export default function EmployeePage() {
                                   </>
                                 ) : (
                                   <>
+                                    {renderMakeupScheduleFields('w-full rounded border bg-white px-[2px] py-2 text-sm')}
+
                                     <select
                                       value={scheduleChildId}
-                                      onChange={(e) => setScheduleChildId(e.target.value ? Number(e.target.value) : '')}
+                                      onChange={(e) => {
+                                        setScheduleChildId(e.target.value ? Number(e.target.value) : '')
+                                        setMakeupAbsentDate('')
+                                      }}
                                       className="w-full rounded border bg-white px-[2px] py-2 text-sm"
                                     >
                                       <option value="">학생 선택</option>
@@ -1654,16 +1809,7 @@ export default function EmployeePage() {
                                   type="button"
                                   onClick={() => {
                                     setEditingCell({ date: dateStr, hour: hourSlot })
-                                    setEditingEntryId(null)
-                                    setEditingGroupId(null)
-                                    setScheduleChildId('')
-                                    setSelectedMinute('00')
-                                    setSelectedVoucher('')
-                                    setScheduleMemo('')
-                                    setIsGroupLesson(false)
-                                    setGroupName('')
-                                    setSelectedGroupChildIds([])
-                                    setGroupSearch('')
+                        resetNewScheduleState()
                                   }}
                                   className="min-h-[32px] w-full rounded border border-dashed border-slate-300 p-1.5 text-left text-[11px] text-slate-500 hover:bg-slate-100"
                                 >
@@ -1801,6 +1947,43 @@ export default function EmployeePage() {
                   </option>
                 ))}
               </select>
+
+              {recordModal.status === 'absent' || recordModal.status === 'same_day_absent' ? (
+                <div className="mb-4 rounded-xl border border-orange-200 bg-orange-50 p-3">
+                  <div className="mb-2 text-sm font-bold text-orange-700">보강 일정 입력</div>
+                  <div className="mb-2 text-xs text-orange-700">선택하지 않으면 없음으로 저장됩니다.</div>
+                  <input
+                    type="date"
+                    value={recordMakeupDate}
+                    onChange={(e) => setRecordMakeupDate(e.target.value)}
+                    className="mb-2 w-full rounded-xl border bg-white px-[2px] py-2 text-sm"
+                  />
+                  <div className="grid grid-cols-2 gap-2">
+                    <select
+                      value={recordMakeupHour}
+                      onChange={(e) => setRecordMakeupHour(e.target.value)}
+                      className="rounded-xl border bg-white px-[2px] py-2 text-sm"
+                    >
+                      {hourSlots.map((slot) => (
+                        <option key={slot} value={slot}>
+                          {slot}
+                        </option>
+                      ))}
+                    </select>
+                    <select
+                      value={recordMakeupMinute}
+                      onChange={(e) => setRecordMakeupMinute(e.target.value)}
+                      className="rounded-xl border bg-white px-[2px] py-2 text-sm"
+                    >
+                      {getMinutesOptions().map((m) => (
+                        <option key={m} value={m}>
+                          {m}분
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              ) : null}
 
               <div className="flex gap-0">
                 <button
