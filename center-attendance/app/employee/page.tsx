@@ -1043,8 +1043,45 @@ export default function EmployeePage() {
     }
   }
 
+  async function deleteClassLogsForScheduleRow(row: ScheduleEntryRow) {
+    const { data, error } = await supabase
+      .from('class_logs')
+      .select('id, staff_id, child_id, class_date, class_time, status, is_group, group_id')
+      .eq('class_date', row.date)
+      .eq('staff_id', Number(row.teacher_id))
+      .eq('child_id', Number(row.child_id))
+
+    if (error) throw error
+
+    const rowMinute = getEntryMinuteTotal(row)
+    const targetIds = ((data ?? []) as ClassLogRow[])
+      .filter((log) => {
+        const logMinute = getLogMinuteTotal(log)
+        if (logMinute !== rowMinute) return false
+
+        if (row.is_group) {
+          return Boolean(log.is_group) && (log.group_id ?? '') === (row.group_id ?? '')
+        }
+
+        return !log.is_group
+      })
+      .map((log) => log.id)
+
+    if (targetIds.length === 0) return
+
+    const { error: deleteLogError } = await supabase
+      .from('class_logs')
+      .delete()
+      .in('id', targetIds)
+
+    if (deleteLogError) throw deleteLogError
+  }
+
   async function deleteScheduleRowOnly(row: ScheduleEntryRow) {
     if (!user) return
+
+    await deleteClassLogsForScheduleRow(row)
+
     const { error } = await supabase
       .from('schedule_entries')
       .delete()
@@ -1069,7 +1106,7 @@ export default function EmployeePage() {
       await deleteScheduleRowOnly(targetRow)
 
       await Promise.all([loadSchedules(user.id), loadMakeupSchedules(user.id)])
-      setMessage('선택한 일정 row 1건만 DB에서 삭제되었습니다.')
+      setMessage('선택한 일정 row 1건과 연결된 출결 기록이 DB에서 삭제되었습니다.')
     } catch (err: any) {
       setMessage(err?.message ?? '삭제 실패')
     }
@@ -1087,7 +1124,7 @@ export default function EmployeePage() {
       await deleteScheduleRowOnly(row)
 
       await Promise.all([loadSchedules(user.id), loadMakeupSchedules(user.id)])
-      setMessage('선택한 일정 row 1건만 DB에서 삭제되었습니다.')
+      setMessage('선택한 일정 row 1건과 연결된 출결 기록이 DB에서 삭제되었습니다.')
     } catch (err: any) {
       setMessage(err?.message ?? '삭제 실패')
     }
