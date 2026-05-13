@@ -190,6 +190,25 @@ function getTodayCardBgClass(status: AttendanceStatus | null, note?: string | nu
   return 'border-slate-200 bg-white shadow-slate-100'
 }
 
+
+function compactScheduleName(value: string, maxLength = 10) {
+  const clean = (value || '').trim()
+  if (clean.length <= maxLength) return clean
+  return `${clean.slice(0, maxLength)}…`
+}
+
+function getScheduleItemCompactTitle(item: DisplayScheduleItem, children: ChildRow[]) {
+  const minute = String(item.minuteSlot).padStart(2, '0')
+  if (item.isGroup) {
+    const groupName = compactScheduleName(item.groupName || '그룹수업', 12)
+    const childCount = item.rows.length
+    return childCount > 1 ? `${minute} ${groupName}(${childCount})` : `${minute} ${groupName}`
+  }
+
+  const child = children.find((c) => Number(c.id) === Number(item.rows[0]?.child_id))
+  return `${minute} ${compactScheduleName(child?.child_name ?? '이름없음', 10)}`
+}
+
 function getEntryMinuteTotal(entry: ScheduleEntryRow) {
   return Number(entry.time_slot.slice(0, 2)) * 60 + Number(entry.minute_slot ?? 0)
 }
@@ -1203,9 +1222,7 @@ export default function EmployeePage() {
 
   function renderScheduleCard(item: DisplayScheduleItem, dateStr: string) {
     const firstChild = children.find((c) => c.id === Number(item.rows[0]?.child_id))
-    const title = item.isGroup
-      ? `${item.hourSlot.slice(0, 2)}:${String(item.minuteSlot).padStart(2, '0')}, ${item.groupName || '그룹수업'}`
-      : `${item.hourSlot.slice(0, 2)}:${String(item.minuteSlot).padStart(2, '0')}, ${firstChild?.child_name ?? ''} (${getAgeText(firstChild?.birth_date ?? null)})`
+    const title = getScheduleItemCompactTitle(item, children)
 
     const isEditing =
       editingCell?.date === dateStr &&
@@ -1215,7 +1232,7 @@ export default function EmployeePage() {
     return (
       <div
         key={item.key}
-        className={`rounded-xl border px-2 py-2 text-[11px] shadow-sm transition ${isMakeupScheduleNote(item.note) ? 'border-orange-300 ring-1 ring-orange-100' : 'border-slate-200'} ${getScheduleCardBgClass(item, classLogRows)}`}
+        className={`rounded-lg border px-1.5 py-1.5 text-[10px] shadow-sm transition ${isMakeupScheduleNote(item.note) ? 'border-orange-300 ring-1 ring-orange-100' : 'border-slate-200'} ${getScheduleCardBgClass(item, classLogRows)}`}
       >
         {isEditing ? (
           <div className="space-y-2">
@@ -1351,11 +1368,11 @@ export default function EmployeePage() {
               }}
               className="w-full text-left"
             >
-              <div className="font-semibold leading-tight text-slate-800">{title}</div>
+              <div className="truncate font-semibold leading-tight text-slate-800" title={title}>{title}</div>
             </button>
 
             <div className="mt-1 flex flex-wrap gap-1">
-              <span className={`rounded-full border px-[2px] py-0.5 text-[11px] ${getVoucherClass(item.voucherType)}`}>
+              <span className={`rounded-full border px-1.5 py-0.5 text-[10px] ${getVoucherClass(item.voucherType)}`}>
                 {item.voucherType || '일반'}
               </span>
               {item.isGroup ? (
@@ -1371,8 +1388,8 @@ export default function EmployeePage() {
             </div>
 
             {stripSystemScheduleTags(item.note) ? (
-              <div className="mt-1 rounded-lg border border-slate-200 bg-white/70 px-2 py-1 text-[11px] leading-snug text-slate-600">
-                메모: {stripSystemScheduleTags(item.note)}
+              <div className="mt-1 truncate rounded-md border border-slate-200 bg-white/70 px-1.5 py-0.5 text-[10px] leading-snug text-slate-600">
+                <span title={stripSystemScheduleTags(item.note)}>메모: {compactScheduleName(stripSystemScheduleTags(item.note), 14)}</span>
               </div>
             ) : null}
             {isMakeupScheduleNote(item.note) && parseMakeupAbsentDate(item.note) ? (
@@ -1394,8 +1411,8 @@ export default function EmployeePage() {
                         onClick={() => openRecordModal(r)}
                         className="flex-1 text-left hover:bg-white"
                       >
-                        {child?.child_name ?? `학생(${r.child_id})`}
-                        {log?.status ? ` (${getStatusLabel(log.status)})` : ' (미입력)'}
+                        {compactScheduleName(child?.child_name ?? `학생(${r.child_id})`, 8)}
+                        {log?.status ? `(${getStatusLabel(log.status)})` : '(미입력)'}
                       </button>
                       <button
                         type="button"
@@ -1414,7 +1431,7 @@ export default function EmployeePage() {
               {!item.isGroup && firstChild ? (
                 <button
                   onClick={() => setChildInfoModal({ open: true, child: firstChild })}
-                  className="rounded-lg bg-slate-100 px-2 py-1 text-[11px] text-slate-700"
+                  className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-700"
                 >
                   아이정보
                 </button>
@@ -1422,7 +1439,7 @@ export default function EmployeePage() {
 
               <button
                 onClick={() => handleEditSchedule(item)}
-                className="rounded-lg bg-blue-50 px-2 py-1 text-[11px] text-blue-700"
+                className="rounded-md bg-blue-50 px-1.5 py-0.5 text-[10px] text-blue-700"
               >
                 수정
               </button>
@@ -1430,7 +1447,7 @@ export default function EmployeePage() {
               {!item.isGroup ? (
                 <button
                   onClick={() => handleDeleteSchedule(item)}
-                  className="rounded-lg bg-rose-50 px-2 py-1 text-[11px] text-rose-700"
+                  className="rounded-md bg-rose-50 px-1.5 py-0.5 text-[10px] text-rose-700"
                 >
                   삭제
                 </button>
@@ -1775,17 +1792,27 @@ export default function EmployeePage() {
 
         {tab === 'schedule' ? (
           <div className="mt-0 border-t-0 pt-0">
-            <div className="mb-3 flex flex-col gap-0 md:flex-row md:items-center md:justify-between">
+            <div className="mb-3 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
               <h2 className="text-lg font-bold">일간</h2>
 
-              <div className="flex gap-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  type="date"
+                  value={toDateString(weekBaseDate)}
+                  onChange={(e) => {
+                    if (!e.target.value) return
+                    setWeekBaseDate(new Date(`${e.target.value}T00:00:00`))
+                  }}
+                  className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
+                />
+
                 <button
                   onClick={() => {
                     const d = new Date(weekBaseDate)
                     d.setDate(d.getDate() - 1)
                     setWeekBaseDate(d)
                   }}
-                  className="rounded-lg bg-slate-200 px-[2px] py-2"
+                  className="rounded-lg bg-slate-200 px-3 py-2"
                 >
                   ◀
                 </button>
@@ -1796,18 +1823,18 @@ export default function EmployeePage() {
                     d.setDate(d.getDate() + 1)
                     setWeekBaseDate(d)
                   }}
-                  className="rounded-lg bg-slate-200 px-[2px] py-2"
+                  className="rounded-lg bg-slate-200 px-3 py-2"
                 >
                   ▶
                 </button>
               </div>
             </div>
 
-            <div className="hidden md:block">
-              <table className="w-full table-fixed overflow-hidden rounded-2xl border text-xs shadow-sm">
+            <div className="hidden max-w-3xl md:block">
+              <table className="w-full table-fixed overflow-hidden rounded-2xl border text-[11px] shadow-sm">
                 <thead>
                   <tr>
-                    <th className="w-[44px] border bg-slate-100 px-[2px] py-2">시간</th>
+                    <th className="w-[52px] border bg-slate-100 px-1 py-2">시간</th>
                     <th className="border bg-slate-100 px-[2px] py-2">
                       <div className="text-sm font-semibold">
                         {['일', '월', '화', '수', '목', '금', '토'][weekBaseDate.getDay()]} {toShortMonthDay(weekBaseDate)}
@@ -1818,7 +1845,7 @@ export default function EmployeePage() {
                 <tbody>
                   {hourSlots.map((hourSlot) => (
                     <tr key={hourSlot}>
-                      <td className="whitespace-nowrap border bg-slate-50 px-[2px] py-2 font-medium">
+                      <td className="whitespace-nowrap border bg-slate-50 px-1 py-1.5 text-center font-medium">
                         {getHourLabel(hourSlot)}
                       </td>
 
@@ -1831,7 +1858,7 @@ export default function EmployeePage() {
                         return (
                           <td
                             key={`${dateStr}-${hourSlot}`}
-                            className="border bg-white/80 px-1.5 py-2 align-top"
+                            className="border bg-white/80 px-1 py-1.5 align-top"
                           >
                             {isEditing ? (
                               <div className="min-h-[88px] space-y-2">
@@ -1962,7 +1989,7 @@ export default function EmployeePage() {
                                     setEditingCell({ date: dateStr, hour: hourSlot })
                         resetNewScheduleState()
                                   }}
-                                  className="min-h-[32px] w-full rounded border border-dashed border-slate-300 p-1.5 text-left text-[11px] text-slate-500 hover:bg-slate-100"
+                                  className="min-h-[28px] w-full rounded border border-dashed border-slate-300 p-1 text-center text-[10px] text-slate-500 hover:bg-slate-100"
                                 >
                                   + 추가
                                 </button>
@@ -2054,7 +2081,7 @@ export default function EmployeePage() {
                                 {compactItems.map((item) => (
                                   <div
                                     key={item.key}
-                                    className={`rounded-md bg-slate-50 px-[2px].5 py-1 leading-tight ${item.colorClass}`}
+                                    className={`rounded-md bg-slate-50 px-1.5 py-1 leading-tight ${item.colorClass}`}
                                   >
                                     {item.label}
                                   </div>
