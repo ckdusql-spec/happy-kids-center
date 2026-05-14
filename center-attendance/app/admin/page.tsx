@@ -389,14 +389,32 @@ function buildClassTimestamp(
   return `${date}T${hh}:${mm}:00+09:00`
 }
 
-function uniqueDateList(values: string[]) {
-  return Array.from(new Set(values.filter(Boolean))).sort().join(', ')
+function toMonthDayText(value: string) {
+  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})$/)
+  if (!match) return value
+  return `${match[2]}-${match[3]}`
 }
 
-function uniqueDateListWithMakeupComplete(values: string[], completedDateSet: Set<string>) {
+function uniqueDateList(values: string[]) {
   return Array.from(new Set(values.filter(Boolean)))
     .sort()
-    .map((date) => (completedDateSet.has(date) ? `${date}(보강완료)` : date))
+    .map(toMonthDayText)
+    .join(', ')
+}
+
+function uniqueAbsentDateListWithMakeupDate(values: string[], makeupDateMap: Map<string, string[]>) {
+  return Array.from(new Set(values.filter(Boolean)))
+    .sort()
+    .map((date) => {
+      const makeupDates = Array.from(new Set(makeupDateMap.get(date) ?? []))
+        .filter(Boolean)
+        .sort()
+        .map(toMonthDayText)
+
+      return makeupDates.length > 0
+        ? `${toMonthDayText(date)}(보 ${makeupDates.join('/')})`
+        : toMonthDayText(date)
+    })
     .join(', ')
 }
 
@@ -2240,57 +2258,69 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
     }
   }
 
-  async function handleDeleteSchedule(item: DisplayScheduleItem) {
+  async function deleteClassLogsForScheduleRow(row: ScheduleEntryRow) {
+    const targetIds = classLogs
+      .filter((log) => isSameAttendanceLog(row, log))
+      .map((log) => log.id)
+
+    if (targetIds.length === 0) return
+
+    const { error } = await supabase
+      .from('class_logs')
+      .delete()
+      .in('id', targetIds)
+
+    if (error) throw error
+  }
+
+  async function deleteScheduleRowOnly(row: ScheduleEntryRow) {
+    await deleteClassLogsForScheduleRow(row)
+
+    const { error } = await supabase
+      .from('schedule_entries')
+      .delete()
+      .eq('id', row.id)
+
+    if (error) throw error
+  }
+
+  async function handleDeleteScheduleRow(row: ScheduleEntryRow) {
     try {
-      const ok = window.confirm('이 시간표를 삭제할까요?')
+      const child = children.find((c) => Number(c.id) === Number(row.child_id))
+      const ok = window.confirm(
+        `${row.date} ${row.time_slot.slice(0, 2)}:${String(row.minute_slot ?? 0).padStart(2, '0')} ${child?.child_name ?? '학생'} 일정 1건만 DB에서 삭제할까요?`
+      )
       if (!ok) return
 
-      if (item.isGroup && item.groupId) {
-        const targetRows = allScheduleEntries.filter(
-          (row) => row.group_id === item.groupId && row.is_active
-        )
-
-        const { error } = await supabase
-          .from('schedule_entries')
-          .update({ is_active: false })
-          .eq('group_id', item.groupId)
-        if (error) throw error
-
-        for (const row of targetRows) {
-          await supabase
-            .from('class_logs')
-            .delete()
-            .match({
-              class_date: row.date,
-              staff_id: Number(row.teacher_id),
-              child_id: Number(row.child_id),
-            })
-        }
-      } else {
-        const targetId = item.rows[0]?.id
-        const targetRow = item.rows[0]
-        if (!targetId || !targetRow) return
-
-        const { error } = await supabase
-          .from('schedule_entries')
-          .update({ is_active: false })
-          .eq('id', targetId)
-        if (error) throw error
-
-        await supabase
-          .from('class_logs')
-          .delete()
-          .match({
-            class_date: targetRow.date,
-            staff_id: Number(targetRow.teacher_id),
-            child_id: Number(targetRow.child_id),
-          })
-      }
+      await deleteScheduleRowOnly(row)
 
       await loadSchedules()
       await loadMakeupSchedules()
       await loadClassLogsForMonth()
-      setMessage('시간표가 삭제되었습니다.')
+      setMessage('선택한 일정 row 1건과 연결된 출결 기록이 DB에서 삭제되었습니다.')
+    } catch (err: any) {
+      setMessage(err?.message ?? '삭제 실패')
+    }
+  }
+
+  async function handleDeleteSchedule(item: DisplayScheduleItem) {
+    try {
+      const targetRow = item.rows[0]
+      if (!targetRow) return
+
+      const ok = window.confirm(
+        item.isGroup
+          ? '이 그룹수업의 선택된 학생 일정 1건만 DB에서 삭제할까요?'
+          : '이 일정 1건만 DB에서 삭제할까요?'
+      )
+      if (!ok) return
+
+      await deleteScheduleRowOnly(targetRow)
+
+      await loadSchedules()
+      await loadMakeupSchedules()
+      await loadClassLogsForMonth()
+      setMessage('선택한 일정 row 1건과 연결된 출결 기록이 DB에서 삭제되었습니다.')
     } catch (err: any) {
       setMessage(err?.message ?? '삭제 실패')
     }
@@ -2745,41 +2775,46 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
 
   const selectedChildMonthlyLogs = useMemo(() => {
     if (!childInfoModal.child) return []
-    return validClassLogs.filter(
+    return classLogs.filter(
       (log) =>
         Number(log.child_id) === Number(childInfoModal.child?.id) &&
         log.class_date.startsWith(csvMonth)
     )
-  }, [childInfoModal.child, validClassLogs, csvMonth])
+  }, [childInfoModal.child, classLogs, csvMonth])
 
   const childInfoDates = useMemo(() => {
     const individualRows = selectedChildMonthlyLogs.filter((r) => !r.is_group)
     const groupRows = selectedChildMonthlyLogs.filter((r) => Boolean(r.is_group))
     const childId = Number(childInfoModal.child?.id)
 
-    const makeupCompletedAbsentDateSet = new Set(
-      makeupScheduleRows
-        .filter(
-          (row) =>
-            row.is_active &&
-            !row.is_group &&
-            Number(row.child_id) === childId &&
-            (isMakeupScheduleStatus(row.status) || isMakeupScheduleNote(row.note))
-        )
-        .map((row) => parseMakeupAbsentDate(row.note))
-        .filter(Boolean)
-    )
+    const makeupDateMap = new Map<string, string[]>()
+
+    makeupScheduleRows
+      .filter(
+        (row) =>
+          row.is_active &&
+          !row.is_group &&
+          Number(row.child_id) === childId &&
+          (isMakeupScheduleStatus(row.status) || isMakeupScheduleNote(row.note))
+      )
+      .forEach((row) => {
+        const absentDate = parseMakeupAbsentDate(row.note)
+        if (!absentDate) return
+        const current = makeupDateMap.get(absentDate) ?? []
+        current.push(row.date)
+        makeupDateMap.set(absentDate, current)
+      })
 
     return {
       attended: uniqueDateList(individualRows.filter((r) => r.status === 'attended').map((r) => r.class_date)),
       makeup: uniqueDateList(individualRows.filter((r) => r.status === 'makeup').map((r) => r.class_date)),
-      absent: uniqueDateListWithMakeupComplete(
+      absent: uniqueAbsentDateListWithMakeupDate(
         individualRows.filter((r) => r.status === 'absent').map((r) => r.class_date),
-        makeupCompletedAbsentDateSet
+        makeupDateMap
       ),
-      sameDayAbsent: uniqueDateListWithMakeupComplete(
+      sameDayAbsent: uniqueAbsentDateListWithMakeupDate(
         individualRows.filter((r) => r.status === 'same_day_absent').map((r) => r.class_date),
-        makeupCompletedAbsentDateSet
+        makeupDateMap
       ),
       groupAttended: uniqueDateList(
         groupRows.filter((r) => r.status === 'attended' || r.status === 'makeup').map((r) => r.class_date)
@@ -3017,15 +3052,23 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
                   const log = attendanceMap.get(getAttendanceKey(r))
 
                   return (
-                    <button
-                      key={r.id}
-                      type="button"
-                      onClick={() => openRecordModal(r)}
-                      className="block w-full rounded bg-white/70 px-2 py-1 text-left hover:bg-white"
-                    >
-                      {child?.child_name ?? `학생(${r.child_id})`}
-                      {log?.status ? ` (${getStatusLabel(log.status)})` : ' (미입력)'}
-                    </button>
+                    <div key={r.id} className="flex items-center gap-1 rounded bg-white/70 px-2 py-1">
+                      <button
+                        type="button"
+                        onClick={() => openRecordModal(r)}
+                        className="flex-1 text-left hover:bg-white"
+                      >
+                        {child?.child_name ?? `학생(${r.child_id})`}
+                        {log?.status ? ` (${getStatusLabel(log.status)})` : ' (미입력)'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteScheduleRow(r)}
+                        className="rounded bg-rose-50 px-1.5 py-0.5 text-[10px] text-rose-700"
+                      >
+                        삭제
+                      </button>
+                    </div>
                   )
                 })}
               </div>
@@ -3065,12 +3108,14 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
               >
                 수정
               </button>
-              <button
-                onClick={() => handleDeleteSchedule(item)}
-                className="rounded bg-rose-50 px-2 py-0.5 text-[11px] text-rose-700"
-              >
-                삭제
-              </button>
+              {!item.isGroup ? (
+                <button
+                  onClick={() => handleDeleteSchedule(item)}
+                  className="rounded bg-rose-50 px-2 py-0.5 text-[11px] text-rose-700"
+                >
+                  삭제
+                </button>
+              ) : null}
             </div>
           </>
         )}
@@ -4881,10 +4926,9 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
               </div>
 
               <div className="mt-5 space-y-2 rounded-2xl bg-slate-50 p-4 text-sm">
-                <div><span className="font-semibold">출석날짜:</span> {childInfoDates.attended || '-'}</div>
-                <div><span className="font-semibold">보강날짜:</span> {childInfoDates.makeup || '-'}</div>
-                <div><span className="font-semibold">결석날짜:</span> {childInfoDates.absent || '-'}</div>
-                <div><span className="font-semibold">당일결석날짜:</span> {childInfoDates.sameDayAbsent || '-'}</div>
+                <div><span className="font-semibold">출석:</span> {childInfoDates.attended || '-'}</div>
+                <div><span className="font-semibold">결석/보강:</span> {childInfoDates.absent || '-'}</div>
+                <div><span className="font-semibold">당일결석:</span> {childInfoDates.sameDayAbsent || '-'}</div>
                 <div><span className="font-semibold">그룹수업출석:</span> {childInfoDates.groupAttended || '-'}</div>
                 <div><span className="font-semibold">그룹수업결석및 당일결석:</span> {childInfoDates.groupAbsent || '-'}</div>
               </div>
