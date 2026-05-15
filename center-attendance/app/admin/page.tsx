@@ -238,6 +238,13 @@ type SettlementRow = {
   total_amount: number
 }
 
+type WeeklyAttendanceRow = {
+  child_id: number
+  child_name: string
+  age_text: string
+  week_cells: Record<string, { positive: string[]; negative: string[] }>
+}
+
 const VOUCHER_OPTIONS = ['일반', '디딤', '아청심1', '아청심2', '드림스타트', '배움'] as const
 
 function toDateString(date: Date) {
@@ -457,6 +464,23 @@ function toMonthDayDate(value: string) {
 
 function uniqueMonthDayList(values: string[]) {
   return Array.from(new Set(values.filter(Boolean).map(toMonthDayDate))).sort().join(', ')
+}
+
+function getWeekOfMonth(dateString: string) {
+  const day = Number(dateString.slice(8, 10))
+  if (!day || Number.isNaN(day)) return 1
+  return Math.ceil(day / 7)
+}
+
+function getWeeksInMonth(monthKey: string) {
+  const firstDay = new Date(`${monthKey}-01`)
+  firstDay.setMonth(firstDay.getMonth() + 1)
+  firstDay.setDate(0)
+  return Math.ceil(firstDay.getDate() / 7)
+}
+
+function uniqueSortedMonthDayArray(values: string[]) {
+  return Array.from(new Set(values.filter(Boolean).map(toMonthDayDate))).sort()
 }
 
 
@@ -773,12 +797,12 @@ function AdminDailySchedule({
         </div>
       ) : (
         <div className="overflow-x-auto">
-          <table className="min-w-[900px] border text-sm">
+          <table className="min-w-[540px] border text-xs">
             <thead>
               <tr>
-                <th className="border bg-slate-100 px-2 py-2">시간</th>
+                <th className="w-[52px] border bg-slate-100 px-1 py-2">시간</th>
                 {teacherList.map((teacher) => (
-                  <th key={teacher.id} className="min-w-[220px] border bg-slate-100 px-2 py-2">
+                  <th key={teacher.id} className="min-w-[132px] border bg-slate-100 px-1 py-2">
                     {teacher.name}
                   </th>
                 ))}
@@ -787,11 +811,11 @@ function AdminDailySchedule({
             <tbody>
               {slots.map((slot) => (
                 <tr key={slot}>
-                  <td className="border bg-slate-50 px-2 py-2 font-medium">{slot}</td>
+                  <td className="w-[52px] whitespace-nowrap border bg-slate-50 px-1 py-2 font-medium">{slot}</td>
                   {teacherList.map((teacher) => {
                     const items = buildItems(slot, teacher.id)
                     return (
-                      <td key={`${slot}-${teacher.id}`} className="border px-2 py-2 align-top">
+                      <td key={`${slot}-${teacher.id}`} className="border px-1 py-1 align-top">
                         <div className="space-y-2">
                           {items.length === 0 ? (
                             <div className="min-h-[40px]" />
@@ -812,12 +836,12 @@ function AdminDailySchedule({
                                     const firstEntry = item.rows[0]
                                     if (firstEntry) onOpenRecord(firstEntry)
                                   }}
-                                  className={`block w-full rounded-lg border px-2 py-2 text-left shadow-sm ${getScheduleCardBgClass(
+                                  className={`block w-full rounded-lg border px-1.5 py-1.5 text-left shadow-sm ${getScheduleCardBgClass(
                                     item,
                                     classLogs
                                   )}`}
                                 >
-                                  <div className="font-medium text-slate-800">{title}</div>
+                                  <div className="break-words text-[11px] font-medium leading-tight text-slate-800">{title}</div>
                                   <div className="mt-1 flex flex-wrap gap-1">
                                     <span className={`rounded-full border px-2 py-0.5 text-[11px] ${getVoucherClass(item.voucherType)}`}>
                                       {item.voucherType || '일반'}
@@ -2773,6 +2797,48 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
       .sort((a, b) => a.child_name.localeCompare(b.child_name, 'ko'))
   }, [csvMonth, allScheduleEntries, children, validClassLogs, monthlyGroupPrices])
 
+  const weeklyAttendanceRows = useMemo<WeeklyAttendanceRow[]>(() => {
+    const weeksInMonth = getWeeksInMonth(csvMonth)
+
+    return children
+      .filter((child) => child.is_active)
+      .map((child) => {
+        const weekCells: WeeklyAttendanceRow['week_cells'] = {}
+
+        for (let week = 1; week <= weeksInMonth; week++) {
+          weekCells[String(week)] = { positive: [], negative: [] }
+        }
+
+        validClassLogs
+          .filter((log) => Number(log.child_id) === Number(child.id))
+          .forEach((log) => {
+            const week = String(getWeekOfMonth(log.class_date))
+            if (!weekCells[week]) weekCells[week] = { positive: [], negative: [] }
+
+            if (log.status === 'attended' || log.status === 'makeup') {
+              weekCells[week].positive.push(log.class_date)
+            }
+
+            if (log.status === 'absent' || log.status === 'same_day_absent') {
+              weekCells[week].negative.push(log.class_date)
+            }
+          })
+
+        return {
+          child_id: child.id,
+          child_name: child.child_name,
+          age_text: getAgeText(child.birth_date),
+          week_cells: weekCells,
+        }
+      })
+      .filter((row) =>
+        Object.values(row.week_cells).some(
+          (cell) => cell.positive.length > 0 || cell.negative.length > 0
+        )
+      )
+      .sort((a, b) => a.child_name.localeCompare(b.child_name, 'ko'))
+  }, [children, validClassLogs, csvMonth])
+
   const selectedChildMonthlyLogs = useMemo(() => {
     if (!childInfoModal.child) return []
     return classLogs.filter(
@@ -2867,6 +2933,31 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
       ['날짜', '선생님', '시간', '분', '학생', '바우처', '그룹'],
       monthRows
     )
+  }
+
+  function downloadWeeklyAttendanceCsv() {
+    const weeksInMonth = getWeeksInMonth(csvMonth)
+    const weekNumbers = Array.from({ length: weeksInMonth }, (_, i) => i + 1)
+    const headers = [
+      '학생이름(나이)',
+      ...weekNumbers.flatMap((week) => [
+        `${week}주차 출석/보강`,
+        `${week}주차 결석/당일결석`,
+      ]),
+    ]
+
+    const rows = weeklyAttendanceRows.map((row) => [
+      row.age_text ? `${row.child_name}(${row.age_text})` : row.child_name,
+      ...weekNumbers.flatMap((week) => {
+        const cell = row.week_cells[String(week)] ?? { positive: [], negative: [] }
+        return [
+          uniqueSortedMonthDayArray(cell.positive).join(', '),
+          uniqueSortedMonthDayArray(cell.negative).join(', '),
+        ]
+      }),
+    ])
+
+    downloadCsvFile(`주차별출결CSV_${csvMonth}.csv`, headers, rows)
   }
 
   function handleLogout() {
@@ -3351,6 +3442,13 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
               className="rounded-xl bg-blue-500 px-4 py-2 text-sm font-bold text-white shadow"
             >
               선생님CSV
+            </button>
+
+            <button
+              onClick={downloadWeeklyAttendanceCsv}
+              className="rounded-xl bg-orange-500 px-4 py-2 text-sm font-bold text-white shadow"
+            >
+              주차별출결CSV
             </button>
 
             <button
