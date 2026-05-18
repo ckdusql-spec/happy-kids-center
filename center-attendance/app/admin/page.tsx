@@ -946,6 +946,9 @@ export default function AdminPage() {
     open: false,
     child: null,
   })
+  const [childInfoLoading, setChildInfoLoading] = useState(false)
+  const [childInfoAllLogs, setChildInfoAllLogs] = useState<ClassLogRow[]>([])
+  const [childInfoAllMakeupRows, setChildInfoAllMakeupRows] = useState<ScheduleEntryRow[]>([])
 
   const [childForm, setChildForm] = useState<ChildForm>({
     id: null,
@@ -1280,6 +1283,49 @@ export default function AdminPage() {
       setMessage(err?.message ?? '월정산 불러오기 실패')
     )
   }, [csvMonth])
+
+  async function loadChildInfoHistory(childId: number) {
+    try {
+      setChildInfoLoading(true)
+      const [{ data: logData, error: logError }, { data: makeupData, error: makeupError }] =
+        await Promise.all([
+          supabase
+            .from('class_logs')
+            .select('*')
+            .eq('child_id', childId)
+            .order('class_date', { ascending: true }),
+          supabase
+            .from('schedule_entries')
+            .select('*')
+            .eq('child_id', childId)
+            .eq('is_active', true)
+            .or('status.eq.makeup,note.ilike.%[보강]%')
+            .order('date', { ascending: true }),
+        ])
+
+      if (logError) throw logError
+      if (makeupError) throw makeupError
+
+      setChildInfoAllLogs((logData ?? []) as ClassLogRow[])
+      setChildInfoAllMakeupRows((makeupData ?? []) as ScheduleEntryRow[])
+    } catch (err: any) {
+      setChildInfoAllLogs([])
+      setChildInfoAllMakeupRows([])
+      setMessage(err?.message ?? '아이 출결 정보 불러오기 실패')
+    } finally {
+      setChildInfoLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    if (!childInfoModal.open || !childInfoModal.child) {
+      setChildInfoAllLogs([])
+      setChildInfoAllMakeupRows([])
+      return
+    }
+
+    void loadChildInfoHistory(Number(childInfoModal.child.id))
+  }, [childInfoModal.open, childInfoModal.child?.id])
 
 
   async function deleteUnloggedRegularClassSchedulesOnServer(ruleId: number) {
@@ -2839,28 +2885,25 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
       .sort((a, b) => a.child_name.localeCompare(b.child_name, 'ko'))
   }, [children, validClassLogs, csvMonth])
 
-  const selectedChildMonthlyLogs = useMemo(() => {
-    if (!childInfoModal.child) return []
-    return classLogs.filter(
-      (log) =>
-        Number(log.child_id) === Number(childInfoModal.child?.id) &&
-        log.class_date.startsWith(csvMonth)
-    )
-  }, [childInfoModal.child, classLogs, csvMonth])
+  const childInfoMonthlySections = useMemo(() => {
+    const monthSet = new Set<string>()
 
-  const childInfoDates = useMemo(() => {
-    const individualRows = selectedChildMonthlyLogs.filter((r) => !r.is_group)
-    const groupRows = selectedChildMonthlyLogs.filter((r) => Boolean(r.is_group))
-    const childId = Number(childInfoModal.child?.id)
+    childInfoAllLogs.forEach((log) => {
+      if (log.class_date) monthSet.add(log.class_date.slice(0, 7))
+    })
+
+    childInfoAllMakeupRows.forEach((row) => {
+      const absentDate = parseMakeupAbsentDate(row.note)
+      if (absentDate) monthSet.add(absentDate.slice(0, 7))
+    })
 
     const makeupDateMap = new Map<string, string[]>()
 
-    makeupScheduleRows
+    childInfoAllMakeupRows
       .filter(
         (row) =>
           row.is_active &&
           !row.is_group &&
-          Number(row.child_id) === childId &&
           (isMakeupScheduleStatus(row.status) || isMakeupScheduleNote(row.note))
       )
       .forEach((row) => {
@@ -2871,74 +2914,112 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
         makeupDateMap.set(absentDate, current)
       })
 
-    const madeUpAbsentDateSet = new Set(
-      Array.from(makeupDateMap.keys()).filter(Boolean)
-    )
+    const madeUpAbsentDateSet = new Set(Array.from(makeupDateMap.keys()).filter(Boolean))
 
-    const monthlyAbsentDates = individualRows
-      .filter((r) => r.status === 'absent' || r.status === 'same_day_absent')
-      .map((r) => r.class_date)
+    return Array.from(monthSet)
+      .sort()
+      .reverse()
+      .map((monthLabel) => {
+        const monthLogs = childInfoAllLogs.filter((log) => log.class_date.startsWith(monthLabel))
+        const individualRows = monthLogs.filter((r) => !r.is_group)
+        const groupRows = monthLogs.filter((r) => Boolean(r.is_group))
+        const monthlyAbsentDates = individualRows
+          .filter((r) => r.status === 'absent' || r.status === 'same_day_absent')
+          .map((r) => r.class_date)
+        const unrecoveredAbsentDates = monthlyAbsentDates.filter(
+          (date) => !madeUpAbsentDateSet.has(date)
+        )
 
-    const unrecoveredAbsentDates = monthlyAbsentDates.filter(
-      (date) => !madeUpAbsentDateSet.has(date)
-    )
+        return {
+          monthLabel,
+          attended: uniqueDateList(
+            individualRows.filter((r) => r.status === 'attended').map((r) => r.class_date)
+          ),
+          makeup: uniqueDateList(
+            individualRows.filter((r) => r.status === 'makeup').map((r) => r.class_date)
+          ),
+          absent: uniqueAbsentDateListWithMakeupDate(
+            individualRows.filter((r) => r.status === 'absent').map((r) => r.class_date),
+            makeupDateMap
+          ),
+          sameDayAbsent: uniqueAbsentDateListWithMakeupDate(
+            individualRows.filter((r) => r.status === 'same_day_absent').map((r) => r.class_date),
+            makeupDateMap
+          ),
+          groupAttended: uniqueDateList(
+            groupRows.filter((r) => r.status === 'attended' || r.status === 'makeup').map((r) => r.class_date)
+          ),
+          groupAbsent: uniqueDateList(
+            groupRows.filter((r) => r.status === 'absent' || r.status === 'same_day_absent').map((r) => r.class_date)
+          ),
+          unrecoveredAbsent: uniqueDateList(unrecoveredAbsentDates),
+        }
+      })
+  }, [childInfoAllLogs, childInfoAllMakeupRows])
 
-    return {
-      monthLabel: csvMonth,
-      attended: uniqueDateList(individualRows.filter((r) => r.status === 'attended').map((r) => r.class_date)),
-      makeup: uniqueDateList(individualRows.filter((r) => r.status === 'makeup').map((r) => r.class_date)),
-      absent: uniqueAbsentDateListWithMakeupDate(
-        individualRows.filter((r) => r.status === 'absent').map((r) => r.class_date),
-        makeupDateMap
-      ),
-      sameDayAbsent: uniqueAbsentDateListWithMakeupDate(
-        individualRows.filter((r) => r.status === 'same_day_absent').map((r) => r.class_date),
-        makeupDateMap
-      ),
-      groupAttended: uniqueDateList(
-        groupRows.filter((r) => r.status === 'attended' || r.status === 'makeup').map((r) => r.class_date)
-      ),
-      groupAbsent: uniqueDateList(
-        groupRows.filter((r) => r.status === 'absent' || r.status === 'same_day_absent').map((r) => r.class_date)
-      ),
-      unrecoveredAbsent: uniqueDateList(unrecoveredAbsentDates),
+  function askCsvMonth() {
+    const defaultMonth = dailyDate ? dailyDate.slice(0, 7) : toDateString(new Date()).slice(0, 7)
+    const value = window.prompt('CSV로 출력할 월을 입력하세요. 예: 2026-05', defaultMonth)
+    if (value == null) return null
+
+    const month = value.trim()
+    if (!/^\d{4}-\d{2}$/.test(month)) {
+      setMessage('월 형식은 YYYY-MM으로 입력하세요. 예: 2026-05')
+      return null
     }
-  }, [selectedChildMonthlyLogs, childInfoModal.child, makeupScheduleRows])
+
+    return month
+  }
 
   async function downloadStudentCsv() {
     try {
       setMessage('')
 
-      const start = `${csvMonth}-01`
+      const targetMonth = askCsvMonth()
+      if (!targetMonth) return
+
+      const start = `${targetMonth}-01`
       const endDate = new Date(start)
       endDate.setMonth(endDate.getMonth() + 1)
       endDate.setDate(0)
       const end = toDateString(endDate)
 
-      const [{ data: scheduleData, error: scheduleError }, { data: logData, error: logError }] =
-        await Promise.all([
-          supabase
-            .from('schedule_entries')
-            .select('*')
-            .gte('date', start)
-            .lte('date', end)
-            .eq('is_active', true)
-            .order('date', { ascending: true })
-            .order('time_slot', { ascending: true })
-            .order('minute_slot', { ascending: true }),
-          supabase
-            .from('class_logs')
-            .select('*')
-            .gte('class_date', start)
-            .lte('class_date', end)
-            .order('class_date', { ascending: true }),
-        ])
+      const [
+        { data: scheduleData, error: scheduleError },
+        { data: logData, error: logError },
+        { data: groupPriceData, error: groupPriceError },
+      ] = await Promise.all([
+        supabase
+          .from('schedule_entries')
+          .select('*')
+          .gte('date', start)
+          .lte('date', end)
+          .eq('is_active', true)
+          .order('date', { ascending: true })
+          .order('time_slot', { ascending: true })
+          .order('minute_slot', { ascending: true }),
+        supabase
+          .from('class_logs')
+          .select('*')
+          .gte('class_date', start)
+          .lte('class_date', end)
+          .order('class_date', { ascending: true }),
+        supabase
+          .from('monthly_group_prices')
+          .select('child_id, month_key, unit_price')
+          .eq('month_key', targetMonth),
+      ])
 
       if (scheduleError) throw scheduleError
       if (logError) throw logError
+      if (groupPriceError) throw groupPriceError
 
       const monthlyScheduleRows = (scheduleData ?? []) as ScheduleEntryRow[]
       const monthlyLogs = (logData ?? []) as ClassLogRow[]
+      const monthlyGroupPriceMap = new Map<number, number>()
+      ;((groupPriceData ?? []) as MonthlyGroupPriceRow[]).forEach((row) => {
+        monthlyGroupPriceMap.set(Number(row.child_id), Number(row.unit_price ?? 0))
+      })
 
       const monthRows = children
         .filter((child) => child.is_active)
@@ -2965,11 +3046,11 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
             }
           })
 
-          const groupUnitPrice = Number(monthlyGroupPrices[child.id] ?? 0)
+          const groupUnitPrice = Number(monthlyGroupPriceMap.get(child.id) ?? 0)
           const groupAmount = groupRows.length * groupUnitPrice
 
           return [
-            csvMonth,
+            targetMonth,
             child.child_name,
             getAgeText(child.birth_date),
             getVoucherLabel(child.vouchers),
@@ -2983,7 +3064,7 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
         })
 
       downloadCsvFile(
-        `학생CSV_${csvMonth}_월전체.csv`,
+        `학생CSV_${targetMonth}_월전체.csv`,
         ['월', '학생', '나이', '바우처', '출석+보강횟수', '그룹횟수', '결석', '당일결석', '그룹단가', '총금액'],
         monthRows
       )
@@ -2996,7 +3077,10 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
     try {
       setMessage('')
 
-      const start = `${csvMonth}-01`
+      const targetMonth = askCsvMonth()
+      if (!targetMonth) return
+
+      const start = `${targetMonth}-01`
       const endDate = new Date(start)
       endDate.setMonth(endDate.getMonth() + 1)
       endDate.setDate(0)
@@ -3028,7 +3112,7 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
       })
 
       downloadCsvFile(
-        `선생님CSV_${csvMonth}_월전체.csv`,
+        `선생님CSV_${targetMonth}_월전체.csv`,
         ['날짜', '선생님', '시간', '분', '학생', '바우처', '그룹'],
         monthRows
       )
@@ -3041,7 +3125,10 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
     try {
       setMessage('')
 
-      const start = `${csvMonth}-01`
+      const targetMonth = askCsvMonth()
+      if (!targetMonth) return
+
+      const start = `${targetMonth}-01`
       const endDate = new Date(start)
       endDate.setMonth(endDate.getMonth() + 1)
       endDate.setDate(0)
@@ -3057,7 +3144,7 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
       if (error) throw error
 
       const monthlyLogs = (data ?? []) as ClassLogRow[]
-      const weeksInMonth = getWeeksInMonth(csvMonth)
+      const weeksInMonth = getWeeksInMonth(targetMonth)
       const weekNumbers = Array.from({ length: weeksInMonth }, (_, i) => i + 1)
 
       const rowMap = new Map<number, WeeklyAttendanceRow>()
@@ -3120,7 +3207,7 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
           }),
         ])
 
-      downloadCsvFile(`주차별출결CSV_${csvMonth}.csv`, headers, rows)
+      downloadCsvFile(`주차별출결CSV_${targetMonth}.csv`, headers, rows)
     } catch (err: any) {
       setMessage(err?.message ?? '주차별 출결 CSV 생성 실패')
     }
@@ -3589,13 +3676,6 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
-            <input
-              type="month"
-              value={csvMonth}
-              onChange={(e) => setCsvMonth(e.target.value)}
-              className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
-            />
-
             <button
               onClick={downloadStudentCsv}
               className="rounded-xl bg-emerald-500 px-4 py-2 text-sm font-bold text-white shadow"
@@ -5189,20 +5269,32 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
                 <div>메모: {childInfoModal.child.notes ?? '-'}</div>
               </div>
 
-              <div className="mt-5 space-y-2 rounded-2xl bg-slate-50 p-4 text-sm">
-                <div className="mb-2 text-base font-bold text-slate-800">
-                  {childInfoDates.monthLabel} 월별 출결
-                </div>
-                <div><span className="font-semibold">출석:</span> {childInfoDates.attended || '-'}</div>
-                <div><span className="font-semibold">보강:</span> {childInfoDates.makeup || '-'}</div>
-                <div><span className="font-semibold">결석/보강:</span> {childInfoDates.absent || '-'}</div>
-                <div><span className="font-semibold">당일결석:</span> {childInfoDates.sameDayAbsent || '-'}</div>
-                <div><span className="font-semibold">그룹수업출석:</span> {childInfoDates.groupAttended || '-'}</div>
-                <div><span className="font-semibold">그룹수업결석및 당일결석:</span> {childInfoDates.groupAbsent || '-'}</div>
-                <div className="mt-3 border-t border-slate-200 pt-3">
-                  <span className="font-semibold text-rose-700">미보강결석:</span>{' '}
-                  {childInfoDates.unrecoveredAbsent || '-'}
-                </div>
+              <div className="mt-5 rounded-2xl bg-slate-50 p-4 text-sm">
+                <div className="mb-2 text-base font-bold text-slate-800">월별 출결</div>
+
+                {childInfoLoading ? (
+                  <div className="text-slate-500">아이 출결 정보를 불러오는 중...</div>
+                ) : childInfoMonthlySections.length === 0 ? (
+                  <div className="text-slate-500">출결 데이터가 없습니다.</div>
+                ) : (
+                  <div className="space-y-4">
+                    {childInfoMonthlySections.map((section) => (
+                      <div key={section.monthLabel} className="rounded-xl border border-slate-200 bg-white p-3">
+                        <div className="mb-2 font-bold text-slate-800">{section.monthLabel}</div>
+                        <div><span className="font-semibold">출석:</span> {section.attended || '-'}</div>
+                        <div><span className="font-semibold">보강:</span> {section.makeup || '-'}</div>
+                        <div><span className="font-semibold">결석/보강:</span> {section.absent || '-'}</div>
+                        <div><span className="font-semibold">당일결석:</span> {section.sameDayAbsent || '-'}</div>
+                        <div><span className="font-semibold">그룹수업출석:</span> {section.groupAttended || '-'}</div>
+                        <div><span className="font-semibold">그룹수업결석및 당일결석:</span> {section.groupAbsent || '-'}</div>
+                        <div className="mt-3 border-t border-slate-200 pt-3">
+                          <span className="font-semibold text-rose-700">미보강결석:</span>{' '}
+                          {section.unrecoveredAbsent || '-'}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
 
               <button
