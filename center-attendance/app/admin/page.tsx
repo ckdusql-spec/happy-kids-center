@@ -2891,31 +2891,116 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
     }
   }, [selectedChildMonthlyLogs, childInfoModal.child, makeupScheduleRows])
 
-  function downloadStudentCsv() {
-    const monthRows = settlementRows.map((row) => [
-      csvMonth,
-      row.child_name,
-      row.age_text,
-      row.voucher_label,
-      row.lesson_count,
-      row.group_count,
-      row.absent_count,
-      row.same_day_absent_count,
-      row.group_unit_price,
-      row.total_amount,
-    ])
+  async function downloadStudentCsv() {
+    try {
+      setMessage('')
 
-    downloadCsvFile(
-      `학생CSV_${csvMonth}.csv`,
-      ['월', '학생', '나이', '바우처', '출석+보강횟수', '그룹횟수', '결석', '당일결석', '그룹단가', '총금액'],
-      monthRows
-    )
+      const start = `${csvMonth}-01`
+      const endDate = new Date(start)
+      endDate.setMonth(endDate.getMonth() + 1)
+      endDate.setDate(0)
+      const end = toDateString(endDate)
+
+      const [{ data: scheduleData, error: scheduleError }, { data: logData, error: logError }] =
+        await Promise.all([
+          supabase
+            .from('schedule_entries')
+            .select('*')
+            .gte('date', start)
+            .lte('date', end)
+            .eq('is_active', true)
+            .order('date', { ascending: true })
+            .order('time_slot', { ascending: true })
+            .order('minute_slot', { ascending: true }),
+          supabase
+            .from('class_logs')
+            .select('*')
+            .gte('class_date', start)
+            .lte('class_date', end)
+            .order('class_date', { ascending: true }),
+        ])
+
+      if (scheduleError) throw scheduleError
+      if (logError) throw logError
+
+      const monthlyScheduleRows = (scheduleData ?? []) as ScheduleEntryRow[]
+      const monthlyLogs = (logData ?? []) as ClassLogRow[]
+
+      const monthRows = children
+        .filter((child) => child.is_active)
+        .map((child) => {
+          const scheduleRows = monthlyScheduleRows.filter(
+            (row) => Number(row.child_id) === Number(child.id)
+          )
+          const attendanceRows = monthlyLogs.filter(
+            (log) => Number(log.child_id) === Number(child.id)
+          )
+
+          const groupRows = scheduleRows.filter((row) => Boolean(row.is_group))
+          const individualRows = scheduleRows.filter((row) => !row.is_group)
+
+          let didimCounter = 0
+          let individualAmount = 0
+
+          individualRows.forEach((row) => {
+            if (row.voucher_type === '디딤') {
+              didimCounter++
+              individualAmount += getIndividualRowAmount(row, child, didimCounter)
+            } else {
+              individualAmount += getIndividualRowAmount(row, child, didimCounter)
+            }
+          })
+
+          const groupUnitPrice = Number(monthlyGroupPrices[child.id] ?? 0)
+          const groupAmount = groupRows.length * groupUnitPrice
+
+          return [
+            csvMonth,
+            child.child_name,
+            getAgeText(child.birth_date),
+            getVoucherLabel(child.vouchers),
+            individualRows.length,
+            groupRows.length,
+            attendanceRows.filter((row) => !row.is_group && row.status === 'absent').length,
+            attendanceRows.filter((row) => !row.is_group && row.status === 'same_day_absent').length,
+            groupUnitPrice,
+            individualAmount + groupAmount,
+          ]
+        })
+
+      downloadCsvFile(
+        `학생CSV_${csvMonth}_월전체.csv`,
+        ['월', '학생', '나이', '바우처', '출석+보강횟수', '그룹횟수', '결석', '당일결석', '그룹단가', '총금액'],
+        monthRows
+      )
+    } catch (err: any) {
+      setMessage(err?.message ?? '학생 CSV 생성 실패')
+    }
   }
 
-  function downloadStaffCsv() {
-    const monthRows = allScheduleEntries
-      .filter((row) => row.date.startsWith(csvMonth) && row.is_active)
-      .map((row) => {
+  async function downloadStaffCsv() {
+    try {
+      setMessage('')
+
+      const start = `${csvMonth}-01`
+      const endDate = new Date(start)
+      endDate.setMonth(endDate.getMonth() + 1)
+      endDate.setDate(0)
+      const end = toDateString(endDate)
+
+      const { data, error } = await supabase
+        .from('schedule_entries')
+        .select('*')
+        .gte('date', start)
+        .lte('date', end)
+        .eq('is_active', true)
+        .order('date', { ascending: true })
+        .order('time_slot', { ascending: true })
+        .order('minute_slot', { ascending: true })
+
+      if (error) throw error
+
+      const monthRows = ((data ?? []) as ScheduleEntryRow[]).map((row) => {
         const child = children.find((c) => c.id === Number(row.child_id))
         return [
           row.date,
@@ -2928,36 +3013,103 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
         ]
       })
 
-    downloadCsvFile(
-      `선생님CSV_${csvMonth}.csv`,
-      ['날짜', '선생님', '시간', '분', '학생', '바우처', '그룹'],
-      monthRows
-    )
+      downloadCsvFile(
+        `선생님CSV_${csvMonth}_월전체.csv`,
+        ['날짜', '선생님', '시간', '분', '학생', '바우처', '그룹'],
+        monthRows
+      )
+    } catch (err: any) {
+      setMessage(err?.message ?? '선생님 CSV 생성 실패')
+    }
   }
 
-  function downloadWeeklyAttendanceCsv() {
-    const weeksInMonth = getWeeksInMonth(csvMonth)
-    const weekNumbers = Array.from({ length: weeksInMonth }, (_, i) => i + 1)
-    const headers = [
-      '학생이름(나이)',
-      ...weekNumbers.flatMap((week) => [
-        `${week}주차 출석/보강`,
-        `${week}주차 결석/당일결석`,
-      ]),
-    ]
+  async function downloadWeeklyAttendanceCsv() {
+    try {
+      setMessage('')
 
-    const rows = weeklyAttendanceRows.map((row) => [
-      row.age_text ? `${row.child_name}(${row.age_text})` : row.child_name,
-      ...weekNumbers.flatMap((week) => {
-        const cell = row.week_cells[String(week)] ?? { positive: [], negative: [] }
-        return [
-          uniqueSortedMonthDayArray(cell.positive).join(', '),
-          uniqueSortedMonthDayArray(cell.negative).join(', '),
-        ]
-      }),
-    ])
+      const start = `${csvMonth}-01`
+      const endDate = new Date(start)
+      endDate.setMonth(endDate.getMonth() + 1)
+      endDate.setDate(0)
+      const end = toDateString(endDate)
 
-    downloadCsvFile(`주차별출결CSV_${csvMonth}.csv`, headers, rows)
+      const { data, error } = await supabase
+        .from('class_logs')
+        .select('*')
+        .gte('class_date', start)
+        .lte('class_date', end)
+        .order('class_date', { ascending: true })
+
+      if (error) throw error
+
+      const monthlyLogs = (data ?? []) as ClassLogRow[]
+      const weeksInMonth = getWeeksInMonth(csvMonth)
+      const weekNumbers = Array.from({ length: weeksInMonth }, (_, i) => i + 1)
+
+      const rowMap = new Map<number, WeeklyAttendanceRow>()
+
+      monthlyLogs.forEach((log) => {
+        const child = children.find((c) => Number(c.id) === Number(log.child_id))
+        if (!child) return
+
+        const childId = Number(child.id)
+
+        if (!rowMap.has(childId)) {
+          const weekCells: WeeklyAttendanceRow['week_cells'] = {}
+
+          weekNumbers.forEach((week) => {
+            weekCells[String(week)] = { positive: [], negative: [] }
+          })
+
+          rowMap.set(childId, {
+            child_id: childId,
+            child_name: child.child_name,
+            age_text: getAgeText(child.birth_date),
+            week_cells: weekCells,
+          })
+        }
+
+        const row = rowMap.get(childId)!
+        const week = String(getWeekOfMonth(log.class_date))
+
+        if (!row.week_cells[week]) {
+          row.week_cells[week] = { positive: [], negative: [] }
+        }
+
+        if (log.status === 'attended' || log.status === 'makeup') {
+          row.week_cells[week].positive.push(log.class_date)
+        }
+
+        if (log.status === 'absent' || log.status === 'same_day_absent') {
+          row.week_cells[week].negative.push(log.class_date)
+        }
+      })
+
+      const headers = [
+        '학생이름(나이)',
+        ...weekNumbers.flatMap((week) => [
+          `${week}주차 출석/보강`,
+          `${week}주차 결석/당일결석`,
+        ]),
+      ]
+
+      const rows = Array.from(rowMap.values())
+        .sort((a, b) => a.child_name.localeCompare(b.child_name, 'ko'))
+        .map((row) => [
+          row.age_text ? `${row.child_name}(${row.age_text})` : row.child_name,
+          ...weekNumbers.flatMap((week) => {
+            const cell = row.week_cells[String(week)] ?? { positive: [], negative: [] }
+            return [
+              uniqueSortedMonthDayArray(cell.positive).join(', '),
+              uniqueSortedMonthDayArray(cell.negative).join(', '),
+            ]
+          }),
+        ])
+
+      downloadCsvFile(`주차별출결CSV_${csvMonth}.csv`, headers, rows)
+    } catch (err: any) {
+      setMessage(err?.message ?? '주차별 출결 CSV 생성 실패')
+    }
   }
 
   function handleLogout() {
@@ -3434,21 +3586,21 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
               onClick={downloadStudentCsv}
               className="rounded-xl bg-emerald-500 px-4 py-2 text-sm font-bold text-white shadow"
             >
-              학생CSV
+              학생CSV(월전체)
             </button>
 
             <button
               onClick={downloadStaffCsv}
               className="rounded-xl bg-blue-500 px-4 py-2 text-sm font-bold text-white shadow"
             >
-              선생님CSV
+              선생님CSV(월전체)
             </button>
 
             <button
               onClick={downloadWeeklyAttendanceCsv}
               className="rounded-xl bg-orange-500 px-4 py-2 text-sm font-bold text-white shadow"
             >
-              주차별출결CSV
+              주차별출결CSV(월전체)
             </button>
 
             <button
