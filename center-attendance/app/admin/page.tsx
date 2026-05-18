@@ -2871,7 +2871,20 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
         makeupDateMap.set(absentDate, current)
       })
 
+    const madeUpAbsentDateSet = new Set(
+      Array.from(makeupDateMap.keys()).filter(Boolean)
+    )
+
+    const monthlyAbsentDates = individualRows
+      .filter((r) => r.status === 'absent' || r.status === 'same_day_absent')
+      .map((r) => r.class_date)
+
+    const unrecoveredAbsentDates = monthlyAbsentDates.filter(
+      (date) => !madeUpAbsentDateSet.has(date)
+    )
+
     return {
+      monthLabel: csvMonth,
       attended: uniqueDateList(individualRows.filter((r) => r.status === 'attended').map((r) => r.class_date)),
       makeup: uniqueDateList(individualRows.filter((r) => r.status === 'makeup').map((r) => r.class_date)),
       absent: uniqueAbsentDateListWithMakeupDate(
@@ -2888,6 +2901,7 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
       groupAbsent: uniqueDateList(
         groupRows.filter((r) => r.status === 'absent' || r.status === 'same_day_absent').map((r) => r.class_date)
       ),
+      unrecoveredAbsent: uniqueDateList(unrecoveredAbsentDates),
     }
   }, [selectedChildMonthlyLogs, childInfoModal.child, makeupScheduleRows])
 
@@ -5176,11 +5190,19 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
               </div>
 
               <div className="mt-5 space-y-2 rounded-2xl bg-slate-50 p-4 text-sm">
+                <div className="mb-2 text-base font-bold text-slate-800">
+                  {childInfoDates.monthLabel} 월별 출결
+                </div>
                 <div><span className="font-semibold">출석:</span> {childInfoDates.attended || '-'}</div>
+                <div><span className="font-semibold">보강:</span> {childInfoDates.makeup || '-'}</div>
                 <div><span className="font-semibold">결석/보강:</span> {childInfoDates.absent || '-'}</div>
                 <div><span className="font-semibold">당일결석:</span> {childInfoDates.sameDayAbsent || '-'}</div>
                 <div><span className="font-semibold">그룹수업출석:</span> {childInfoDates.groupAttended || '-'}</div>
                 <div><span className="font-semibold">그룹수업결석및 당일결석:</span> {childInfoDates.groupAbsent || '-'}</div>
+                <div className="mt-3 border-t border-slate-200 pt-3">
+                  <span className="font-semibold text-rose-700">미보강결석:</span>{' '}
+                  {childInfoDates.unrecoveredAbsent || '-'}
+                </div>
               </div>
 
               <button
