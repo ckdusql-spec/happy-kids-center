@@ -466,6 +466,14 @@ function uniqueMonthDayList(values: string[]) {
   return Array.from(new Set(values.filter(Boolean).map(toMonthDayDate))).sort().join(', ')
 }
 
+function uniqueFullDateList(values: string[]) {
+  return Array.from(new Set(values.filter(Boolean))).sort().join(', ')
+}
+
+function getCurrentMonthKey() {
+  return toDateString(new Date()).slice(0, 7)
+}
+
 function getWeekOfMonth(dateString: string) {
   const day = Number(dateString.slice(8, 10))
   if (!day || Number.isNaN(day)) return 1
@@ -949,6 +957,8 @@ export default function AdminPage() {
   const [childInfoLoading, setChildInfoLoading] = useState(false)
   const [childInfoAllLogs, setChildInfoAllLogs] = useState<ClassLogRow[]>([])
   const [childInfoAllMakeupRows, setChildInfoAllMakeupRows] = useState<ScheduleEntryRow[]>([])
+  const [childInfoSelectedMonth, setChildInfoSelectedMonth] = useState(() => getCurrentMonthKey())
+  const [scheduleChildAllAbsentLogs, setScheduleChildAllAbsentLogs] = useState<ClassLogRow[]>([])
 
   const [childForm, setChildForm] = useState<ChildForm>({
     id: null,
@@ -1317,6 +1327,23 @@ export default function AdminPage() {
     }
   }
 
+  async function loadScheduleChildAbsentLogs(childId: number) {
+    try {
+      const { data, error } = await supabase
+        .from('class_logs')
+        .select('*')
+        .eq('child_id', childId)
+        .in('status', ['absent', 'same_day_absent'])
+        .order('class_date', { ascending: false })
+
+      if (error) throw error
+      setScheduleChildAllAbsentLogs((data ?? []) as ClassLogRow[])
+    } catch (err: any) {
+      setScheduleChildAllAbsentLogs([])
+      setMessage(err?.message ?? '학생 결석 기록 불러오기 실패')
+    }
+  }
+
   useEffect(() => {
     if (!childInfoModal.open || !childInfoModal.child) {
       setChildInfoAllLogs([])
@@ -1324,8 +1351,18 @@ export default function AdminPage() {
       return
     }
 
+    setChildInfoSelectedMonth(getCurrentMonthKey())
     void loadChildInfoHistory(Number(childInfoModal.child.id))
   }, [childInfoModal.open, childInfoModal.child?.id])
+
+  useEffect(() => {
+    if (!scheduleChildId || !isScheduleMakeup) {
+      setScheduleChildAllAbsentLogs([])
+      return
+    }
+
+    void loadScheduleChildAbsentLogs(Number(scheduleChildId))
+  }, [scheduleChildId, isScheduleMakeup])
 
 
   async function deleteUnloggedRegularClassSchedulesOnServer(ruleId: number) {
@@ -1432,18 +1469,22 @@ export default function AdminPage() {
 
   const makeupAbsentDateOptions = useMemo(() => {
     if (!scheduleChildId) return []
-    return classLogs
-      .filter(
-        (log) =>
-          Number(log.child_id) === Number(scheduleChildId) &&
-          (log.status === 'absent' || log.status === 'same_day_absent')
-      )
+
+    const sourceLogs = scheduleChildAllAbsentLogs.length > 0
+      ? scheduleChildAllAbsentLogs
+      : classLogs.filter(
+          (log) =>
+            Number(log.child_id) === Number(scheduleChildId) &&
+            (log.status === 'absent' || log.status === 'same_day_absent')
+        )
+
+    return sourceLogs
       .map((log) => log.class_date)
       .filter((value, index, array) => array.indexOf(value) === index)
       .filter((date) => !usedMakeupAbsentDateSet.has(date) || date === makeupAbsentDate)
       .sort()
       .reverse()
-  }, [classLogs, scheduleChildId, usedMakeupAbsentDateSet, makeupAbsentDate])
+  }, [classLogs, scheduleChildAllAbsentLogs, scheduleChildId, usedMakeupAbsentDateSet, makeupAbsentDate])
 
   function renderMakeupScheduleFields(inputClassName: string) {
     return (
@@ -2885,18 +2926,19 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
       .sort((a, b) => a.child_name.localeCompare(b.child_name, 'ko'))
   }, [children, validClassLogs, csvMonth])
 
-  const childInfoMonthlySections = useMemo(() => {
+  const childInfoAvailableMonths = useMemo(() => {
     const monthSet = new Set<string>()
 
     childInfoAllLogs.forEach((log) => {
       if (log.class_date) monthSet.add(log.class_date.slice(0, 7))
     })
 
-    childInfoAllMakeupRows.forEach((row) => {
-      const absentDate = parseMakeupAbsentDate(row.note)
-      if (absentDate) monthSet.add(absentDate.slice(0, 7))
-    })
+    monthSet.add(getCurrentMonthKey())
 
+    return Array.from(monthSet).sort().reverse()
+  }, [childInfoAllLogs])
+
+  const childInfoMakeupDateMap = useMemo(() => {
     const makeupDateMap = new Map<string, string[]>()
 
     childInfoAllMakeupRows
@@ -2914,48 +2956,50 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
         makeupDateMap.set(absentDate, current)
       })
 
-    const madeUpAbsentDateSet = new Set(Array.from(makeupDateMap.keys()).filter(Boolean))
+    return makeupDateMap
+  }, [childInfoAllMakeupRows])
 
-    return Array.from(monthSet)
-      .sort()
-      .reverse()
-      .map((monthLabel) => {
-        const monthLogs = childInfoAllLogs.filter((log) => log.class_date.startsWith(monthLabel))
-        const individualRows = monthLogs.filter((r) => !r.is_group)
-        const groupRows = monthLogs.filter((r) => Boolean(r.is_group))
-        const monthlyAbsentDates = individualRows
-          .filter((r) => r.status === 'absent' || r.status === 'same_day_absent')
-          .map((r) => r.class_date)
-        const unrecoveredAbsentDates = monthlyAbsentDates.filter(
-          (date) => !madeUpAbsentDateSet.has(date)
-        )
+  const childInfoSelectedMonthSection = useMemo(() => {
+    const monthLabel = childInfoSelectedMonth || getCurrentMonthKey()
+    const monthLogs = childInfoAllLogs.filter((log) => log.class_date.startsWith(monthLabel))
+    const individualRows = monthLogs.filter((r) => !r.is_group)
+    const groupRows = monthLogs.filter((r) => Boolean(r.is_group))
 
-        return {
-          monthLabel,
-          attended: uniqueDateList(
-            individualRows.filter((r) => r.status === 'attended').map((r) => r.class_date)
-          ),
-          makeup: uniqueDateList(
-            individualRows.filter((r) => r.status === 'makeup').map((r) => r.class_date)
-          ),
-          absent: uniqueAbsentDateListWithMakeupDate(
-            individualRows.filter((r) => r.status === 'absent').map((r) => r.class_date),
-            makeupDateMap
-          ),
-          sameDayAbsent: uniqueAbsentDateListWithMakeupDate(
-            individualRows.filter((r) => r.status === 'same_day_absent').map((r) => r.class_date),
-            makeupDateMap
-          ),
-          groupAttended: uniqueDateList(
-            groupRows.filter((r) => r.status === 'attended' || r.status === 'makeup').map((r) => r.class_date)
-          ),
-          groupAbsent: uniqueDateList(
-            groupRows.filter((r) => r.status === 'absent' || r.status === 'same_day_absent').map((r) => r.class_date)
-          ),
-          unrecoveredAbsent: uniqueDateList(unrecoveredAbsentDates),
-        }
-      })
-  }, [childInfoAllLogs, childInfoAllMakeupRows])
+    return {
+      monthLabel,
+      attended: uniqueFullDateList(
+        individualRows.filter((r) => r.status === 'attended').map((r) => r.class_date)
+      ),
+      makeup: uniqueFullDateList(
+        individualRows.filter((r) => r.status === 'makeup').map((r) => r.class_date)
+      ),
+      absent: uniqueAbsentDateListWithMakeupDate(
+        individualRows.filter((r) => r.status === 'absent').map((r) => r.class_date),
+        childInfoMakeupDateMap
+      ),
+      sameDayAbsent: uniqueAbsentDateListWithMakeupDate(
+        individualRows.filter((r) => r.status === 'same_day_absent').map((r) => r.class_date),
+        childInfoMakeupDateMap
+      ),
+      groupAttended: uniqueFullDateList(
+        groupRows.filter((r) => r.status === 'attended' || r.status === 'makeup').map((r) => r.class_date)
+      ),
+      groupAbsent: uniqueFullDateList(
+        groupRows.filter((r) => r.status === 'absent' || r.status === 'same_day_absent').map((r) => r.class_date)
+      ),
+    }
+  }, [childInfoAllLogs, childInfoMakeupDateMap, childInfoSelectedMonth])
+
+  const childInfoUnrecoveredAbsentAll = useMemo(() => {
+    const madeUpAbsentDateSet = new Set(Array.from(childInfoMakeupDateMap.keys()).filter(Boolean))
+
+    return uniqueFullDateList(
+      childInfoAllLogs
+        .filter((log) => !log.is_group && (log.status === 'absent' || log.status === 'same_day_absent'))
+        .map((log) => log.class_date)
+        .filter((date) => !madeUpAbsentDateSet.has(date))
+    )
+  }, [childInfoAllLogs, childInfoMakeupDateMap])
 
   function askCsvMonth() {
     const defaultMonth = dailyDate ? dailyDate.slice(0, 7) : toDateString(new Date()).slice(0, 7)
@@ -5270,29 +5314,41 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
               </div>
 
               <div className="mt-5 rounded-2xl bg-slate-50 p-4 text-sm">
-                <div className="mb-2 text-base font-bold text-slate-800">월별 출결</div>
+                <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="text-base font-bold text-slate-800">월별 출결</div>
+                  <select
+                    value={childInfoSelectedMonth}
+                    onChange={(e) => setChildInfoSelectedMonth(e.target.value)}
+                    className="rounded-xl border bg-white px-3 py-2 text-sm"
+                  >
+                    {childInfoAvailableMonths.map((month) => (
+                      <option key={month} value={month}>
+                        {month}
+                      </option>
+                    ))}
+                  </select>
+                </div>
 
                 {childInfoLoading ? (
                   <div className="text-slate-500">아이 출결 정보를 불러오는 중...</div>
-                ) : childInfoMonthlySections.length === 0 ? (
+                ) : childInfoAllLogs.length === 0 ? (
                   <div className="text-slate-500">출결 데이터가 없습니다.</div>
                 ) : (
                   <div className="space-y-4">
-                    {childInfoMonthlySections.map((section) => (
-                      <div key={section.monthLabel} className="rounded-xl border border-slate-200 bg-white p-3">
-                        <div className="mb-2 font-bold text-slate-800">{section.monthLabel}</div>
-                        <div><span className="font-semibold">출석:</span> {section.attended || '-'}</div>
-                        <div><span className="font-semibold">보강:</span> {section.makeup || '-'}</div>
-                        <div><span className="font-semibold">결석/보강:</span> {section.absent || '-'}</div>
-                        <div><span className="font-semibold">당일결석:</span> {section.sameDayAbsent || '-'}</div>
-                        <div><span className="font-semibold">그룹수업출석:</span> {section.groupAttended || '-'}</div>
-                        <div><span className="font-semibold">그룹수업결석및 당일결석:</span> {section.groupAbsent || '-'}</div>
-                        <div className="mt-3 border-t border-slate-200 pt-3">
-                          <span className="font-semibold text-rose-700">미보강결석:</span>{' '}
-                          {section.unrecoveredAbsent || '-'}
-                        </div>
-                      </div>
-                    ))}
+                    <div className="rounded-xl border border-slate-200 bg-white p-3">
+                      <div className="mb-2 font-bold text-slate-800">{childInfoSelectedMonthSection.monthLabel}</div>
+                      <div><span className="font-semibold">출석:</span> {childInfoSelectedMonthSection.attended || '-'}</div>
+                      <div><span className="font-semibold">보강:</span> {childInfoSelectedMonthSection.makeup || '-'}</div>
+                      <div><span className="font-semibold">결석/보강:</span> {childInfoSelectedMonthSection.absent || '-'}</div>
+                      <div><span className="font-semibold">당일결석:</span> {childInfoSelectedMonthSection.sameDayAbsent || '-'}</div>
+                      <div><span className="font-semibold">그룹수업출석:</span> {childInfoSelectedMonthSection.groupAttended || '-'}</div>
+                      <div><span className="font-semibold">그룹수업결석및 당일결석:</span> {childInfoSelectedMonthSection.groupAbsent || '-'}</div>
+                    </div>
+
+                    <div className="rounded-xl border border-rose-200 bg-white p-3">
+                      <div className="mb-2 font-bold text-rose-700">미보강결석</div>
+                      <div>{childInfoUnrecoveredAbsentAll || '-'}</div>
+                    </div>
                   </div>
                 )}
               </div>
