@@ -470,6 +470,37 @@ function uniqueFullDateList(values: string[]) {
   return Array.from(new Set(values.filter(Boolean))).sort().join(', ')
 }
 
+function dedupeClassLogsByLogicalKey(logs: ClassLogRow[]) {
+  const map = new Map<string, ClassLogRow>()
+
+  logs.forEach((log) => {
+    const minuteTotal = getLogMinuteTotal(log)
+    const key = buildLogicalAttendanceKey({
+      classDate: log.class_date,
+      minuteTotal: minuteTotal ?? -1,
+      staffId: Number(log.staff_id),
+      childId: Number(log.child_id),
+      isGroup: Boolean(log.is_group),
+      groupId: log.group_id ?? null,
+    })
+
+    const prev = map.get(key)
+    if (!prev) {
+      map.set(key, log)
+      return
+    }
+
+    const prevTime = new Date(prev.updated_at ?? prev.created_at ?? 0).getTime()
+    const nextTime = new Date(log.updated_at ?? log.created_at ?? 0).getTime()
+
+    if (nextTime >= prevTime) {
+      map.set(key, log)
+    }
+  })
+
+  return Array.from(map.values())
+}
+
 function getCurrentMonthKey() {
   return toDateString(new Date()).slice(0, 7)
 }
@@ -1316,7 +1347,7 @@ export default function AdminPage() {
       if (logError) throw logError
       if (makeupError) throw makeupError
 
-      setChildInfoAllLogs((logData ?? []) as ClassLogRow[])
+      setChildInfoAllLogs(dedupeClassLogsByLogicalKey((logData ?? []) as ClassLogRow[]))
       setChildInfoAllMakeupRows((makeupData ?? []) as ScheduleEntryRow[])
     } catch (err: any) {
       setChildInfoAllLogs([])
@@ -2370,7 +2401,17 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
   }
 
   async function deleteClassLogsForScheduleRow(row: ScheduleEntryRow) {
-    const targetIds = classLogs
+    let query = supabase
+      .from('class_logs')
+      .select('*')
+      .eq('class_date', row.date)
+      .eq('staff_id', Number(row.teacher_id))
+      .eq('child_id', Number(row.child_id))
+
+    const { data, error: fetchError } = await query
+    if (fetchError) throw fetchError
+
+    const targetIds = ((data ?? []) as ClassLogRow[])
       .filter((log) => isSameAttendanceLog(row, log))
       .map((log) => log.id)
 
@@ -5316,23 +5357,16 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
               <div className="mt-5 rounded-2xl bg-slate-50 p-4 text-sm">
                 <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                   <div className="text-base font-bold text-slate-800">월별 출결</div>
-                  <select
+                  <input
+                    type="month"
                     value={childInfoSelectedMonth}
-                    onChange={(e) => setChildInfoSelectedMonth(e.target.value)}
+                    onChange={(e) => setChildInfoSelectedMonth(e.target.value || getCurrentMonthKey())}
                     className="rounded-xl border bg-white px-3 py-2 text-sm"
-                  >
-                    {childInfoAvailableMonths.map((month) => (
-                      <option key={month} value={month}>
-                        {month}
-                      </option>
-                    ))}
-                  </select>
+                  />
                 </div>
 
                 {childInfoLoading ? (
                   <div className="text-slate-500">아이 출결 정보를 불러오는 중...</div>
-                ) : childInfoAllLogs.length === 0 ? (
-                  <div className="text-slate-500">출결 데이터가 없습니다.</div>
                 ) : (
                   <div className="space-y-4">
                     <div className="rounded-xl border border-slate-200 bg-white p-3">
