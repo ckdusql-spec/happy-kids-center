@@ -2141,10 +2141,26 @@ export default function EmployeePage() {
             <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow">
               <h3 className="mb-3 text-lg font-bold">수업 상태 선택</h3>
 
-              <div className="mb-3 text-sm text-slate-600">
-                {recordModal.entry.date} / {recordModal.entry.time_slot.slice(0, 2)}:
-                {String(recordModal.entry.minute_slot ?? 0).padStart(2, '0')}
-              </div>
+              {(() => {
+                const recordChild = children.find(
+                  (child) => Number(child.id) === Number(recordModal.entry?.child_id)
+                )
+                const recordName = recordChild
+                  ? getDisplayName(recordChild)
+                  : recordModal.entry?.child_id
+                    ? `학생(${recordModal.entry.child_id})`
+                    : '이름없음'
+
+                return (
+                  <div className="mb-3 rounded-xl border bg-slate-50 px-3 py-3 text-sm text-slate-700">
+                    <div className="font-semibold text-slate-900">{recordName}</div>
+                    <div className="mt-1 text-xs text-slate-500">
+                      {recordModal.entry.date} / {recordModal.entry.time_slot.slice(0, 2)}:
+                      {String(recordModal.entry.minute_slot ?? 0).padStart(2, '0')}
+                    </div>
+                  </div>
+                )
+              })()}
 
               <select
                 value={recordModal.status}
