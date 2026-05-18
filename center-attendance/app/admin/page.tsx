@@ -1220,7 +1220,7 @@ export default function AdminPage() {
     setRegularGroupMembers((data ?? []) as RegularGroupClassMemberRow[])
   }
 
-  async function loadSchedules() {
+  function getScheduleQueryRange() {
     const weekStart = toDateString(weekDates[0])
     const weekEnd = toDateString(weekDates[weekDates.length - 1])
 
@@ -1237,6 +1237,12 @@ export default function AdminPage() {
       start = weekStart
       end = weekEnd
     }
+
+    return { start, end }
+  }
+
+  async function loadSchedules() {
+    const { start, end } = getScheduleQueryRange()
 
     const { data, error } = await supabase
       .from('schedule_entries')
@@ -1264,12 +1270,8 @@ export default function AdminPage() {
     setMakeupScheduleRows((data ?? []) as ScheduleEntryRow[])
   }
 
-  async function loadClassLogsForMonth() {
-    const start = `${csvMonth}-01`
-    const endDate = new Date(start)
-    endDate.setMonth(endDate.getMonth() + 1)
-    endDate.setDate(0)
-    const end = toDateString(endDate)
+  async function loadClassLogsForVisibleScheduleRange() {
+    const { start, end } = getScheduleQueryRange()
 
     const { data, error } = await supabase
       .from('class_logs')
@@ -1277,9 +1279,10 @@ export default function AdminPage() {
       .gte('class_date', start)
       .lte('class_date', end)
       .order('class_date', { ascending: true })
+      .order('class_time', { ascending: true })
 
     if (error) throw error
-    setClassLogs((data ?? []) as ClassLogRow[])
+    setClassLogs(dedupeClassLogsByLogicalKey((data ?? []) as ClassLogRow[]))
   }
 
   async function loadMonthlyGroupPrices() {
@@ -1309,7 +1312,7 @@ export default function AdminPage() {
         loadChildren(),
         loadSchedules(),
         loadMakeupSchedules(),
-        loadClassLogsForMonth(),
+        loadClassLogsForVisibleScheduleRange(),
         loadMonthlyGroupPrices(),
         loadRegularClasses(),
         loadRegularGroupClasses(),
@@ -1327,11 +1330,13 @@ export default function AdminPage() {
   }, [])
 
   useEffect(() => {
-    Promise.all([loadSchedules(), loadMakeupSchedules()]).catch((err: any) => setMessage(err?.message ?? '시간표 불러오기 실패'))
+    Promise.all([loadSchedules(), loadClassLogsForVisibleScheduleRange(), loadMakeupSchedules()]).catch((err: any) =>
+      setMessage(err?.message ?? '시간표/출결 불러오기 실패')
+    )
   }, [weekBaseDate, dailyDate, viewMode, tab, csvMonth])
 
   useEffect(() => {
-    Promise.all([loadClassLogsForMonth(), loadMonthlyGroupPrices()]).catch((err: any) =>
+    loadMonthlyGroupPrices().catch((err: any) =>
       setMessage(err?.message ?? '월정산 불러오기 실패')
     )
   }, [csvMonth])
@@ -2424,7 +2429,7 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
       resetScheduleEditor()
       await loadSchedules()
       await loadMakeupSchedules()
-      await loadClassLogsForMonth()
+      await loadClassLogsForVisibleScheduleRange()
       setMessage('시간표가 저장되었습니다.')
     } catch (err: any) {
       setMessage(err?.message ?? '시간표 저장 실패')
@@ -2501,7 +2506,7 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
 
       await loadSchedules()
       await loadMakeupSchedules()
-      await loadClassLogsForMonth()
+      await loadClassLogsForVisibleScheduleRange()
       if (childInfoModal.open && childInfoModal.child && Number(childInfoModal.child.id) === Number(row.child_id)) {
         await refreshOpenChildInfo()
       }
@@ -2527,7 +2532,7 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
 
       await loadSchedules()
       await loadMakeupSchedules()
-      await loadClassLogsForMonth()
+      await loadClassLogsForVisibleScheduleRange()
       if (childInfoModal.open && childInfoModal.child && Number(childInfoModal.child.id) === Number(row.child_id)) {
         await refreshOpenChildInfo()
       }
@@ -2729,7 +2734,7 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
         if (makeupScheduleError) throw makeupScheduleError
       }
 
-      await loadClassLogsForMonth()
+      await loadClassLogsForVisibleScheduleRange()
       await loadSchedules()
       await loadMakeupSchedules()
       setRecordModal({
