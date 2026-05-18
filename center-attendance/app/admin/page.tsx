@@ -505,6 +505,15 @@ function getCurrentMonthKey() {
   return toDateString(new Date()).slice(0, 7)
 }
 
+function getMonthRange(monthKey: string) {
+  const safeMonth = /^\d{4}-\d{2}$/.test(monthKey) ? monthKey : getCurrentMonthKey()
+  const start = `${safeMonth}-01`
+  const endDate = new Date(start)
+  endDate.setMonth(endDate.getMonth() + 1)
+  endDate.setDate(0)
+  return { start, end: toDateString(endDate) }
+}
+
 function getWeekOfMonth(dateString: string) {
   const day = Number(dateString.slice(8, 10))
   if (!day || Number.isNaN(day)) return 1
@@ -986,7 +995,9 @@ export default function AdminPage() {
     child: null,
   })
   const [childInfoLoading, setChildInfoLoading] = useState(false)
+  const [childInfoMonthLoading, setChildInfoMonthLoading] = useState(false)
   const [childInfoAllLogs, setChildInfoAllLogs] = useState<ClassLogRow[]>([])
+  const [childInfoMonthlyLogs, setChildInfoMonthlyLogs] = useState<ClassLogRow[]>([])
   const [childInfoAllMakeupRows, setChildInfoAllMakeupRows] = useState<ScheduleEntryRow[]>([])
   const [childInfoSelectedMonth, setChildInfoSelectedMonth] = useState(() => getCurrentMonthKey())
   const [scheduleChildAllAbsentLogs, setScheduleChildAllAbsentLogs] = useState<ClassLogRow[]>([])
@@ -1358,6 +1369,39 @@ export default function AdminPage() {
     }
   }
 
+  async function loadChildInfoMonthlyLogs(childId: number, monthKey: string) {
+    try {
+      setChildInfoMonthLoading(true)
+      const { start, end } = getMonthRange(monthKey)
+
+      const { data, error } = await supabase
+        .from('class_logs')
+        .select('*')
+        .eq('child_id', childId)
+        .gte('class_date', start)
+        .lte('class_date', end)
+        .order('class_date', { ascending: true })
+
+      if (error) throw error
+      setChildInfoMonthlyLogs(dedupeClassLogsByLogicalKey((data ?? []) as ClassLogRow[]))
+    } catch (err: any) {
+      setChildInfoMonthlyLogs([])
+      setMessage(err?.message ?? '선택 월 출결 정보 불러오기 실패')
+    } finally {
+      setChildInfoMonthLoading(false)
+    }
+  }
+
+  async function refreshOpenChildInfo() {
+    const child = childInfoModal.child
+    if (!child) return
+    const childId = Number(child.id)
+    await Promise.all([
+      loadChildInfoHistory(childId),
+      loadChildInfoMonthlyLogs(childId, childInfoSelectedMonth || getCurrentMonthKey()),
+    ])
+  }
+
   async function loadScheduleChildAbsentLogs(childId: number) {
     try {
       const { data, error } = await supabase
@@ -1378,13 +1422,22 @@ export default function AdminPage() {
   useEffect(() => {
     if (!childInfoModal.open || !childInfoModal.child) {
       setChildInfoAllLogs([])
+      setChildInfoMonthlyLogs([])
       setChildInfoAllMakeupRows([])
       return
     }
 
-    setChildInfoSelectedMonth(getCurrentMonthKey())
-    void loadChildInfoHistory(Number(childInfoModal.child.id))
+    const currentMonth = getCurrentMonthKey()
+    const childId = Number(childInfoModal.child.id)
+    setChildInfoSelectedMonth(currentMonth)
+    void loadChildInfoHistory(childId)
+    void loadChildInfoMonthlyLogs(childId, currentMonth)
   }, [childInfoModal.open, childInfoModal.child?.id])
+
+  useEffect(() => {
+    if (!childInfoModal.open || !childInfoModal.child) return
+    void loadChildInfoMonthlyLogs(Number(childInfoModal.child.id), childInfoSelectedMonth || getCurrentMonthKey())
+  }, [childInfoSelectedMonth])
 
   useEffect(() => {
     if (!scheduleChildId || !isScheduleMakeup) {
@@ -2449,6 +2502,9 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
       await loadSchedules()
       await loadMakeupSchedules()
       await loadClassLogsForMonth()
+      if (childInfoModal.open && childInfoModal.child && Number(childInfoModal.child.id) === Number(row.child_id)) {
+        await refreshOpenChildInfo()
+      }
       setMessage('선택한 일정 row 1건과 연결된 출결 기록이 DB에서 삭제되었습니다.')
     } catch (err: any) {
       setMessage(err?.message ?? '삭제 실패')
@@ -2472,6 +2528,9 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
       await loadSchedules()
       await loadMakeupSchedules()
       await loadClassLogsForMonth()
+      if (childInfoModal.open && childInfoModal.child && Number(childInfoModal.child.id) === Number(row.child_id)) {
+        await refreshOpenChildInfo()
+      }
       setMessage('선택한 일정 row 1건과 연결된 출결 기록이 DB에서 삭제되었습니다.')
     } catch (err: any) {
       setMessage(err?.message ?? '삭제 실패')
@@ -3002,9 +3061,8 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
 
   const childInfoSelectedMonthSection = useMemo(() => {
     const monthLabel = childInfoSelectedMonth || getCurrentMonthKey()
-    const monthLogs = childInfoAllLogs.filter((log) => log.class_date.startsWith(monthLabel))
-    const individualRows = monthLogs.filter((r) => !r.is_group)
-    const groupRows = monthLogs.filter((r) => Boolean(r.is_group))
+    const individualRows = childInfoMonthlyLogs.filter((r) => !r.is_group)
+    const groupRows = childInfoMonthlyLogs.filter((r) => Boolean(r.is_group))
 
     return {
       monthLabel,
@@ -3029,7 +3087,7 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
         groupRows.filter((r) => r.status === 'absent' || r.status === 'same_day_absent').map((r) => r.class_date)
       ),
     }
-  }, [childInfoAllLogs, childInfoMakeupDateMap, childInfoSelectedMonth])
+  }, [childInfoMonthlyLogs, childInfoMakeupDateMap, childInfoSelectedMonth])
 
   const childInfoUnrecoveredAbsentAll = useMemo(() => {
     const madeUpAbsentDateSet = new Set(Array.from(childInfoMakeupDateMap.keys()).filter(Boolean))
@@ -5365,7 +5423,7 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
                   />
                 </div>
 
-                {childInfoLoading ? (
+                {childInfoLoading || childInfoMonthLoading ? (
                   <div className="text-slate-500">아이 출결 정보를 불러오는 중...</div>
                 ) : (
                   <div className="space-y-4">
@@ -5388,7 +5446,10 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
               </div>
 
               <button
-                onClick={() => setChildInfoModal({ open: false, child: null })}
+                onClick={() => {
+                  setChildInfoModal({ open: false, child: null })
+                  setChildInfoMonthlyLogs([])
+                }}
                 className="mt-5 w-full rounded-2xl bg-slate-100 px-4 py-4 text-xl font-bold text-slate-700"
               >
                 닫기
