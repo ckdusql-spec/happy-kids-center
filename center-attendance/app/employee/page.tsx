@@ -272,6 +272,25 @@ function uniqueDateList(values: string[]) {
     .join(', ')
 }
 
+function uniqueFullDateList(values: string[]) {
+  return Array.from(new Set(values.filter(Boolean))).sort().join(', ')
+}
+
+function getCurrentMonthKey() {
+  const now = new Date()
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
+}
+
+function getMonthStartEndFromKey(monthKey: string) {
+  const [yearText, monthText] = monthKey.split('-')
+  const year = Number(yearText)
+  const month = Number(monthText)
+  if (!year || !month) return getMonthStartEnd(new Date())
+  const start = new Date(year, month - 1, 1)
+  const end = new Date(year, month, 0)
+  return { start: toDateString(start), end: toDateString(end) }
+}
+
 function uniqueAbsentDateListWithMakeupDate(values: string[], makeupDateMap: Map<string, string[]>) {
   return Array.from(new Set(values.filter(Boolean)))
     .sort()
@@ -385,6 +404,12 @@ export default function EmployeePage() {
     open: false,
     child: null,
   })
+  const [childInfoMonth, setChildInfoMonth] = useState(() => getCurrentMonthKey())
+  const [childMonthlyLogRows, setChildMonthlyLogRows] = useState<ClassLogRow[]>([])
+  const [childAllAbsentLogRows, setChildAllAbsentLogRows] = useState<ClassLogRow[]>([])
+  const [childAllMakeupScheduleRows, setChildAllMakeupScheduleRows] = useState<ScheduleEntryRow[]>([])
+  const [makeupAbsentCandidateLogs, setMakeupAbsentCandidateLogs] = useState<ClassLogRow[]>([])
+  const [makeupAbsentCandidateSchedules, setMakeupAbsentCandidateSchedules] = useState<ScheduleEntryRow[]>([])
 
   const weekDates = useMemo(() => getWeekDates(weekBaseDate), [weekBaseDate])
   const hourSlots = useMemo(() => buildHourSlots(9, 20), [])
@@ -461,31 +486,26 @@ export default function EmployeePage() {
   }, [scheduleRows, children, attendanceMap, selectedTodayDate])
 
   const selectedChildMonthlyLogs = useMemo(() => {
-    if (!childInfoModal.child) return []
-    const { start, end } = getMonthStartEnd(new Date())
-    return classLogRows.filter(
-      (log) =>
-        Number(log.child_id) === Number(childInfoModal.child?.id) &&
-        log.class_date >= start &&
-        log.class_date <= end
+    return childMonthlyLogRows
+  }, [childMonthlyLogRows])
+
+  const childInfoRecoveredAbsentDateSet = useMemo(() => {
+    return new Set(
+      childAllMakeupScheduleRows
+        .filter((row) => row.is_active && !row.is_group && isMakeupScheduleNote(row.note))
+        .map((row) => parseMakeupAbsentDate(row.note))
+        .filter(Boolean)
     )
-  }, [childInfoModal.child, classLogRows])
+  }, [childAllMakeupScheduleRows])
 
   const childInfoDates = useMemo(() => {
     const individualRows = selectedChildMonthlyLogs.filter((r) => !r.is_group)
     const groupRows = selectedChildMonthlyLogs.filter((r) => Boolean(r.is_group))
-    const childId = Number(childInfoModal.child?.id)
 
     const makeupDateMap = new Map<string, string[]>()
 
-    makeupScheduleRows
-      .filter(
-        (row) =>
-          row.is_active &&
-          !row.is_group &&
-          Number(row.child_id) === childId &&
-          isMakeupScheduleNote(row.note)
-      )
+    childAllMakeupScheduleRows
+      .filter((row) => row.is_active && !row.is_group && isMakeupScheduleNote(row.note))
       .forEach((row) => {
         const absentDate = parseMakeupAbsentDate(row.note)
         if (!absentDate) return
@@ -493,6 +513,11 @@ export default function EmployeePage() {
         current.push(row.date)
         makeupDateMap.set(absentDate, current)
       })
+
+    const unrecoveredAbsentDates = childAllAbsentLogRows
+      .filter((log) => log.status === 'absent' || log.status === 'same_day_absent')
+      .map((log) => log.class_date)
+      .filter((date) => !childInfoRecoveredAbsentDateSet.has(date))
 
     return {
       attended: uniqueDateList(individualRows.filter((r) => r.status === 'attended').map((r) => r.class_date)),
@@ -511,14 +536,15 @@ export default function EmployeePage() {
       groupAbsent: uniqueDateList(
         groupRows.filter((r) => r.status === 'absent' || r.status === 'same_day_absent').map((r) => r.class_date)
       ),
+      unrecoveredAbsent: uniqueFullDateList(unrecoveredAbsentDates),
     }
-  }, [selectedChildMonthlyLogs, childInfoModal.child, makeupScheduleRows])
+  }, [selectedChildMonthlyLogs, childAllAbsentLogRows, childAllMakeupScheduleRows, childInfoRecoveredAbsentDateSet])
 
   const usedMakeupAbsentDateSet = useMemo(() => {
     if (!scheduleChildId) return new Set<string>()
 
     return new Set(
-      makeupScheduleRows
+      makeupAbsentCandidateSchedules
         .filter(
           (row) =>
             Number(row.child_id) === Number(scheduleChildId) &&
@@ -529,22 +555,18 @@ export default function EmployeePage() {
         .map((row) => parseMakeupAbsentDate(row.note))
         .filter(Boolean)
     )
-  }, [makeupScheduleRows, scheduleChildId, editingEntryId])
+  }, [makeupAbsentCandidateSchedules, scheduleChildId, editingEntryId])
 
   const makeupAbsentDateOptions = useMemo(() => {
     if (!scheduleChildId) return []
-    return classLogRows
-      .filter(
-        (log) =>
-          Number(log.child_id) === Number(scheduleChildId) &&
-          (log.status === 'absent' || log.status === 'same_day_absent')
-      )
+    return makeupAbsentCandidateLogs
+      .filter((log) => log.status === 'absent' || log.status === 'same_day_absent')
       .map((log) => log.class_date)
       .filter((value, index, array) => array.indexOf(value) === index)
       .filter((date) => !usedMakeupAbsentDateSet.has(date) || date === makeupAbsentDate)
       .sort()
       .reverse()
-  }, [classLogRows, scheduleChildId, usedMakeupAbsentDateSet, makeupAbsentDate])
+  }, [makeupAbsentCandidateLogs, scheduleChildId, usedMakeupAbsentDateSet, makeupAbsentDate])
 
   function getAttendanceKey(entry: ScheduleEntryRow) {
     return buildLogicalAttendanceKey({
@@ -850,6 +872,72 @@ export default function EmployeePage() {
     setClassLogRows((data ?? []) as ClassLogRow[])
   }
 
+
+  async function loadChildInfoLogs(childId: number, monthKey: string) {
+    const { start, end } = getMonthStartEndFromKey(monthKey)
+
+    const [monthlyResult, absentResult, makeupResult] = await Promise.all([
+      supabase
+        .from('class_logs')
+        .select('*')
+        .eq('child_id', childId)
+        .gte('class_date', start)
+        .lte('class_date', end)
+        .order('class_date', { ascending: true })
+        .order('created_at', { ascending: true }),
+      supabase
+        .from('class_logs')
+        .select('*')
+        .eq('child_id', childId)
+        .in('status', ['absent', 'same_day_absent'])
+        .order('class_date', { ascending: true })
+        .order('created_at', { ascending: true }),
+      supabase
+        .from('schedule_entries')
+        .select('*')
+        .eq('child_id', childId)
+        .eq('is_active', true)
+        .eq('is_group', false)
+        .ilike('note', `%${MAKEUP_NOTE_TAG}%`)
+        .order('date', { ascending: true })
+        .order('time_slot', { ascending: true })
+        .order('minute_slot', { ascending: true }),
+    ])
+
+    if (monthlyResult.error) throw monthlyResult.error
+    if (absentResult.error) throw absentResult.error
+    if (makeupResult.error) throw makeupResult.error
+
+    setChildMonthlyLogRows((monthlyResult.data ?? []) as ClassLogRow[])
+    setChildAllAbsentLogRows((absentResult.data ?? []) as ClassLogRow[])
+    setChildAllMakeupScheduleRows((makeupResult.data ?? []) as ScheduleEntryRow[])
+  }
+
+  async function loadMakeupAbsentCandidates(childId: number) {
+    const [absentResult, makeupResult] = await Promise.all([
+      supabase
+        .from('class_logs')
+        .select('*')
+        .eq('child_id', childId)
+        .in('status', ['absent', 'same_day_absent'])
+        .order('class_date', { ascending: false })
+        .order('created_at', { ascending: true }),
+      supabase
+        .from('schedule_entries')
+        .select('*')
+        .eq('child_id', childId)
+        .eq('is_active', true)
+        .eq('is_group', false)
+        .ilike('note', `%${MAKEUP_NOTE_TAG}%`),
+    ])
+
+    if (absentResult.error) throw absentResult.error
+    if (makeupResult.error) throw makeupResult.error
+
+    setMakeupAbsentCandidateLogs((absentResult.data ?? []) as ClassLogRow[])
+    setMakeupAbsentCandidateSchedules((makeupResult.data ?? []) as ScheduleEntryRow[])
+  }
+
   async function loadAll(staffId: number) {
     try {
       setLoading(true)
@@ -882,6 +970,31 @@ export default function EmployeePage() {
       setMessage(err?.message ?? '주간 데이터 불러오기 실패')
     )
   }, [weekRange.start, weekRange.end, selectedTodayDate, user?.id])
+
+  useEffect(() => {
+    const childId = childInfoModal.child?.id
+    if (!childInfoModal.open || !childId) return
+    loadChildInfoLogs(Number(childId), childInfoMonth).catch((err: any) =>
+      setMessage(err?.message ?? '아이 출결 불러오기 실패')
+    )
+  }, [childInfoModal.open, childInfoModal.child?.id, childInfoMonth])
+
+  useEffect(() => {
+    if (!scheduleChildId) {
+      setMakeupAbsentCandidateLogs([])
+      setMakeupAbsentCandidateSchedules([])
+      return
+    }
+
+    loadMakeupAbsentCandidates(Number(scheduleChildId)).catch((err: any) =>
+      setMessage(err?.message ?? '미보강 결석일 불러오기 실패')
+    )
+  }, [scheduleChildId])
+
+  function openChildInfoModal(child: ChildRow) {
+    setChildInfoMonth(getCurrentMonthKey())
+    setChildInfoModal({ open: true, child })
+  }
 
   function renderMakeupScheduleFields(inputClassName: string) {
     return (
@@ -1199,6 +1312,9 @@ export default function EmployeePage() {
       }
 
       await Promise.all([loadClassLogs(user.id), loadSchedules(user.id), loadMakeupSchedules(user.id)])
+      if (childInfoModal.open && childInfoModal.child) {
+        await loadChildInfoLogs(Number(childInfoModal.child.id), childInfoMonth)
+      }
       setRecordModal({
         open: false,
         entry: null,
@@ -1467,7 +1583,7 @@ export default function EmployeePage() {
             <div className="mt-2 flex flex-wrap gap-1">
               {!item.isGroup && firstChild ? (
                 <button
-                  onClick={() => setChildInfoModal({ open: true, child: firstChild })}
+                  onClick={() => openChildInfoModal(firstChild)}
                   className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-700"
                 >
                   아이정보
@@ -1741,7 +1857,7 @@ export default function EmployeePage() {
           {!row.is_group && child ? (
             <button
               type="button"
-              onClick={() => setChildInfoModal({ open: true, child })}
+              onClick={() => openChildInfoModal(child)}
               className="rounded-xl bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm"
             >
               아이정보
@@ -2269,12 +2385,25 @@ export default function EmployeePage() {
                 </div>
 
                 <div className="border-t pt-3">
-                  <div className="mb-2 font-semibold">이번 달 출결</div>
+                  <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                    <div className="font-semibold">월별 출결</div>
+                    <input
+                      type="month"
+                      value={childInfoMonth}
+                      onChange={(e) => setChildInfoMonth(e.target.value || getCurrentMonthKey())}
+                      className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs"
+                    />
+                  </div>
                   <div><span className="font-medium">출석:</span> {childInfoDates.attended || '-'}</div>
+                  <div><span className="font-medium">보강:</span> {childInfoDates.makeup || '-'}</div>
                   <div><span className="font-medium">결석/보강:</span> {childInfoDates.absent || '-'}</div>
                   <div><span className="font-medium">당일결석:</span> {childInfoDates.sameDayAbsent || '-'}</div>
                   <div><span className="font-medium">그룹출석/보강:</span> {childInfoDates.groupAttended || '-'}</div>
                   <div><span className="font-medium">그룹결석/당일결석:</span> {childInfoDates.groupAbsent || '-'}</div>
+                  <div className="mt-3 rounded-xl border border-rose-100 bg-rose-50 px-3 py-2">
+                    <span className="font-semibold text-rose-700">미보강결석:</span>{' '}
+                    <span className="text-rose-700">{childInfoDates.unrecoveredAbsent || '-'}</span>
+                  </div>
                 </div>
               </div>
 
