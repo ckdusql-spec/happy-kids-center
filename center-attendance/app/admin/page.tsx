@@ -2439,6 +2439,32 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
             return
           }
 
+          const timeMakeupNote = buildScheduleNoteWithMakeup(
+            `${scheduleMemo.trim() || '시간보강'} ${minutes}분`,
+            true,
+            makeupAbsentDate
+          )
+
+          const { error: scheduleError } = await supabase.from('schedule_entries').insert({
+            date: dateStr,
+            time_slot: hourSlot,
+            room_number: 1,
+            teacher_id: Number(staffId),
+            teacher_name: staff?.name ?? '',
+            class_type: 'individual',
+            child_id: Number(scheduleChildId),
+            voucher_type: '시간보강',
+            status: 'makeup',
+            minute_slot: minute,
+            is_active: true,
+            note: timeMakeupNote,
+            is_group: false,
+            group_id: null,
+            group_name: null,
+          })
+
+          if (scheduleError) throw scheduleError
+
           const { error: timeMakeupError } = await supabase.from('makeup_time_logs').insert({
             child_id: Number(scheduleChildId),
             absent_date: makeupAbsentDate,
@@ -2450,12 +2476,13 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
           if (timeMakeupError) throw timeMakeupError
 
           resetScheduleEditor()
+          await loadSchedules()
           await loadMakeupSchedules()
           await loadClassLogsForVisibleScheduleRange()
           if (childInfoModal.open && childInfoModal.child && Number(childInfoModal.child.id) === Number(scheduleChildId)) {
             await refreshOpenChildInfo()
           }
-          setMessage(`시간보강 ${minutes}분이 저장되었습니다.`)
+          setMessage(`시간표에 시간보강 ${minutes}분이 저장되었습니다.`)
           return
         }
 
