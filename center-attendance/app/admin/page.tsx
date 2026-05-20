@@ -71,6 +71,24 @@ type ClassLogRow = {
   group_name?: string | null
 }
 
+type MakeupTimeLogRow = {
+  id: string
+  child_id: number
+  absent_date: string
+  makeup_date: string
+  minutes: number
+  note?: string | null
+  created_at?: string | null
+}
+
+type MakeupAbsentProgressRow = {
+  absent_date: string
+  required_minutes: number
+  completed_minutes: number
+  remaining_minutes: number
+  completed: boolean
+}
+
 type MonthlyGroupPriceRow = {
   id: string
   child_id: number
@@ -246,6 +264,7 @@ type WeeklyAttendanceRow = {
 }
 
 const VOUCHER_OPTIONS = ['일반', '디딤', '아청심1', '아청심2', '드림스타트', '배움'] as const
+const MAKEUP_REQUIRED_MINUTES = 50
 
 function toDateString(date: Date) {
   const y = date.getFullYear()
@@ -999,7 +1018,12 @@ export default function AdminPage() {
   const [childInfoAllLogs, setChildInfoAllLogs] = useState<ClassLogRow[]>([])
   const [childInfoMonthlyLogs, setChildInfoMonthlyLogs] = useState<ClassLogRow[]>([])
   const [childInfoAllMakeupRows, setChildInfoAllMakeupRows] = useState<ScheduleEntryRow[]>([])
+  const [childInfoMakeupTimeLogs, setChildInfoMakeupTimeLogs] = useState<MakeupTimeLogRow[]>([])
   const [childInfoSelectedMonth, setChildInfoSelectedMonth] = useState(() => getCurrentMonthKey())
+  const [timeMakeupAbsentDate, setTimeMakeupAbsentDate] = useState('')
+  const [timeMakeupDate, setTimeMakeupDate] = useState(() => toDateString(new Date()))
+  const [timeMakeupMinutes, setTimeMakeupMinutes] = useState('10')
+  const [timeMakeupNote, setTimeMakeupNote] = useState('')
   const [scheduleChildAllAbsentLogs, setScheduleChildAllAbsentLogs] = useState<ClassLogRow[]>([])
 
   const [childForm, setChildForm] = useState<ChildForm>({
@@ -1344,30 +1368,41 @@ export default function AdminPage() {
   async function loadChildInfoHistory(childId: number) {
     try {
       setChildInfoLoading(true)
-      const [{ data: logData, error: logError }, { data: makeupData, error: makeupError }] =
-        await Promise.all([
-          supabase
-            .from('class_logs')
-            .select('*')
-            .eq('child_id', childId)
-            .order('class_date', { ascending: true }),
-          supabase
-            .from('schedule_entries')
-            .select('*')
-            .eq('child_id', childId)
-            .eq('is_active', true)
-            .or('status.eq.makeup,note.ilike.%[보강]%')
-            .order('date', { ascending: true }),
-        ])
+      const [
+        { data: logData, error: logError },
+        { data: makeupData, error: makeupError },
+        { data: timeMakeupData, error: timeMakeupError },
+      ] = await Promise.all([
+        supabase
+          .from('class_logs')
+          .select('*')
+          .eq('child_id', childId)
+          .order('class_date', { ascending: true }),
+        supabase
+          .from('schedule_entries')
+          .select('*')
+          .eq('child_id', childId)
+          .eq('is_active', true)
+          .or('status.eq.makeup,note.ilike.%[보강]%')
+          .order('date', { ascending: true }),
+        supabase
+          .from('makeup_time_logs')
+          .select('*')
+          .eq('child_id', childId)
+          .order('makeup_date', { ascending: true }),
+      ])
 
       if (logError) throw logError
       if (makeupError) throw makeupError
+      if (timeMakeupError) throw timeMakeupError
 
       setChildInfoAllLogs(dedupeClassLogsByLogicalKey((logData ?? []) as ClassLogRow[]))
       setChildInfoAllMakeupRows((makeupData ?? []) as ScheduleEntryRow[])
+      setChildInfoMakeupTimeLogs((timeMakeupData ?? []) as MakeupTimeLogRow[])
     } catch (err: any) {
       setChildInfoAllLogs([])
       setChildInfoAllMakeupRows([])
+      setChildInfoMakeupTimeLogs([])
       setMessage(err?.message ?? '아이 출결 정보 불러오기 실패')
     } finally {
       setChildInfoLoading(false)
@@ -1429,6 +1464,11 @@ export default function AdminPage() {
       setChildInfoAllLogs([])
       setChildInfoMonthlyLogs([])
       setChildInfoAllMakeupRows([])
+      setChildInfoMakeupTimeLogs([])
+      setTimeMakeupAbsentDate('')
+      setTimeMakeupDate(toDateString(new Date()))
+      setTimeMakeupMinutes('10')
+      setTimeMakeupNote('')
       return
     }
 
@@ -2533,7 +2573,7 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
       await loadSchedules()
       await loadMakeupSchedules()
       await loadClassLogsForVisibleScheduleRange()
-      if (childInfoModal.open && childInfoModal.child && Number(childInfoModal.child.id) === Number(row.child_id)) {
+      if (childInfoModal.open && childInfoModal.child && Number(childInfoModal.child.id) === Number(targetRow.child_id)) {
         await refreshOpenChildInfo()
       }
       setMessage('선택한 일정 row 1건과 연결된 출결 기록이 DB에서 삭제되었습니다.')
@@ -2745,6 +2785,48 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
       setMessage(entry.is_group && targetEntries.length > 1 ? '그룹 출결이 모든 담당 선생님에게 저장되었습니다.' : '출결이 저장되었습니다.')
     } catch (err: any) {
       setMessage(err?.message ?? '출결 저장 실패')
+    }
+  }
+
+  async function handleSaveTimeMakeup() {
+    try {
+      const child = childInfoModal.child
+      if (!child) return
+      if (!timeMakeupAbsentDate) {
+        setMessage('시간보강할 결석일을 선택하세요.')
+        return
+      }
+      if (!timeMakeupDate) {
+        setMessage('시간보강 날짜를 선택하세요.')
+        return
+      }
+
+      const minutes = Number(timeMakeupMinutes)
+      if (!Number.isFinite(minutes) || minutes <= 0) {
+        setMessage('시간보강 분은 1분 이상으로 입력하세요.')
+        return
+      }
+      if (minutes > MAKEUP_REQUIRED_MINUTES) {
+        setMessage(`시간보강은 1회 최대 ${MAKEUP_REQUIRED_MINUTES}분까지만 입력하세요.`)
+        return
+      }
+
+      const { error } = await supabase.from('makeup_time_logs').insert({
+        child_id: Number(child.id),
+        absent_date: timeMakeupAbsentDate,
+        makeup_date: timeMakeupDate,
+        minutes,
+        note: timeMakeupNote.trim() || null,
+      })
+
+      if (error) throw error
+
+      await loadChildInfoHistory(Number(child.id))
+      setTimeMakeupMinutes('10')
+      setTimeMakeupNote('')
+      setMessage('시간보강이 저장되었습니다.')
+    } catch (err: any) {
+      setMessage(err?.message ?? '시간보강 저장 실패')
     }
   }
 
@@ -3094,16 +3176,59 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
     }
   }, [childInfoMonthlyLogs, childInfoMakeupDateMap, childInfoSelectedMonth])
 
-  const childInfoUnrecoveredAbsentAll = useMemo(() => {
-    const madeUpAbsentDateSet = new Set(Array.from(childInfoMakeupDateMap.keys()).filter(Boolean))
+  const childInfoTimeMakeupMinuteMap = useMemo(() => {
+    const minuteMap = new Map<string, number>()
 
-    return uniqueFullDateList(
-      childInfoAllLogs
-        .filter((log) => !log.is_group && (log.status === 'absent' || log.status === 'same_day_absent'))
-        .map((log) => log.class_date)
-        .filter((date) => !madeUpAbsentDateSet.has(date))
-    )
-  }, [childInfoAllLogs, childInfoMakeupDateMap])
+    childInfoMakeupTimeLogs.forEach((row) => {
+      if (!row.absent_date) return
+      minuteMap.set(row.absent_date, (minuteMap.get(row.absent_date) ?? 0) + Number(row.minutes ?? 0))
+    })
+
+    return minuteMap
+  }, [childInfoMakeupTimeLogs])
+
+  const childInfoUnrecoveredAbsentItems = useMemo<MakeupAbsentProgressRow[]>(() => {
+    const fullMakeupAbsentDateSet = new Set(Array.from(childInfoMakeupDateMap.keys()).filter(Boolean))
+    const absentDates = Array.from(
+      new Set(
+        childInfoAllLogs
+          .filter((log) => !log.is_group && (log.status === 'absent' || log.status === 'same_day_absent'))
+          .map((log) => log.class_date)
+          .filter(Boolean)
+      )
+    ).sort()
+
+    return absentDates
+      .map((absentDate) => {
+        const completedByFullMakeup = fullMakeupAbsentDateSet.has(absentDate)
+        const completedMinutes = completedByFullMakeup
+          ? MAKEUP_REQUIRED_MINUTES
+          : Math.min(MAKEUP_REQUIRED_MINUTES, childInfoTimeMakeupMinuteMap.get(absentDate) ?? 0)
+        const remainingMinutes = Math.max(0, MAKEUP_REQUIRED_MINUTES - completedMinutes)
+
+        return {
+          absent_date: absentDate,
+          required_minutes: MAKEUP_REQUIRED_MINUTES,
+          completed_minutes: completedMinutes,
+          remaining_minutes: remainingMinutes,
+          completed: completedMinutes >= MAKEUP_REQUIRED_MINUTES,
+        }
+      })
+      .filter((row) => !row.completed)
+  }, [childInfoAllLogs, childInfoMakeupDateMap, childInfoTimeMakeupMinuteMap])
+
+  const childInfoUnrecoveredAbsentAll = useMemo(() => {
+    return childInfoUnrecoveredAbsentItems
+      .map((row) => `${row.absent_date} (${row.completed_minutes}/${row.required_minutes}분, 남음 ${row.remaining_minutes}분)`)
+      .join(', ')
+  }, [childInfoUnrecoveredAbsentItems])
+
+  useEffect(() => {
+    if (!childInfoModal.open) return
+    if (timeMakeupAbsentDate) return
+    const first = childInfoUnrecoveredAbsentItems[0]
+    if (first) setTimeMakeupAbsentDate(first.absent_date)
+  }, [childInfoModal.open, childInfoUnrecoveredAbsentItems, timeMakeupAbsentDate])
 
   function askCsvMonth() {
     const defaultMonth = dailyDate ? dailyDate.slice(0, 7) : toDateString(new Date()).slice(0, 7)
@@ -5444,7 +5569,69 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
 
                     <div className="rounded-xl border border-rose-200 bg-white p-3">
                       <div className="mb-2 font-bold text-rose-700">미보강결석</div>
-                      <div>{childInfoUnrecoveredAbsentAll || '-'}</div>
+                      {childInfoUnrecoveredAbsentItems.length === 0 ? (
+                        <div>-</div>
+                      ) : (
+                        <div className="space-y-2">
+                          {childInfoUnrecoveredAbsentItems.map((row) => (
+                            <div key={row.absent_date} className="rounded-lg bg-rose-50 px-3 py-2">
+                              <div className="font-semibold text-rose-800">{row.absent_date}</div>
+                              <div className="text-xs text-rose-700">
+                                진행 {row.completed_minutes}/{row.required_minutes}분 / 남음 {row.remaining_minutes}분
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="rounded-xl border border-orange-200 bg-white p-3">
+                      <div className="mb-2 font-bold text-orange-700">시간보강 입력</div>
+                      <div className="grid gap-2 md:grid-cols-3">
+                        <select
+                          value={timeMakeupAbsentDate}
+                          onChange={(e) => setTimeMakeupAbsentDate(e.target.value)}
+                          className="rounded-xl border bg-white px-3 py-2 text-sm"
+                        >
+                          <option value="">결석일 선택</option>
+                          {childInfoUnrecoveredAbsentItems.map((row) => (
+                            <option key={row.absent_date} value={row.absent_date}>
+                              {row.absent_date} ({row.completed_minutes}/{row.required_minutes}분)
+                            </option>
+                          ))}
+                        </select>
+                        <input
+                          type="date"
+                          value={timeMakeupDate}
+                          onChange={(e) => setTimeMakeupDate(e.target.value)}
+                          className="rounded-xl border bg-white px-3 py-2 text-sm"
+                        />
+                        <input
+                          type="number"
+                          min="1"
+                          max={MAKEUP_REQUIRED_MINUTES}
+                          value={timeMakeupMinutes}
+                          onChange={(e) => setTimeMakeupMinutes(e.target.value)}
+                          placeholder="보강분"
+                          className="rounded-xl border bg-white px-3 py-2 text-sm"
+                        />
+                      </div>
+                      <input
+                        value={timeMakeupNote}
+                        onChange={(e) => setTimeMakeupNote(e.target.value)}
+                        placeholder="시간보강 메모"
+                        className="mt-2 w-full rounded-xl border bg-white px-3 py-2 text-sm"
+                      />
+                      <button
+                        onClick={handleSaveTimeMakeup}
+                        disabled={childInfoUnrecoveredAbsentItems.length === 0}
+                        className="mt-2 w-full rounded-xl bg-orange-500 px-3 py-2 text-sm font-bold text-white disabled:bg-slate-300"
+                      >
+                        시간보강 저장
+                      </button>
+                      <div className="mt-2 text-xs text-orange-700">
+                        시간보강은 결석 1건당 {MAKEUP_REQUIRED_MINUTES}분 누적 시 보강완료로 처리되어 미보강결석에서 제외됩니다. 통보강은 기존 보강 일정 선택으로 처리됩니다.
+                      </div>
                     </div>
                   </div>
                 )}
