@@ -353,11 +353,22 @@ function isMakeupScheduleStatus(status?: string | null) {
   return status === 'makeup'
 }
 
+function isTimeMakeupScheduleNote(note?: string | null) {
+  return Boolean(note?.includes('[시간보강:'))
+}
+
+function parseTimeMakeupMinutes(note?: string | null) {
+  if (!note) return ''
+  const matched = note.match(/\[시간보강:(\d+)분\]/)
+  return matched?.[1] ?? ''
+}
+
 function getCleanScheduleMemo(note?: string | null) {
   const value = stripMakeupTags(note ?? '')
   return value
     .replace(/\[정기수업:\d+\]/g, '')
     .replace(/\[정기그룹:\d+\]/g, '')
+    .replace(/\[시간보강:\d+분\]/g, '')
     .trim()
 }
 
@@ -382,8 +393,12 @@ function mergeScheduleNoteWithMemo(note: string | null | undefined, memo: string
   return memoWithMakeup ? `${prefix} ${memoWithMakeup}` : prefix
 }
 
+function isTimeMakeupScheduleItem(item: DisplayScheduleItem) {
+  return item.rows.some((row) => isTimeMakeupScheduleNote(row.note) || row.voucher_type === '시간보강')
+}
+
 function isMakeupScheduleItem(item: DisplayScheduleItem) {
-  return item.rows.some((row) => isMakeupScheduleStatus(row.status) || isMakeupScheduleNote(row.note))
+  return item.rows.some((row) => !isTimeMakeupScheduleNote(row.note) && (isMakeupScheduleStatus(row.status) || isMakeupScheduleNote(row.note)))
 }
 
 function csvEscape(value: string | number | null | undefined) {
@@ -2439,11 +2454,10 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
             return
           }
 
-          const timeMakeupNote = buildScheduleNoteWithMakeup(
-            `${scheduleMemo.trim() || '시간보강'} ${minutes}분`,
-            true,
-            makeupAbsentDate
-          )
+          const cleanMemo = scheduleMemo.trim()
+          const timeMakeupNote = [`[시간보강:${minutes}분]`, `[결석일:${makeupAbsentDate}]`, cleanMemo]
+            .filter(Boolean)
+            .join(' ')
 
           const { error: scheduleError } = await supabase.from('schedule_entries').insert({
             date: dateStr,
@@ -2454,7 +2468,7 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
             class_type: 'individual',
             child_id: Number(scheduleChildId),
             voucher_type: '시간보강',
-            status: 'makeup',
+            status: 'scheduled',
             minute_slot: minute,
             is_active: true,
             note: timeMakeupNote,
@@ -2696,10 +2710,12 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
       setEditingEntryId(row.id)
       setScheduleChildId(row.child_id ? Number(row.child_id) : '')
       setSelectedMinute(String(row.minute_slot ?? 0).padStart(2, '0'))
-      setSelectedVoucher(row.voucher_type ?? '')
-      setIsScheduleMakeup(isMakeupScheduleStatus(row.status) || isMakeupScheduleNote(row.note))
-      setScheduleMakeupType(isMakeupScheduleStatus(row.status) || isMakeupScheduleNote(row.note) ? 'day' : 'none')
-      setScheduleTimeMakeupMinutes('10')
+      setSelectedVoucher(row.voucher_type === '시간보강' ? '' : row.voucher_type ?? '')
+      const isTimeMakeup = isTimeMakeupScheduleNote(row.note) || row.voucher_type === '시간보강'
+      const isDayMakeup = !isTimeMakeup && (isMakeupScheduleStatus(row.status) || isMakeupScheduleNote(row.note))
+      setIsScheduleMakeup(isTimeMakeup || isDayMakeup)
+      setScheduleMakeupType(isTimeMakeup ? 'time' : isDayMakeup ? 'day' : 'none')
+      setScheduleTimeMakeupMinutes(parseTimeMakeupMinutes(row.note) || '10')
       setMakeupAbsentDate(parseMakeupAbsentDate(row.note))
       setScheduleMemo(getCleanScheduleMemo(row.note))
       setSelectedGroupChildIds([])
@@ -3181,6 +3197,8 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
         (row) =>
           row.is_active &&
           !row.is_group &&
+          !isTimeMakeupScheduleNote(row.note) &&
+          row.voucher_type !== '시간보강' &&
           (isMakeupScheduleStatus(row.status) || isMakeupScheduleNote(row.note))
       )
       .forEach((row) => {
@@ -3687,9 +3705,14 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
               <span className={`rounded-full border px-2 py-0.5 text-[11px] ${getVoucherClass(item.voucherType)}`}>
                 {item.voucherType || '일반'}
               </span>
+              {isTimeMakeupScheduleItem(item) ? (
+                <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700">
+                  시간보강 {parseTimeMakeupMinutes(item.note) ? `${parseTimeMakeupMinutes(item.note)}분` : ''}
+                </span>
+              ) : null}
               {isMakeupScheduleItem(item) ? (
                 <span className="rounded-full border border-orange-200 bg-orange-50 px-2 py-0.5 text-[11px] font-semibold text-orange-700">
-                  보강
+                  일보강
                 </span>
               ) : null}
               {isMakeupScheduleItem(item) && parseMakeupAbsentDate(item.note) ? (
