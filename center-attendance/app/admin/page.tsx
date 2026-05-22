@@ -84,6 +84,7 @@ type MakeupTimeLogRow = {
 
 type MakeupAbsentProgressRow = {
   absent_date: string
+  teacher_name?: string
   required_minutes: number
   completed_minutes: number
   remaining_minutes: number
@@ -507,11 +508,19 @@ function parseMakeupAbsentDate(note?: string | null) {
   return matched[1] === '없음' ? '' : matched[1]
 }
 
+function parseMakeupTeacherName(note?: string | null) {
+  if (!note) return ''
+  const matched = note.match(/\[담당:([^\]]+)\]/)
+  if (!matched) return ''
+  return matched[1].trim()
+}
+
 function stripMakeupTags(note?: string | null) {
   if (!note) return ''
   return note
     .replace(/\[보강\]/g, '')
     .replace(/\s*\[결석일:[^\]]+\]\s*/g, ' ')
+    .replace(/\s*\[담당:[^\]]+\]\s*/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
 }
@@ -1681,6 +1690,8 @@ export default function AdminPage() {
             (log.status === 'absent' || log.status === 'same_day_absent')
         )
 
+    const staffNameMap = new Map(staffs.map((staff) => [Number(staff.id), staff.name]))
+
     const absentDates = Array.from(
       new Set(
         sourceLogs
@@ -1692,6 +1703,9 @@ export default function AdminPage() {
 
     return absentDates
       .map((absentDate) => {
+        const absentLog = sourceLogs.find(
+          (log) => !log.is_group && log.class_date === absentDate && (log.status === 'absent' || log.status === 'same_day_absent')
+        )
         const completedByFullMakeup = scheduleFullMakeupAbsentDateSet.has(absentDate)
         const completedMinutes = completedByFullMakeup
           ? MAKEUP_REQUIRED_MINUTES
@@ -1700,6 +1714,7 @@ export default function AdminPage() {
 
         return {
           absent_date: absentDate,
+          teacher_name: absentLog ? staffNameMap.get(Number(absentLog.staff_id)) ?? '' : '',
           required_minutes: MAKEUP_REQUIRED_MINUTES,
           completed_minutes: completedMinutes,
           remaining_minutes: remainingMinutes,
@@ -1707,7 +1722,7 @@ export default function AdminPage() {
         }
       })
       .filter((row) => !row.completed)
-  }, [classLogs, scheduleChildAllAbsentLogs, scheduleChildId, scheduleFullMakeupAbsentDateSet, scheduleTimeMakeupMinuteMap])
+  }, [classLogs, scheduleChildAllAbsentLogs, scheduleChildId, scheduleFullMakeupAbsentDateSet, scheduleTimeMakeupMinuteMap, staffs])
 
   const makeupAbsentDateOptions = useMemo(() => {
     return scheduleMakeupAbsentProgressItems.map((row) => row.absent_date)
@@ -1775,7 +1790,7 @@ export default function AdminPage() {
               <option value="">결석날짜 선택</option>
               {makeupAbsentDateOptions.map((date) => (
                 <option key={date} value={date}>
-                  {date}
+                  {date}{scheduleMakeupAbsentProgressItems.find((row) => row.absent_date === date)?.teacher_name ? ` (${scheduleMakeupAbsentProgressItems.find((row) => row.absent_date === date)?.teacher_name})` : ''}
                 </option>
               ))}
             </select>
@@ -1808,7 +1823,7 @@ export default function AdminPage() {
             </select>
             {selectedScheduleMakeupProgress ? (
               <div className="text-[11px] text-orange-700">
-                진행 {selectedScheduleMakeupProgress.completed_minutes}/{selectedScheduleMakeupProgress.required_minutes}분 / 남음 {selectedScheduleMakeupProgress.remaining_minutes}분
+                {selectedScheduleMakeupProgress.teacher_name ? `담당 ${selectedScheduleMakeupProgress.teacher_name} / ` : ''}진행 {selectedScheduleMakeupProgress.completed_minutes}/{selectedScheduleMakeupProgress.required_minutes}분 / 남음 {selectedScheduleMakeupProgress.remaining_minutes}분
               </div>
             ) : null}
           </div>
@@ -2589,7 +2604,7 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
           }
 
           const cleanMemo = scheduleMemo.trim()
-          const timeMakeupNote = [`[시간보강:${minutes}분]`, `[결석일:${makeupAbsentDate}]`, cleanMemo]
+          const timeMakeupNote = [`[시간보강:${minutes}분]`, `[결석일:${makeupAbsentDate}]`, `[담당:${staff?.name ?? ''}]`, cleanMemo]
             .filter(Boolean)
             .join(' ')
 
@@ -3412,6 +3427,7 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
 
   const childInfoUnrecoveredAbsentItems = useMemo<MakeupAbsentProgressRow[]>(() => {
     const fullMakeupAbsentDateSet = new Set(Array.from(childInfoMakeupDateMap.keys()).filter(Boolean))
+    const staffNameMap = new Map(staffs.map((staff) => [Number(staff.id), staff.name]))
     const absentDates = Array.from(
       new Set(
         childInfoAllLogs
@@ -3423,6 +3439,9 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
 
     return absentDates
       .map((absentDate) => {
+        const absentLog = childInfoAllLogs.find(
+          (log) => !log.is_group && log.class_date === absentDate && (log.status === 'absent' || log.status === 'same_day_absent')
+        )
         const completedByFullMakeup = fullMakeupAbsentDateSet.has(absentDate)
         const completedMinutes = completedByFullMakeup
           ? MAKEUP_REQUIRED_MINUTES
@@ -3431,6 +3450,7 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
 
         return {
           absent_date: absentDate,
+          teacher_name: absentLog ? staffNameMap.get(Number(absentLog.staff_id)) ?? '' : '',
           required_minutes: MAKEUP_REQUIRED_MINUTES,
           completed_minutes: completedMinutes,
           remaining_minutes: remainingMinutes,
@@ -3438,11 +3458,11 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
         }
       })
       .filter((row) => !row.completed)
-  }, [childInfoAllLogs, childInfoMakeupDateMap, childInfoTimeMakeupMinuteMap])
+  }, [childInfoAllLogs, childInfoMakeupDateMap, childInfoTimeMakeupMinuteMap, staffs])
 
   const childInfoUnrecoveredAbsentAll = useMemo(() => {
     return childInfoUnrecoveredAbsentItems
-      .map((row) => `${row.absent_date} (${row.completed_minutes}/${row.required_minutes}분, 남음 ${row.remaining_minutes}분)`)
+      .map((row) => `${row.absent_date}${row.teacher_name ? ` (${row.teacher_name})` : ''} (${row.completed_minutes}/${row.required_minutes}분, 남음 ${row.remaining_minutes}분)`)
       .join(', ')
   }, [childInfoUnrecoveredAbsentItems])
 
@@ -3865,6 +3885,7 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
               {isTimeMakeupScheduleItem(item) ? (
                 <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700">
                   {parseMakeupAbsentDate(item.note) ? `결석일 ${parseMakeupAbsentDate(item.note)}` : '결석일 -'}
+                  {parseMakeupTeacherName(item.note) ? ` / ${parseMakeupTeacherName(item.note)}` : ''}
                   {parseTimeMakeupMinutes(item.note) ? ` / ${parseTimeMakeupMinutes(item.note)}분` : ''}
                 </span>
               ) : null}
@@ -4877,10 +4898,32 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
                 <input
                   value={childSearch}
                   onChange={(e) => setChildSearch(e.target.value)}
-                  placeholder="이름 검색"
+                  placeholder="아이 이름 검색"
                   className="rounded-xl border px-3 py-2 text-sm"
                 />
               </div>
+
+              {childSearch.trim() ? (
+                <div className="mb-3 rounded-xl border border-indigo-100 bg-indigo-50 p-3">
+                  <div className="mb-2 text-sm font-bold text-indigo-800">학생정보 검색 결과</div>
+                  <div className="space-y-1">
+                    {filteredChildren.length === 0 ? (
+                      <div className="text-sm text-slate-500">검색된 아이가 없습니다.</div>
+                    ) : (
+                      filteredChildren.slice(0, 8).map((child) => (
+                        <button
+                          key={`info-${child.id}`}
+                          type="button"
+                          onClick={() => setChildInfoModal({ open: true, child })}
+                          className="block w-full rounded-lg bg-white px-3 py-2 text-left text-sm hover:bg-indigo-100"
+                        >
+                          {getDisplayName(child)} 아이정보 보기
+                        </button>
+                      ))
+                    )}
+                  </div>
+                </div>
+              ) : null}
 
               <div className="max-h-[420px] overflow-y-auto pr-1">
                 <div className="space-y-2">
@@ -5689,7 +5732,6 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
                 <option value="attended">출석</option>
                 <option value="absent">결석</option>
                 <option value="makeup">보강</option>
-                <option value="same_day_absent">당일결석</option>
               </select>
 
               {recordModal.status === 'absent' || recordModal.status === 'same_day_absent' ? (
@@ -5791,9 +5833,8 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
                       <div><span className="font-semibold">출석:</span> {childInfoSelectedMonthSection.attended || '-'}</div>
                       <div><span className="font-semibold">보강:</span> {childInfoSelectedMonthSection.makeup || '-'}</div>
                       <div><span className="font-semibold">결석/보강:</span> {childInfoSelectedMonthSection.absent || '-'}</div>
-                      <div><span className="font-semibold">당일결석:</span> {childInfoSelectedMonthSection.sameDayAbsent || '-'}</div>
                       <div><span className="font-semibold">그룹수업출석:</span> {childInfoSelectedMonthSection.groupAttended || '-'}</div>
-                      <div><span className="font-semibold">그룹수업결석및 당일결석:</span> {childInfoSelectedMonthSection.groupAbsent || '-'}</div>
+                      <div><span className="font-semibold">그룹수업결석:</span> {childInfoSelectedMonthSection.groupAbsent || '-'}</div>
                     </div>
 
                     <div className="rounded-xl border border-rose-200 bg-white p-3">
@@ -5804,7 +5845,7 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
                         <div className="space-y-2">
                           {childInfoUnrecoveredAbsentItems.map((row) => (
                             <div key={row.absent_date} className="rounded-lg bg-rose-50 px-3 py-2">
-                              <div className="font-semibold text-rose-800">{row.absent_date}</div>
+                              <div className="font-semibold text-rose-800">{row.absent_date}{row.teacher_name ? ` (${row.teacher_name})` : ''}</div>
                               <div className="text-xs text-rose-700">
                                 진행 {row.completed_minutes}/{row.required_minutes}분 / 남음 {row.remaining_minutes}분
                               </div>
