@@ -3864,7 +3864,8 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
               </span>
               {isTimeMakeupScheduleItem(item) ? (
                 <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700">
-                  시간보강 {parseTimeMakeupMinutes(item.note) ? `${parseTimeMakeupMinutes(item.note)}분` : ''}
+                  {parseMakeupAbsentDate(item.note) ? `결석일 ${parseMakeupAbsentDate(item.note)}` : '결석일 -'}
+                  {parseTimeMakeupMinutes(item.note) ? ` / ${parseTimeMakeupMinutes(item.note)}분` : ''}
                 </span>
               ) : null}
               {isMakeupScheduleItem(item) ? (
