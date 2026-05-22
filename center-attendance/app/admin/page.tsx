@@ -401,6 +401,39 @@ function isMakeupScheduleItem(item: DisplayScheduleItem) {
   return item.rows.some((row) => !isTimeMakeupScheduleNote(row.note) && (isMakeupScheduleStatus(row.status) || isMakeupScheduleNote(row.note)))
 }
 
+function isTimeMakeupScheduleRow(row: ScheduleEntryRow) {
+  return row.voucher_type === '시간보강' || isTimeMakeupScheduleNote(row.note)
+}
+
+function isCompletedTimeMakeupAttendanceStatus(status?: AttendanceStatus | null) {
+  return status === 'attended' || status === 'makeup'
+}
+
+function findClassLogForScheduleRow(row: ScheduleEntryRow, logs: ClassLogRow[]) {
+  return logs.find((log) => isSameAttendanceLog(row, log)) ?? null
+}
+
+function buildCompletedTimeMakeupMinuteMap(rows: ScheduleEntryRow[], logs: ClassLogRow[]) {
+  const minuteMap = new Map<string, number>()
+
+  rows
+    .filter((row) => row.is_active && !row.is_group && isTimeMakeupScheduleRow(row))
+    .forEach((row) => {
+      const absentDate = parseMakeupAbsentDate(row.note)
+      if (!absentDate) return
+
+      const log = findClassLogForScheduleRow(row, logs)
+      if (!isCompletedTimeMakeupAttendanceStatus(log?.status)) return
+
+      const minutes = Number(parseTimeMakeupMinutes(row.note) || 0)
+      if (!Number.isFinite(minutes) || minutes <= 0) return
+
+      minuteMap.set(absentDate, (minuteMap.get(absentDate) ?? 0) + minutes)
+    })
+
+  return minuteMap
+}
+
 function csvEscape(value: string | number | null | undefined) {
   const str = value == null ? '' : String(value)
   return `"${str.replace(/"/g, '""')}"`
@@ -1040,6 +1073,7 @@ export default function AdminPage() {
   const [childInfoSelectedMonth, setChildInfoSelectedMonth] = useState(() => getCurrentMonthKey())
   const [scheduleChildAllAbsentLogs, setScheduleChildAllAbsentLogs] = useState<ClassLogRow[]>([])
   const [scheduleChildMakeupTimeLogs, setScheduleChildMakeupTimeLogs] = useState<MakeupTimeLogRow[]>([])
+  const [scheduleChildTimeMakeupRows, setScheduleChildTimeMakeupRows] = useState<ScheduleEntryRow[]>([])
 
   const [childForm, setChildForm] = useState<ChildForm>({
     id: null,
@@ -1398,7 +1432,6 @@ export default function AdminPage() {
           .select('*')
           .eq('child_id', childId)
           .eq('is_active', true)
-          .or('status.eq.makeup,note.ilike.%[보강]%')
           .order('date', { ascending: true }),
         supabase
           .from('makeup_time_logs')
@@ -1459,28 +1492,36 @@ export default function AdminPage() {
 
   async function loadScheduleChildAbsentLogs(childId: number) {
     try {
-      const [absentResult, timeMakeupResult] = await Promise.all([
+      const [classLogResult, timeMakeupLogResult, timeMakeupScheduleResult] = await Promise.all([
         supabase
           .from('class_logs')
           .select('*')
           .eq('child_id', childId)
-          .in('status', ['absent', 'same_day_absent'])
           .order('class_date', { ascending: false }),
         supabase
           .from('makeup_time_logs')
           .select('*')
           .eq('child_id', childId)
           .order('makeup_date', { ascending: true }),
+        supabase
+          .from('schedule_entries')
+          .select('*')
+          .eq('child_id', childId)
+          .eq('is_active', true)
+          .order('date', { ascending: true }),
       ])
 
-      if (absentResult.error) throw absentResult.error
-      if (timeMakeupResult.error) throw timeMakeupResult.error
+      if (classLogResult.error) throw classLogResult.error
+      if (timeMakeupLogResult.error) throw timeMakeupLogResult.error
+      if (timeMakeupScheduleResult.error) throw timeMakeupScheduleResult.error
 
-      setScheduleChildAllAbsentLogs((absentResult.data ?? []) as ClassLogRow[])
-      setScheduleChildMakeupTimeLogs((timeMakeupResult.data ?? []) as MakeupTimeLogRow[])
+      setScheduleChildAllAbsentLogs(dedupeClassLogsByLogicalKey((classLogResult.data ?? []) as ClassLogRow[]))
+      setScheduleChildMakeupTimeLogs((timeMakeupLogResult.data ?? []) as MakeupTimeLogRow[])
+      setScheduleChildTimeMakeupRows(((timeMakeupScheduleResult.data ?? []) as ScheduleEntryRow[]).filter((row) => isTimeMakeupScheduleRow(row)))
     } catch (err: any) {
       setScheduleChildAllAbsentLogs([])
       setScheduleChildMakeupTimeLogs([])
+      setScheduleChildTimeMakeupRows([])
       setMessage(err?.message ?? '학생 결석 기록 불러오기 실패')
     }
   }
@@ -1510,6 +1551,7 @@ export default function AdminPage() {
     if (!scheduleChildId || scheduleMakeupType === 'none') {
       setScheduleChildAllAbsentLogs([])
       setScheduleChildMakeupTimeLogs([])
+      setScheduleChildTimeMakeupRows([])
       return
     }
 
@@ -1624,15 +1666,9 @@ export default function AdminPage() {
   }, [makeupScheduleRows, scheduleChildId, editingEntryId])
 
   const scheduleTimeMakeupMinuteMap = useMemo(() => {
-    const minuteMap = new Map<string, number>()
+    return buildCompletedTimeMakeupMinuteMap(scheduleChildTimeMakeupRows, scheduleChildAllAbsentLogs)
+  }, [scheduleChildTimeMakeupRows, scheduleChildAllAbsentLogs])
 
-    scheduleChildMakeupTimeLogs.forEach((row) => {
-      if (!row.absent_date) return
-      minuteMap.set(row.absent_date, (minuteMap.get(row.absent_date) ?? 0) + Number(row.minutes ?? 0))
-    })
-
-    return minuteMap
-  }, [scheduleChildMakeupTimeLogs])
 
   const scheduleMakeupAbsentProgressItems = useMemo<MakeupAbsentProgressRow[]>(() => {
     if (!scheduleChildId) return []
@@ -2730,6 +2766,23 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
   async function deleteScheduleRowOnly(row: ScheduleEntryRow) {
     await deleteClassLogsForScheduleRow(row)
 
+    if (isTimeMakeupScheduleRow(row)) {
+      const absentDate = parseMakeupAbsentDate(row.note)
+      const minutes = Number(parseTimeMakeupMinutes(row.note) || 0)
+
+      if (row.child_id && absentDate && minutes > 0) {
+        const { error: timeMakeupDeleteError } = await supabase
+          .from('makeup_time_logs')
+          .delete()
+          .eq('child_id', Number(row.child_id))
+          .eq('absent_date', absentDate)
+          .eq('makeup_date', row.date)
+          .eq('minutes', minutes)
+
+        if (timeMakeupDeleteError) throw timeMakeupDeleteError
+      }
+    }
+
     const { error } = await supabase
       .from('schedule_entries')
       .delete()
@@ -2987,6 +3040,12 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
       await loadClassLogsForVisibleScheduleRange()
       await loadSchedules()
       await loadMakeupSchedules()
+      if (entry.child_id) {
+        await loadScheduleChildAbsentLogs(Number(entry.child_id))
+      }
+      if (childInfoModal.open && childInfoModal.child && Number(childInfoModal.child.id) === Number(entry.child_id)) {
+        await refreshOpenChildInfo()
+      }
       setRecordModal({
         open: false,
         entry: null,
@@ -3347,15 +3406,9 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
   }, [childInfoMonthlyLogs, childInfoMakeupDateMap, childInfoSelectedMonth])
 
   const childInfoTimeMakeupMinuteMap = useMemo(() => {
-    const minuteMap = new Map<string, number>()
+    return buildCompletedTimeMakeupMinuteMap(childInfoAllMakeupRows, childInfoAllLogs)
+  }, [childInfoAllMakeupRows, childInfoAllLogs])
 
-    childInfoMakeupTimeLogs.forEach((row) => {
-      if (!row.absent_date) return
-      minuteMap.set(row.absent_date, (minuteMap.get(row.absent_date) ?? 0) + Number(row.minutes ?? 0))
-    })
-
-    return minuteMap
-  }, [childInfoMakeupTimeLogs])
 
   const childInfoUnrecoveredAbsentItems = useMemo<MakeupAbsentProgressRow[]>(() => {
     const fullMakeupAbsentDateSet = new Set(Array.from(childInfoMakeupDateMap.keys()).filter(Boolean))
