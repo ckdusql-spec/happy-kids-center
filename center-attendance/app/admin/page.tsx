@@ -265,7 +265,7 @@ type WeeklyAttendanceRow = {
 }
 
 const VOUCHER_OPTIONS = ['일반', '디딤', '아청심1', '아청심2', '드림스타트', '배움'] as const
-const MAKEUP_REQUIRED_MINUTES = 50
+const MAKEUP_REQUIRED_MINUTES = 40
 
 function toDateString(date: Date) {
   const y = date.getFullYear()
@@ -737,8 +737,6 @@ function getScheduleCardBgClass(
   item: DisplayScheduleItem,
   classLogs: ClassLogRow[]
 ) {
- //if (isMakeupScheduleItem(item)) return 'bg-orange-50'
-
   const relatedLogs = classLogs
     .filter((log) => {
       const sameDate = log.class_date === item.date
@@ -1681,7 +1679,7 @@ export default function AdminPage() {
               onChange={(e) => setScheduleTimeMakeupMinutes(e.target.value)}
               className={inputClassName}
             >
-              {[10, 20, 30, 40, 50].map((minute) => (
+              {[10, 20, 30, 40].map((minute) => (
                 <option key={minute} value={String(minute)}>
                   {minute}분
                 </option>
@@ -2286,8 +2284,7 @@ export default function AdminPage() {
     }
   }
 
-
-async function handleDeleteRegularGroupClass(id: number) {
+  async function handleDeleteRegularGroupClass(id: number) {
     try {
       const ok = window.confirm('정기 그룹수업을 삭제할까요? 출결체크된 일정은 유지되고 미출결 일정만 삭제됩니다.')
       if (!ok) return
@@ -2371,8 +2368,7 @@ async function handleDeleteRegularGroupClass(id: number) {
     }
   }
 
-
-async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: number) {
+  async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: number) {
     try {
       const staff = employeeStaffs.find((s) => Number(s.id) === Number(staffId))
       const minute = Number(selectedMinute)
@@ -3282,12 +3278,6 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
       })
       .filter((row) => !row.completed)
   }, [childInfoAllLogs, childInfoMakeupDateMap, childInfoTimeMakeupMinuteMap])
-
-  const childInfoUnrecoveredAbsentAll = useMemo(() => {
-    return childInfoUnrecoveredAbsentItems
-      .map((row) => `${row.absent_date} (${row.completed_minutes}/${row.required_minutes}분, 남음 ${row.remaining_minutes}분)`)
-      .join(', ')
-  }, [childInfoUnrecoveredAbsentItems])
 
 
   function askCsvMonth() {
