@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 
 type MainTab = 'schedule' | 'children' | 'staff' | 'summary' | 'regular'
-type ViewMode = 'all' | 'staff' | 'daily'
+type ViewMode = 'all' | 'staff' | 'daily' | 'studentInfo'
 type SummarySubTab = 'attendance' | 'teacher' | 'settlement'
 type StaffRole = 'admin' | 'employee'
 type AttendanceStatus = 'attended' | 'absent' | 'makeup' | 'same_day_absent'
@@ -3567,7 +3567,6 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
             individualRows.length,
             groupRows.length,
             attendanceRows.filter((row) => !row.is_group && row.status === 'absent').length,
-            attendanceRows.filter((row) => !row.is_group && row.status === 'same_day_absent').length,
             groupUnitPrice,
             individualAmount + groupAmount,
           ]
@@ -3575,7 +3574,7 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
 
       downloadCsvFile(
         `학생CSV_${targetMonth}_월전체.csv`,
-        ['월', '학생', '나이', '바우처', '출석+보강횟수', '그룹횟수', '결석', '당일결석', '그룹단가', '총금액'],
+        ['월', '학생', '나이', '바우처', '출석+보강횟수', '그룹횟수', '결석', '그룹단가', '총금액'],
         monthRows
       )
     } catch (err: any) {
@@ -3700,7 +3699,7 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
         '학생이름(나이)',
         ...weekNumbers.flatMap((week) => [
           `${week}주차 출석/보강`,
-          `${week}주차 결석/당일결석`,
+          `${week}주차 결석`,
         ]),
       ]
 
@@ -4260,6 +4259,15 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
                   >
                     일별 보기
                   </button>
+
+                  <button
+                    onClick={() => setViewMode('studentInfo')}
+                    className={`rounded-xl px-4 py-2 text-sm font-medium ${
+                      viewMode === 'studentInfo' ? 'bg-sky-500 text-white' : 'bg-slate-200 text-slate-700'
+                    }`}
+                  >
+                    학생정보확인
+                  </button>
                 </div>
 
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
@@ -4333,6 +4341,47 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
             {loading ? (
               <div className="rounded-xl border bg-slate-50 p-6 text-center text-slate-500">
                 시간표 불러오는 중...
+              </div>
+            ) : viewMode === 'studentInfo' ? (
+              <div className="rounded-2xl border bg-white p-4 shadow-sm">
+                <div className="mb-4">
+                  <h2 className="text-xl font-bold">학생정보확인</h2>
+                  <p className="mt-1 text-sm text-slate-500">
+                    아이 이름을 검색한 뒤 선택하면 기존 아이정보 창이 열립니다.
+                  </p>
+                </div>
+
+                <input
+                  value={childSearch}
+                  onChange={(e) => setChildSearch(e.target.value)}
+                  placeholder="아이 이름 입력"
+                  className="mb-4 w-full rounded-xl border px-4 py-3 text-base"
+                />
+
+                <div className="rounded-xl border bg-slate-50 p-3">
+                  {childSearch.trim() === '' ? (
+                    <div className="text-sm text-slate-500">검색할 아이 이름을 입력하세요.</div>
+                  ) : filteredChildren.length === 0 ? (
+                    <div className="text-sm text-slate-500">검색된 아이가 없습니다.</div>
+                  ) : (
+                    <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                      {filteredChildren.slice(0, 30).map((child) => (
+                        <button
+                          key={`student-info-${child.id}`}
+                          type="button"
+                          onClick={() => setChildInfoModal({ open: true, child })}
+                          className="rounded-xl border bg-white px-4 py-3 text-left hover:bg-sky-50"
+                        >
+                          <div className="font-semibold text-slate-800">{getDisplayName(child)}</div>
+                          <div className="mt-1 text-xs text-slate-500">
+                            {child.chart_no ? `차트번호 ${child.chart_no}` : '차트번호 없음'}
+                            {child.phone ? ` / ${child.phone}` : ''}
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
             ) : viewMode === 'daily' ? (
               <AdminDailySchedule
@@ -5580,13 +5629,11 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
                       <th className="border bg-slate-100 px-3 py-2">출석</th>
                       <th className="border bg-slate-100 px-3 py-2">보강</th>
                       <th className="border bg-slate-100 px-3 py-2">결석</th>
-                      <th className="border bg-slate-100 px-3 py-2">당일결석</th>
                       <th className="border bg-slate-100 px-3 py-2">출석날짜</th>
                       <th className="border bg-slate-100 px-3 py-2">보강날짜</th>
                       <th className="border bg-slate-100 px-3 py-2">결석날짜</th>
-                      <th className="border bg-slate-100 px-3 py-2">당일결석날짜</th>
                       <th className="border bg-slate-100 px-3 py-2">그룹수업출석</th>
-                      <th className="border bg-slate-100 px-3 py-2">그룹수업결석및 당일결석</th>
+                      <th className="border bg-slate-100 px-3 py-2">그룹수업결석</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -5598,11 +5645,9 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
                         <td className="border px-3 py-2 text-center">{row.attended_count}</td>
                         <td className="border px-3 py-2 text-center">{row.makeup_count}</td>
                         <td className="border px-3 py-2 text-center">{row.absent_count}</td>
-                        <td className="border px-3 py-2 text-center">{row.same_day_absent_count}</td>
                         <td className="border px-3 py-2">{row.attended_dates}</td>
                         <td className="border px-3 py-2">{row.makeup_dates}</td>
                         <td className="border px-3 py-2">{row.absent_dates}</td>
-                        <td className="border px-3 py-2">{row.same_day_absent_dates}</td>
                         <td className="border px-3 py-2">{row.group_attended_dates}</td>
                         <td className="border px-3 py-2">{row.group_absent_dates}</td>
                       </tr>
@@ -5622,9 +5667,8 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
                       <th className="border bg-slate-100 px-3 py-2">출석날짜</th>
                       <th className="border bg-slate-100 px-3 py-2">보강날짜</th>
                       <th className="border bg-slate-100 px-3 py-2">결석날짜</th>
-                      <th className="border bg-slate-100 px-3 py-2">당일결석날짜</th>
                       <th className="border bg-slate-100 px-3 py-2">그룹 출석(그룹출석,그룹보강)</th>
-                      <th className="border bg-slate-100 px-3 py-2">그룹 결석(그룹결석,그룹당일결석)</th>
+                      <th className="border bg-slate-100 px-3 py-2">그룹 결석</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -5635,7 +5679,6 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
                         <td className="border px-3 py-2">{row.attended_dates}</td>
                         <td className="border px-3 py-2">{row.makeup_dates}</td>
                         <td className="border px-3 py-2">{row.absent_dates}</td>
-                        <td className="border px-3 py-2">{row.same_day_absent_dates}</td>
                         <td className="border px-3 py-2">{row.group_attended_dates}</td>
                         <td className="border px-3 py-2">{row.group_absent_dates}</td>
                       </tr>
@@ -5656,7 +5699,6 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
                       <th className="border bg-slate-100 px-3 py-2">출석+보강횟수</th>
                       <th className="border bg-slate-100 px-3 py-2">그룹횟수</th>
                       <th className="border bg-slate-100 px-3 py-2">결석</th>
-                      <th className="border bg-slate-100 px-3 py-2">당일결석</th>
                       <th className="border bg-slate-100 px-3 py-2">그룹단가</th>
                       <th className="border bg-slate-100 px-3 py-2">총금액</th>
                       <th className="border bg-slate-100 px-3 py-2">저장</th>
@@ -5671,7 +5713,6 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
                         <td className="border px-3 py-2 text-center">{row.lesson_count}</td>
                         <td className="border px-3 py-2 text-center">{row.group_count}</td>
                         <td className="border px-3 py-2 text-center">{row.absent_count}</td>
-                        <td className="border px-3 py-2 text-center">{row.same_day_absent_count}</td>
                         <td className="border px-3 py-2 text-center">
                           <input
                             value={monthlyGroupPrices[row.child_id] ?? ''}
