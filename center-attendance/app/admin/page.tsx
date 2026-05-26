@@ -4260,6 +4260,36 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
                     일별 보기
                   </button>
 
+                  <div className="relative">
+                    <input
+                      value={studentSearch}
+                      onChange={(e)=>setStudentSearch(e.target.value)}
+                      placeholder="학생정보 확인"
+                      className="rounded-xl border px-3 py-2 text-sm w-[180px]"
+                    />
+
+                    {studentSearch && (
+                      <div className="absolute top-12 left-0 z-50 w-[220px] rounded-xl border bg-white p-2 shadow-xl max-h-60 overflow-auto">
+                      {children
+                      .filter(c=>c.child_name.toLowerCase().includes(studentSearch.toLowerCase()))
+                      .slice(0,10)
+                      .map(c=>(
+                      <button
+                      key={c.id}
+                      onClick={()=>{
+                      setChildInfoModal({open:true,child:c})
+                      setStudentSearch('')
+                      }}
+                      className="block w-full rounded p-2 text-left hover:bg-slate-100"
+                      >
+                      {c.child_name}
+                      </button>
+                      ))}
+                      </div>
+                    )}
+                  </div>
+
+
                   <button
                     onClick={() => setViewMode('studentInfo')}
                     className={`rounded-xl px-4 py-2 text-sm font-medium ${
