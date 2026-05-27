@@ -2113,6 +2113,10 @@ export default function AdminPage() {
         return
       }
 
+      const previousRegular = regularForm.id
+        ? regularClasses.find((row) => Number(row.id) === Number(regularForm.id)) ?? null
+        : null
+
       const endDate = regularForm.endDate || addYearsDate(regularForm.startDate, 5)
       const voucherOptions = getVoucherOptionsForChild(regularForm.childId)
       const effectiveVoucherType =
@@ -2167,15 +2171,49 @@ export default function AdminPage() {
         Number(regularForm.weekday)
       )
 
-      const { data: existingRows, error: existingError } = await supabase
+      const currentRuleTag = buildRegularNoteTag(Number(ruleId))
+      const cleanupChildIds = Array.from(
+        new Set(
+          [Number(regularForm.childId), previousRegular ? Number(previousRegular.child_id) : null]
+            .filter((value): value is number => value != null && Number.isFinite(value) && value > 0)
+        )
+      )
+
+      const { data: cleanupRows, error: cleanupError } = await supabase
         .from('schedule_entries')
         .select('*')
-        .like('note', `${buildRegularNoteTag(Number(ruleId))}%`)
+        .in('child_id', cleanupChildIds)
         .eq('is_active', true)
+        .eq('is_group', false)
+        .ilike('note', '%[정기수업:%')
 
-      if (existingError) throw existingError
+      if (cleanupError) throw cleanupError
 
-      const existingScheduleRows = (existingRows ?? []) as ScheduleEntryRow[]
+      const existingScheduleRows = ((cleanupRows ?? []) as ScheduleEntryRow[]).filter((row) => {
+        const rowNote = row.note ?? ''
+        const rowWeekday = new Date(`${row.date}T00:00:00`).getDay()
+        const currentRuleMatched = rowNote.includes(currentRuleTag)
+
+        const previousShapeMatched = previousRegular
+          ? Number(row.child_id) === Number(previousRegular.child_id) &&
+            Number(row.teacher_id) === Number(previousRegular.teacher_id) &&
+            row.time_slot === previousRegular.time_slot &&
+            Number(row.minute_slot ?? 0) === Number(previousRegular.minute_slot ?? 0) &&
+            rowWeekday === Number(previousRegular.weekday) &&
+            row.date >= previousRegular.start_date
+          : false
+
+        const currentFutureShapeMatched =
+          Number(row.child_id) === Number(regularForm.childId) &&
+          Number(row.teacher_id) === Number(regularForm.teacherId) &&
+          row.time_slot === regularForm.timeSlot &&
+          Number(row.minute_slot ?? 0) === Number(regularForm.minuteSlot) &&
+          rowWeekday === Number(regularForm.weekday) &&
+          row.date > endDate
+
+        return currentRuleMatched || previousShapeMatched || currentFutureShapeMatched
+      })
+
       const existingClassLogs = await loadClassLogsForScheduleRows(existingScheduleRows)
 
       const { loggedRows, unloggedRows } = splitLoggedSchedules(
@@ -2212,7 +2250,7 @@ export default function AdminPage() {
           child_id: Number(regularForm.childId),
           voucher_type: effectiveVoucherType,
           status: 'scheduled',
-          note: `${buildRegularNoteTag(Number(ruleId))}${regularForm.note ? ` ${regularForm.note}` : ''}`,
+          note: `${currentRuleTag}${regularForm.note ? ` ${regularForm.note}` : ''}`,
           is_active: true,
           is_group: false,
           group_id: null,
@@ -2238,7 +2276,7 @@ export default function AdminPage() {
         if (insertError) throw insertError
       }
 
-      await Promise.all([loadRegularClasses(), loadSchedules()])
+      await Promise.all([loadRegularClasses(), loadSchedules(), loadClassLogsForVisibleScheduleRange()])
       setRegularForm({
         id: null,
         childId: '',
@@ -2256,7 +2294,7 @@ export default function AdminPage() {
       setRegularTeacherQuery('')
       setMessage(
         regularForm.id
-          ? `정기수업이 수정되었습니다. 출결체크 ${loggedRows.length}건은 유지되고 미출결 일정만 삭제 후 재생성되었습니다.`
+          ? `정기수업이 수정되었습니다. 출결체크 ${loggedRows.length}건은 유지되고 미출결 일정 ${unloggedRows.length}건은 정리 후 재생성되었습니다.`
           : '정기수업이 저장되었습니다.'
       )
     } catch (err: any) {
@@ -2286,6 +2324,10 @@ export default function AdminPage() {
         setMessage('그룹 학생을 1명 이상 선택하세요.')
         return
       }
+
+      const previousRegularGroup = regularGroupForm.id
+        ? regularGroupClasses.find((row) => Number(row.id) === Number(regularGroupForm.id)) ?? null
+        : null
 
       const endDate = regularGroupForm.endDate || addYearsDate(regularGroupForm.startDate, 5)
       const payload = {
@@ -2353,16 +2395,42 @@ export default function AdminPage() {
         Number(regularGroupForm.weekday)
       )
 
-      const { data: existingRows, error: existingError } = await supabase
+      const currentRuleTag = buildRegularGroupNoteTag(Number(ruleId))
+
+      const { data: cleanupRows, error: cleanupError } = await supabase
         .from('schedule_entries')
         .select('*')
-        .eq('group_id', String(ruleId))
-        .eq('is_group', true)
         .eq('is_active', true)
+        .eq('is_group', true)
+        .or(`group_id.eq.${String(ruleId)},note.ilike.%[정기그룹:${Number(ruleId)}]%`)
 
-      if (existingError) throw existingError
+      if (cleanupError) throw cleanupError
 
-      const existingScheduleRows = (existingRows ?? []) as ScheduleEntryRow[]
+      const existingScheduleRows = ((cleanupRows ?? []) as ScheduleEntryRow[]).filter((row) => {
+        const rowNote = row.note ?? ''
+        const rowWeekday = new Date(`${row.date}T00:00:00`).getDay()
+        const currentRuleMatched = (row.group_id ?? '') === String(ruleId) || rowNote.includes(currentRuleTag)
+
+        const previousShapeMatched = previousRegularGroup
+          ? Number(row.teacher_id) === Number(previousRegularGroup.teacher_id) &&
+            row.time_slot === previousRegularGroup.time_slot &&
+            Number(row.minute_slot ?? 0) === Number(previousRegularGroup.minute_slot ?? 0) &&
+            rowWeekday === Number(previousRegularGroup.weekday) &&
+            row.date >= previousRegularGroup.start_date &&
+            row.group_name === previousRegularGroup.group_name
+          : false
+
+        const currentFutureShapeMatched =
+          Number(row.teacher_id) === Number(regularGroupForm.teacherId) &&
+          row.time_slot === regularGroupForm.timeSlot &&
+          Number(row.minute_slot ?? 0) === Number(regularGroupForm.minuteSlot) &&
+          rowWeekday === Number(regularGroupForm.weekday) &&
+          row.date > endDate &&
+          row.group_name === regularGroupForm.groupName
+
+        return currentRuleMatched || previousShapeMatched || currentFutureShapeMatched
+      })
+
       const existingClassLogs = await loadClassLogsForScheduleRows(existingScheduleRows)
 
       const { loggedRows, unloggedRows } = splitLoggedSchedules(
@@ -2400,7 +2468,7 @@ export default function AdminPage() {
             child_id: Number(childId),
             voucher_type: '그룹수업',
             status: 'scheduled',
-            note: `${buildRegularGroupNoteTag(Number(ruleId))}${regularGroupForm.note ? ` ${regularGroupForm.note}` : ''}`,
+            note: `${currentRuleTag}${regularGroupForm.note ? ` ${regularGroupForm.note}` : ''}`,
             is_active: true,
             is_group: true,
             group_id: String(ruleId),
@@ -2427,7 +2495,7 @@ export default function AdminPage() {
         if (insertError) throw insertError
       }
 
-      await Promise.all([loadRegularGroupClasses(), loadRegularGroupMembers(), loadSchedules()])
+      await Promise.all([loadRegularGroupClasses(), loadRegularGroupMembers(), loadSchedules(), loadClassLogsForVisibleScheduleRange()])
       setRegularGroupForm({
         id: null,
         teacherId: '',
@@ -2443,7 +2511,7 @@ export default function AdminPage() {
       })
       setMessage(
         regularGroupForm.id
-          ? `정기 그룹수업이 수정되었습니다. 출결체크 ${loggedRows.length}건은 유지되고 미출결 일정만 삭제 후 재생성되었습니다.`
+          ? `정기 그룹수업이 수정되었습니다. 출결체크 ${loggedRows.length}건은 유지되고 미출결 일정 ${unloggedRows.length}건은 정리 후 재생성되었습니다.`
           : '정기 그룹수업이 저장되었습니다.'
       )
     } catch (err: any) {
