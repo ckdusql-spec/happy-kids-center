@@ -2091,6 +2091,100 @@ export default function AdminPage() {
     return (data ?? []) as ClassLogRow[]
   }
 
+  async function cleanupUnloggedRegularClassSchedulesForRecreate(ruleId: number, previousRule: RegularClassRow | null) {
+    const ruleTag = buildRegularNoteTag(Number(ruleId))
+    const rowMap = new Map<string, ScheduleEntryRow>()
+
+    const { data: taggedRows, error: taggedError } = await supabase
+      .from('schedule_entries')
+      .select('*')
+      .eq('is_active', true)
+      .eq('is_group', false)
+      .ilike('note', `%${ruleTag}%`)
+
+    if (taggedError) throw taggedError
+    ;((taggedRows ?? []) as ScheduleEntryRow[]).forEach((row) => rowMap.set(row.id, row))
+
+    // 예전 생성 데이터에 [정기수업:id] 태그가 누락되었거나 형식이 달라진 경우를 대비한 보조 매칭.
+    // 기존 규칙의 학생/선생님/요일/시간/기간과 일치하는 미출결 일정도 정리 대상에 포함한다.
+    if (previousRule) {
+      const previousEndDate = previousRule.end_date || addYearsDate(previousRule.start_date, 5)
+      const { data: fallbackRows, error: fallbackError } = await supabase
+        .from('schedule_entries')
+        .select('*')
+        .eq('is_active', true)
+        .eq('is_group', false)
+        .eq('child_id', Number(previousRule.child_id))
+        .eq('teacher_id', Number(previousRule.teacher_id))
+        .eq('time_slot', previousRule.time_slot)
+        .eq('minute_slot', Number(previousRule.minute_slot ?? 0))
+        .gte('date', previousRule.start_date)
+        .lte('date', previousEndDate)
+
+      if (fallbackError) throw fallbackError
+      ;((fallbackRows ?? []) as ScheduleEntryRow[])
+        .filter((row) => new Date(`${row.date}T00:00:00`).getDay() === Number(previousRule.weekday))
+        .forEach((row) => rowMap.set(row.id, row))
+    }
+
+    const targetRows = Array.from(rowMap.values())
+    const logs = await loadClassLogsForScheduleRows(targetRows)
+    const { loggedRows, unloggedRows } = splitLoggedSchedules(targetRows, logs)
+
+    if (unloggedRows.length > 0) {
+      await deleteScheduleEntriesByIds(unloggedRows.map((row) => row.id))
+    }
+
+    return { loggedRows, deletedCount: unloggedRows.length }
+  }
+
+  async function cleanupUnloggedRegularGroupSchedulesForRecreate(ruleId: number, previousRule: RegularGroupClassRow | null) {
+    const ruleTag = buildRegularGroupNoteTag(Number(ruleId))
+    const rowMap = new Map<string, ScheduleEntryRow>()
+
+    const { data: linkedRows, error: linkedError } = await supabase
+      .from('schedule_entries')
+      .select('*')
+      .eq('is_active', true)
+      .eq('is_group', true)
+      .or(`group_id.eq.${String(ruleId)},note.ilike.%${ruleTag}%`)
+
+    if (linkedError) throw linkedError
+    ;((linkedRows ?? []) as ScheduleEntryRow[]).forEach((row) => rowMap.set(row.id, row))
+
+    // group_id/note가 깨진 예전 데이터 대비 보조 매칭.
+    if (previousRule) {
+      const previousEndDate = previousRule.end_date || addYearsDate(previousRule.start_date, 5)
+      const { data: fallbackRows, error: fallbackError } = await supabase
+        .from('schedule_entries')
+        .select('*')
+        .eq('is_active', true)
+        .eq('is_group', true)
+        .eq('teacher_id', Number(previousRule.teacher_id))
+        .eq('time_slot', previousRule.time_slot)
+        .eq('minute_slot', Number(previousRule.minute_slot ?? 0))
+        .eq('group_name', previousRule.group_name)
+        .gte('date', previousRule.start_date)
+        .lte('date', previousEndDate)
+
+      if (fallbackError) throw fallbackError
+      ;((fallbackRows ?? []) as ScheduleEntryRow[])
+        .filter((row) => new Date(`${row.date}T00:00:00`).getDay() === Number(previousRule.weekday))
+        .forEach((row) => rowMap.set(row.id, row))
+    }
+
+    const targetRows = Array.from(rowMap.values())
+    const logs = await loadClassLogsForScheduleRows(targetRows)
+    const { loggedRows, unloggedRows } = splitLoggedSchedules(targetRows, logs)
+
+    if (unloggedRows.length > 0) {
+      await deleteScheduleEntriesByIds(unloggedRows.map((row) => row.id))
+    }
+
+    return { loggedRows, deletedCount: unloggedRows.length }
+  }
+
+
   async function handleSaveRegularClass() {
     try {
       if (!regularForm.childId) {
@@ -2116,6 +2210,9 @@ export default function AdminPage() {
 
       const isEditing = Boolean(regularForm.id)
       const editRuleId = regularForm.id ? Number(regularForm.id) : null
+      const previousRule = editRuleId
+        ? regularClasses.find((row) => Number(row.id) === Number(editRuleId)) ?? null
+        : null
       const endDate = regularForm.endDate || addYearsDate(regularForm.startDate, 5)
       const voucherOptions = getVoucherOptionsForChild(regularForm.childId)
       const effectiveVoucherType =
@@ -2137,12 +2234,16 @@ export default function AdminPage() {
       }
 
       let ruleId = regularForm.id
+      let loggedRows: ScheduleEntryRow[] = []
+      let deletedCount = 0
 
-      // 수정 모드: 기존 정기수업에서 생성된 미출결 schedule_entries를 먼저 전부 삭제한다.
-      // 출결이 이미 입력된 일정은 RPC에서 유지된다.
       if (isEditing && editRuleId) {
-        await deleteUnloggedRegularClassSchedulesOnServer(editRuleId)
+        // 1) 기존 정기수업에서 생성된 미출결 schedule_entries 전부 삭제
+        const cleanup = await cleanupUnloggedRegularClassSchedulesForRecreate(editRuleId, previousRule)
+        loggedRows = cleanup.loggedRows
+        deletedCount = cleanup.deletedCount
 
+        // 2) regular_classes row 업데이트
         const { error } = await supabase
           .from('regular_classes')
           .update(payload)
@@ -2175,36 +2276,11 @@ export default function AdminPage() {
       )
       const currentRuleTag = buildRegularNoteTag(Number(ruleId))
 
-      // 삭제 후 남은 일정은 출결 완료 일정으로 간주한다. 혹시 미출결이 남아있으면 한 번 더 제거한다.
-      const { data: remainingRowsData, error: remainingRowsError } = await supabase
-        .from('schedule_entries')
-        .select('*')
-        .eq('is_active', true)
-        .eq('is_group', false)
-        .ilike('note', `%${currentRuleTag}%`)
-
-      if (remainingRowsError) throw remainingRowsError
-
-      const remainingRows = (remainingRowsData ?? []) as ScheduleEntryRow[]
-      const remainingLogs = await loadClassLogsForScheduleRows(remainingRows)
-      const { loggedRows, unloggedRows } = splitLoggedSchedules(remainingRows, remainingLogs)
-
-      if (unloggedRows.length > 0) {
-        await deleteScheduleEntriesByIds(unloggedRows.map((r) => r.id))
-      }
-
-      const keepKeys = new Set(
-        loggedRows.map((row) =>
-          [
-            row.date,
-            row.time_slot,
-            Number(row.minute_slot ?? 0),
-            Number(row.teacher_id),
-            Number(row.child_id),
-          ].join('|')
-        )
+      const loggedDateChildKeys = new Set(
+        loggedRows.map((row) => [row.date, Number(row.child_id)].join('|'))
       )
 
+      // 3) 새 조건으로 regenerate. 출결 완료된 날짜/학생은 기존 기록을 유지하고 중복 생성하지 않는다.
       const rowsToInsert = generatedDates
         .map((date) => ({
           date,
@@ -2224,14 +2300,8 @@ export default function AdminPage() {
           group_name: null,
         }))
         .filter((row) => {
-          const key = [
-            row.date,
-            row.time_slot,
-            Number(row.minute_slot ?? 0),
-            Number(row.teacher_id),
-            Number(row.child_id),
-          ].join('|')
-          return !keepKeys.has(key)
+          const dateChildKey = [row.date, Number(row.child_id)].join('|')
+          return !loggedDateChildKeys.has(dateChildKey)
         })
 
       if (rowsToInsert.length > 0) {
@@ -2260,7 +2330,7 @@ export default function AdminPage() {
       setRegularTeacherQuery('')
       setMessage(
         isEditing
-          ? `정기수업이 수정되었습니다. 기존 미출결 일정 삭제 후 새 조건으로 ${rowsToInsert.length}건 재생성했습니다. 출결 완료 ${loggedRows.length}건은 유지했습니다.`
+          ? `정기수업이 수정되었습니다. 미출결 ${deletedCount}건 삭제 후 새 조건으로 ${rowsToInsert.length}건 재생성했습니다. 출결 완료 ${loggedRows.length}건은 유지했습니다.`
           : '정기수업이 저장되었습니다.'
       )
     } catch (err: any) {
@@ -2293,6 +2363,9 @@ export default function AdminPage() {
 
       const isEditing = Boolean(regularGroupForm.id)
       const editRuleId = regularGroupForm.id ? Number(regularGroupForm.id) : null
+      const previousRule = editRuleId
+        ? regularGroupClasses.find((row) => Number(row.id) === Number(editRuleId)) ?? null
+        : null
       const endDate = regularGroupForm.endDate || addYearsDate(regularGroupForm.startDate, 5)
       const payload = {
         teacher_id: Number(regularGroupForm.teacherId),
@@ -2307,12 +2380,16 @@ export default function AdminPage() {
       }
 
       let ruleId = regularGroupForm.id
+      let loggedRows: ScheduleEntryRow[] = []
+      let deletedCount = 0
 
-      // 수정 모드: 기존 정기그룹에서 생성된 미출결 schedule_entries를 먼저 전부 삭제한다.
-      // 출결이 이미 입력된 일정은 RPC에서 유지된다.
       if (isEditing && editRuleId) {
-        await deleteUnloggedRegularGroupSchedulesOnServer(editRuleId)
+        // 1) 기존 정기그룹수업에서 생성된 미출결 schedule_entries 전부 삭제
+        const cleanup = await cleanupUnloggedRegularGroupSchedulesForRecreate(editRuleId, previousRule)
+        loggedRows = cleanup.loggedRows
+        deletedCount = cleanup.deletedCount
 
+        // 2) regular_group_classes row 업데이트
         const { error } = await supabase
           .from('regular_group_classes')
           .update(payload)
@@ -2364,37 +2441,11 @@ export default function AdminPage() {
       )
       const currentRuleTag = buildRegularGroupNoteTag(Number(ruleId))
 
-      // 삭제 후 남은 일정은 출결 완료 일정으로 간주한다. 혹시 미출결이 남아있으면 한 번 더 제거한다.
-      const { data: remainingRowsData, error: remainingRowsError } = await supabase
-        .from('schedule_entries')
-        .select('*')
-        .eq('is_active', true)
-        .eq('is_group', true)
-        .or(`group_id.eq.${String(ruleId)},note.ilike.%${currentRuleTag}%`)
-
-      if (remainingRowsError) throw remainingRowsError
-
-      const remainingRows = (remainingRowsData ?? []) as ScheduleEntryRow[]
-      const remainingLogs = await loadClassLogsForScheduleRows(remainingRows)
-      const { loggedRows, unloggedRows } = splitLoggedSchedules(remainingRows, remainingLogs)
-
-      if (unloggedRows.length > 0) {
-        await deleteScheduleEntriesByIds(unloggedRows.map((r) => r.id))
-      }
-
-      const keepKeys = new Set(
-        loggedRows.map((row) =>
-          [
-            row.date,
-            row.time_slot,
-            Number(row.minute_slot ?? 0),
-            Number(row.teacher_id),
-            Number(row.child_id),
-            row.group_id ?? '',
-          ].join('|')
-        )
+      const loggedDateChildKeys = new Set(
+        loggedRows.map((row) => [row.date, Number(row.child_id)].join('|'))
       )
 
+      // 3) 새 조건으로 regenerate. 출결 완료된 날짜/학생은 기존 기록을 유지하고 중복 생성하지 않는다.
       const rowsToInsert = generatedDates.flatMap((date) =>
         regularGroupForm.childIds
           .map((childId) => ({
@@ -2415,15 +2466,8 @@ export default function AdminPage() {
             group_name: regularGroupForm.groupName,
           }))
           .filter((row) => {
-            const key = [
-              row.date,
-              row.time_slot,
-              Number(row.minute_slot ?? 0),
-              Number(row.teacher_id),
-              Number(row.child_id),
-              row.group_id ?? '',
-            ].join('|')
-            return !keepKeys.has(key)
+            const dateChildKey = [row.date, Number(row.child_id)].join('|')
+            return !loggedDateChildKeys.has(dateChildKey)
           })
       )
 
@@ -2452,7 +2496,7 @@ export default function AdminPage() {
       setRegularGroupChildInputs(Array(6).fill(''))
       setMessage(
         isEditing
-          ? `정기 그룹수업이 수정되었습니다. 기존 미출결 일정 삭제 후 새 조건으로 ${rowsToInsert.length}건 재생성했습니다. 출결 완료 ${loggedRows.length}건은 유지했습니다.`
+          ? `정기 그룹수업이 수정되었습니다. 미출결 ${deletedCount}건 삭제 후 새 조건으로 ${rowsToInsert.length}건 재생성했습니다. 출결 완료 ${loggedRows.length}건은 유지했습니다.`
           : '정기 그룹수업이 저장되었습니다.'
       )
     } catch (err: any) {
