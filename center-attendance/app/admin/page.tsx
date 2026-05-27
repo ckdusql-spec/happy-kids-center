@@ -1056,6 +1056,7 @@ export default function AdminPage() {
   const [selectedGroupChildIds, setSelectedGroupChildIds] = useState<number[]>([])
   const [groupSearch, setGroupSearch] = useState('')
   const [childSearch, setChildSearch] = useState('')
+  const [studentSearch, setStudentSearch] = useState('')
 
   const [recordModal, setRecordModal] = useState<RecordModalState>({
     open: false,
