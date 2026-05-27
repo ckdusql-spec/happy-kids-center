@@ -5,6 +5,7 @@ import { supabase } from '@/lib/supabase'
 
 type MainTab = 'today' | 'schedule' | 'week_overview'
 type AttendanceStatus = 'attended' | 'absent' | 'makeup' | 'same_day_absent'
+type ScheduleMakeupType = 'none' | 'day' | 'time'
 type StaffRole = 'admin' | 'employee'
 
 type User = {
@@ -68,6 +69,25 @@ type ClassLogRow = {
   updated_at?: string | null
 }
 
+type MakeupTimeLogRow = {
+  id: string
+  child_id: number
+  absent_date: string
+  makeup_date: string
+  minutes: number
+  note?: string | null
+  created_at?: string | null
+}
+
+type MakeupAbsentProgressRow = {
+  absent_date: string
+  teacher_name?: string
+  required_minutes: number
+  completed_minutes: number
+  remaining_minutes: number
+  completed: boolean
+}
+
 type DisplayScheduleItem = {
   key: string
   date: string
@@ -89,7 +109,8 @@ type EditingCell = {
 } | null
 
 const VOUCHER_FALLBACK = ['일반']
-const STATUS_OPTIONS: AttendanceStatus[] = ['attended', 'absent', 'makeup', 'same_day_absent']
+const MAKEUP_REQUIRED_MINUTES = 40
+const STATUS_OPTIONS: AttendanceStatus[] = ['attended', 'absent', 'makeup']
 
 function toDateString(date: Date) {
   const y = date.getFullYear()
@@ -171,7 +192,7 @@ function getStatusLabel(status: AttendanceStatus) {
   if (status === 'attended') return '출석'
   if (status === 'absent') return '결석'
   if (status === 'makeup') return '보강'
-  return '당일결석'
+  return '결석'
 }
 
 function getStatusClass(status: AttendanceStatus) {
@@ -185,8 +206,8 @@ function getTodayCardBgClass(status: AttendanceStatus | null, note?: string | nu
   if (status === 'attended') return 'border-blue-200 bg-blue-50 shadow-blue-100'
   if (status === 'makeup') return 'border-orange-300 bg-orange-50 shadow-orange-100'
   if (status === 'absent') return 'border-rose-200 bg-rose-50 shadow-rose-100'
-  if (status === 'same_day_absent') return 'border-red-300 bg-red-50 shadow-red-100'
-  if (isMakeupScheduleNote(note)) return 'border-orange-200 bg-orange-50 shadow-orange-100'
+  if (status === 'same_day_absent') return 'border-rose-200 bg-rose-50 shadow-rose-100'
+  if (isMakeupScheduleNote(note) || isTimeMakeupScheduleNote(note)) return 'border-orange-200 bg-orange-50 shadow-orange-100'
   return 'border-slate-200 bg-white shadow-slate-100'
 }
 
@@ -321,11 +342,30 @@ function parseMakeupAbsentDate(note: string | null | undefined) {
   return matched[1] === '없음' ? '' : matched[1]
 }
 
+function isTimeMakeupScheduleNote(note: string | null | undefined) {
+  return Boolean(note?.includes('[시간보강:'))
+}
+
+function parseTimeMakeupMinutes(note: string | null | undefined) {
+  if (!note) return ''
+  const matched = note.match(/\[시간보강:(\d+)분\]/)
+  return matched?.[1] ?? ''
+}
+
+function parseMakeupTeacherName(note: string | null | undefined) {
+  if (!note) return ''
+  const matched = note.match(/\[담당:([^\]]+)\]/)
+  if (!matched) return ''
+  return matched[1].trim()
+}
+
 function stripMakeupTags(note: string | null | undefined) {
   if (!note) return ''
   return note
     .replace(/\[보강\]/g, '')
+    .replace(/\[시간보강:\d+분\]/g, '')
     .replace(/\s*\[결석일:[^\]]+\]\s*/g, ' ')
+    .replace(/\s*\[담당:[^\]]+\]\s*/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
 }
@@ -340,12 +380,66 @@ function stripSystemScheduleTags(note: string | null | undefined) {
     .trim()
 }
 
-function buildScheduleNote(baseNote: string, isMakeup: boolean, absentDate: string) {
+function buildScheduleNote(baseNote: string, isMakeup: boolean, absentDate: string, teacherName = '') {
   const cleanNote = stripMakeupTags(baseNote)
   if (!isMakeup) return cleanNote || null
 
   const tags = [MAKEUP_NOTE_TAG, `${MAKEUP_ABSENT_DATE_PREFIX}${absentDate || '없음'}]`]
+  if (teacherName) tags.push(`[담당:${teacherName}]`)
   return [tags.join(' '), cleanNote].filter(Boolean).join(' ').trim()
+}
+
+function isTimeMakeupScheduleRow(row: ScheduleEntryRow) {
+  return row.voucher_type === '시간보강' || isTimeMakeupScheduleNote(row.note)
+}
+
+function isCompletedTimeMakeupAttendanceStatus(status?: AttendanceStatus | null) {
+  return status === 'attended' || status === 'makeup'
+}
+
+function isSameAttendanceLog(entry: ScheduleEntryRow, log: ClassLogRow) {
+  const logMinute = getLogMinuteTotal(log)
+  const entryMinute = getEntryMinuteTotal(entry)
+  if (logMinute == null) return false
+
+  const sameBase =
+    entry.date === log.class_date &&
+    Number(entry.teacher_id) === Number(log.staff_id) &&
+    Number(entry.child_id) === Number(log.child_id) &&
+    entryMinute === logMinute
+
+  if (!sameBase) return false
+
+  if (entry.is_group) {
+    return Boolean(log.is_group) && (entry.group_id ?? '') === (log.group_id ?? '')
+  }
+
+  return !log.is_group
+}
+
+function findClassLogForScheduleRow(row: ScheduleEntryRow, logs: ClassLogRow[]) {
+  return logs.find((log) => isSameAttendanceLog(row, log)) ?? null
+}
+
+function buildCompletedTimeMakeupMinuteMap(rows: ScheduleEntryRow[], logs: ClassLogRow[]) {
+  const minuteMap = new Map<string, number>()
+
+  rows
+    .filter((row) => row.is_active && !row.is_group && isTimeMakeupScheduleRow(row))
+    .forEach((row) => {
+      const absentDate = parseMakeupAbsentDate(row.note)
+      if (!absentDate) return
+
+      const log = findClassLogForScheduleRow(row, logs)
+      if (!isCompletedTimeMakeupAttendanceStatus(log?.status)) return
+
+      const minutes = Number(parseTimeMakeupMinutes(row.note) || 0)
+      if (!Number.isFinite(minutes) || minutes <= 0) return
+
+      minuteMap.set(absentDate, (minuteMap.get(absentDate) ?? 0) + minutes)
+    })
+
+  return minuteMap
 }
 
 function getMonthStartEnd(base: Date) {
@@ -378,11 +472,14 @@ export default function EmployeePage() {
   const [selectedVoucher, setSelectedVoucher] = useState('')
   const [scheduleMemo, setScheduleMemo] = useState('')
   const [isMakeupSchedule, setIsMakeupSchedule] = useState(false)
+  const [scheduleMakeupType, setScheduleMakeupType] = useState<ScheduleMakeupType>('none')
+  const [scheduleTimeMakeupMinutes, setScheduleTimeMakeupMinutes] = useState('10')
   const [makeupAbsentDate, setMakeupAbsentDate] = useState('')
   const [isGroupLesson, setIsGroupLesson] = useState(false)
   const [groupName, setGroupName] = useState('')
   const [groupSearch, setGroupSearch] = useState('')
   const [selectedGroupChildIds, setSelectedGroupChildIds] = useState<number[]>([])
+  const [studentInfoSearch, setStudentInfoSearch] = useState('')
 
   const [recordModal, setRecordModal] = useState<{
     open: boolean
@@ -408,8 +505,10 @@ export default function EmployeePage() {
   const [childMonthlyLogRows, setChildMonthlyLogRows] = useState<ClassLogRow[]>([])
   const [childAllAbsentLogRows, setChildAllAbsentLogRows] = useState<ClassLogRow[]>([])
   const [childAllMakeupScheduleRows, setChildAllMakeupScheduleRows] = useState<ScheduleEntryRow[]>([])
+  const [childInfoMakeupTimeLogs, setChildInfoMakeupTimeLogs] = useState<MakeupTimeLogRow[]>([])
   const [makeupAbsentCandidateLogs, setMakeupAbsentCandidateLogs] = useState<ClassLogRow[]>([])
   const [makeupAbsentCandidateSchedules, setMakeupAbsentCandidateSchedules] = useState<ScheduleEntryRow[]>([])
+  const [scheduleChildMakeupTimeLogs, setScheduleChildMakeupTimeLogs] = useState<MakeupTimeLogRow[]>([])
 
   const weekDates = useMemo(() => getWeekDates(weekBaseDate), [weekBaseDate])
   const hourSlots = useMemo(() => buildHourSlots(9, 20), [])
@@ -436,6 +535,15 @@ export default function EmployeePage() {
       return c.child_name.includes(keyword) || getDisplayName(c).includes(keyword)
     })
   }, [children, groupSearch])
+
+  const filteredStudentInfoChildren = useMemo(() => {
+    const keyword = studentInfoSearch.trim().toLowerCase()
+    if (!keyword) return []
+    return children
+      .filter((c) => c.is_active)
+      .filter((c) => c.child_name.toLowerCase().includes(keyword) || getDisplayName(c).toLowerCase().includes(keyword))
+      .slice(0, 8)
+  }, [children, studentInfoSearch])
 
   const attendanceMap = useMemo(() => {
     const map = new Map<string, ClassLogRow>()
@@ -505,7 +613,7 @@ export default function EmployeePage() {
     const makeupDateMap = new Map<string, string[]>()
 
     childAllMakeupScheduleRows
-      .filter((row) => row.is_active && !row.is_group && isMakeupScheduleNote(row.note))
+      .filter((row) => row.is_active && !row.is_group && !isTimeMakeupScheduleRow(row) && isMakeupScheduleNote(row.note))
       .forEach((row) => {
         const absentDate = parseMakeupAbsentDate(row.note)
         if (!absentDate) return
@@ -514,10 +622,41 @@ export default function EmployeePage() {
         makeupDateMap.set(absentDate, current)
       })
 
-    const unrecoveredAbsentDates = childAllAbsentLogRows
-      .filter((log) => log.status === 'absent' || log.status === 'same_day_absent')
-      .map((log) => log.class_date)
-      .filter((date) => !childInfoRecoveredAbsentDateSet.has(date))
+    const fullMakeupAbsentDateSet = new Set<string>(Array.from(makeupDateMap.keys()).filter(Boolean))
+    const timeMakeupMinuteMap = buildCompletedTimeMakeupMinuteMap(childAllMakeupScheduleRows, childAllAbsentLogRows)
+    const staffNameMap = new Map(staffs.map((staff) => [Number(staff.id), staff.name]))
+    const absentDates = Array.from(
+      new Set<string>(
+        childAllAbsentLogRows
+          .filter((log) => !log.is_group && (log.status === 'absent' || log.status === 'same_day_absent'))
+          .map((log) => log.class_date)
+          .filter(Boolean)
+      )
+    ).sort()
+
+    const unrecoveredAbsent = absentDates
+      .map((absentDate) => {
+        const absentLog = childAllAbsentLogRows.find(
+          (log) => !log.is_group && log.class_date === absentDate && (log.status === 'absent' || log.status === 'same_day_absent')
+        )
+        const completedByFullMakeup = fullMakeupAbsentDateSet.has(absentDate)
+        const completedMinutes = completedByFullMakeup
+          ? MAKEUP_REQUIRED_MINUTES
+          : Math.min(MAKEUP_REQUIRED_MINUTES, timeMakeupMinuteMap.get(absentDate) ?? 0)
+        const remainingMinutes = Math.max(0, MAKEUP_REQUIRED_MINUTES - completedMinutes)
+        const teacherName = absentLog ? staffNameMap.get(Number(absentLog.staff_id)) ?? '' : ''
+        return {
+          absent_date: absentDate,
+          teacher_name: teacherName,
+          required_minutes: MAKEUP_REQUIRED_MINUTES,
+          completed_minutes: completedMinutes,
+          remaining_minutes: remainingMinutes,
+          completed: remainingMinutes <= 0,
+        }
+      })
+      .filter((row) => !row.completed)
+      .map((row) => `${row.absent_date}${row.teacher_name ? ` (${row.teacher_name})` : ''} (${row.completed_minutes}/${row.required_minutes}분, 남음 ${row.remaining_minutes}분)`)
+      .join(', ')
 
     return {
       attended: uniqueDateList(individualRows.filter((r) => r.status === 'attended').map((r) => r.class_date)),
@@ -526,19 +665,15 @@ export default function EmployeePage() {
         individualRows.filter((r) => r.status === 'absent').map((r) => r.class_date),
         makeupDateMap
       ),
-      sameDayAbsent: uniqueAbsentDateListWithMakeupDate(
-        individualRows.filter((r) => r.status === 'same_day_absent').map((r) => r.class_date),
-        makeupDateMap
-      ),
       groupAttended: uniqueDateList(
         groupRows.filter((r) => r.status === 'attended' || r.status === 'makeup').map((r) => r.class_date)
       ),
       groupAbsent: uniqueDateList(
         groupRows.filter((r) => r.status === 'absent' || r.status === 'same_day_absent').map((r) => r.class_date)
       ),
-      unrecoveredAbsent: uniqueFullDateList(unrecoveredAbsentDates),
+      unrecoveredAbsent,
     }
-  }, [selectedChildMonthlyLogs, childAllAbsentLogRows, childAllMakeupScheduleRows, childInfoRecoveredAbsentDateSet])
+  }, [selectedChildMonthlyLogs, childAllAbsentLogRows, childAllMakeupScheduleRows, staffs])
 
   const usedMakeupAbsentDateSet = useMemo(() => {
     if (!scheduleChildId) return new Set<string>()
@@ -550,6 +685,7 @@ export default function EmployeePage() {
             Number(row.child_id) === Number(scheduleChildId) &&
             row.id !== editingEntryId &&
             row.is_active &&
+            !isTimeMakeupScheduleRow(row) &&
             isMakeupScheduleNote(row.note)
         )
         .map((row) => parseMakeupAbsentDate(row.note))
@@ -557,16 +693,76 @@ export default function EmployeePage() {
     )
   }, [makeupAbsentCandidateSchedules, scheduleChildId, editingEntryId])
 
-  const makeupAbsentDateOptions = useMemo(() => {
+  const scheduleTimeMakeupMinuteMap = useMemo(() => {
+    return buildCompletedTimeMakeupMinuteMap(makeupAbsentCandidateSchedules, makeupAbsentCandidateLogs)
+  }, [makeupAbsentCandidateSchedules, makeupAbsentCandidateLogs])
+
+  const scheduleMakeupAbsentProgressItems = useMemo<MakeupAbsentProgressRow[]>(() => {
     if (!scheduleChildId) return []
-    return makeupAbsentCandidateLogs
-      .filter((log) => log.status === 'absent' || log.status === 'same_day_absent')
-      .map((log) => log.class_date)
-      .filter((value, index, array) => array.indexOf(value) === index)
-      .filter((date) => !usedMakeupAbsentDateSet.has(date) || date === makeupAbsentDate)
-      .sort()
-      .reverse()
-  }, [makeupAbsentCandidateLogs, scheduleChildId, usedMakeupAbsentDateSet, makeupAbsentDate])
+
+    const staffNameMap = new Map(staffs.map((staff) => [Number(staff.id), staff.name]))
+    const absentDates = Array.from(
+      new Set<string>(
+        makeupAbsentCandidateLogs
+          .filter((log) => !log.is_group && (log.status === 'absent' || log.status === 'same_day_absent'))
+          .map((log) => log.class_date)
+          .filter(Boolean)
+      )
+    ).sort().reverse()
+
+    return absentDates
+      .map((absentDate) => {
+        const absentLog = makeupAbsentCandidateLogs.find(
+          (log) => !log.is_group && log.class_date === absentDate && (log.status === 'absent' || log.status === 'same_day_absent')
+        )
+        const completedByFullMakeup = usedMakeupAbsentDateSet.has(absentDate)
+        const completedMinutes = completedByFullMakeup
+          ? MAKEUP_REQUIRED_MINUTES
+          : Math.min(MAKEUP_REQUIRED_MINUTES, scheduleTimeMakeupMinuteMap.get(absentDate) ?? 0)
+        const remainingMinutes = Math.max(0, MAKEUP_REQUIRED_MINUTES - completedMinutes)
+
+        return {
+          absent_date: absentDate,
+          teacher_name: absentLog ? staffNameMap.get(Number(absentLog.staff_id)) ?? '' : '',
+          required_minutes: MAKEUP_REQUIRED_MINUTES,
+          completed_minutes: completedMinutes,
+          remaining_minutes: remainingMinutes,
+          completed: remainingMinutes <= 0,
+        }
+      })
+      .filter((row) => !row.completed || row.absent_date === makeupAbsentDate)
+  }, [makeupAbsentCandidateLogs, scheduleChildId, scheduleTimeMakeupMinuteMap, staffs, usedMakeupAbsentDateSet, makeupAbsentDate])
+
+  const makeupAbsentDateOptions = useMemo(() => {
+    return scheduleMakeupAbsentProgressItems.map((row) => row.absent_date)
+  }, [scheduleMakeupAbsentProgressItems])
+
+  const selectedScheduleMakeupProgress = useMemo(() => {
+    if (!makeupAbsentDate) return null
+    return scheduleMakeupAbsentProgressItems.find((row) => row.absent_date === makeupAbsentDate) ?? null
+  }, [makeupAbsentDate, scheduleMakeupAbsentProgressItems])
+
+  const scheduleAvailableTimeMakeupMinutes = useMemo(() => {
+    const remainingMinutes = selectedScheduleMakeupProgress?.remaining_minutes ?? 0
+    return [10, 20, 30, 40].filter((minute) => minute <= remainingMinutes)
+  }, [selectedScheduleMakeupProgress])
+
+  useEffect(() => {
+    if (scheduleMakeupType !== 'time') return
+    if (!makeupAbsentDate) {
+      setScheduleTimeMakeupMinutes('10')
+      return
+    }
+
+    if (scheduleAvailableTimeMakeupMinutes.length === 0) {
+      setScheduleTimeMakeupMinutes('')
+      return
+    }
+
+    if (!scheduleAvailableTimeMakeupMinutes.includes(Number(scheduleTimeMakeupMinutes))) {
+      setScheduleTimeMakeupMinutes(String(scheduleAvailableTimeMakeupMinutes[0]))
+    }
+  }, [scheduleMakeupType, makeupAbsentDate, scheduleAvailableTimeMakeupMinutes, scheduleTimeMakeupMinutes])
 
   function getAttendanceKey(entry: ScheduleEntryRow) {
     return buildLogicalAttendanceKey({
@@ -588,6 +784,8 @@ export default function EmployeePage() {
     setSelectedVoucher('')
     setScheduleMemo('')
     setIsMakeupSchedule(false)
+    setScheduleMakeupType('none')
+    setScheduleTimeMakeupMinutes('10')
     setMakeupAbsentDate('')
     setIsGroupLesson(false)
     setGroupName('')
@@ -702,8 +900,12 @@ export default function EmployeePage() {
       hour: item.hourSlot,
     })
 
+    const isTimeMakeup = isTimeMakeupScheduleNote(item.note) || item.voucherType === '시간보강'
+    const isDayMakeup = !isTimeMakeup && isMakeupScheduleNote(item.note)
     setScheduleMemo(stripMakeupTags(item.note))
-    setIsMakeupSchedule(isMakeupScheduleNote(item.note))
+    setIsMakeupSchedule(isTimeMakeup || isDayMakeup)
+    setScheduleMakeupType(isTimeMakeup ? 'time' : isDayMakeup ? 'day' : 'none')
+    setScheduleTimeMakeupMinutes(parseTimeMakeupMinutes(item.note) || '10')
     setMakeupAbsentDate(parseMakeupAbsentDate(item.note))
 
     if (item.isGroup) {
@@ -716,6 +918,8 @@ export default function EmployeePage() {
       setScheduleChildId('')
       setSelectedVoucher('')
       setIsMakeupSchedule(false)
+      setScheduleMakeupType('none')
+      setScheduleTimeMakeupMinutes('10')
       setMakeupAbsentDate('')
       setGroupSearch('')
     } else {
@@ -726,7 +930,7 @@ export default function EmployeePage() {
       setEditingEntryId(row.id)
       setScheduleChildId(row.child_id ? Number(row.child_id) : '')
       setSelectedMinute(String(row.minute_slot ?? 0).padStart(2, '0'))
-      setSelectedVoucher(row.voucher_type ?? '')
+      setSelectedVoucher(row.voucher_type === '시간보강' ? '' : row.voucher_type ?? '')
       setSelectedGroupChildIds([])
       setGroupName('')
       setGroupSearch('')
@@ -849,13 +1053,12 @@ export default function EmployeePage() {
       .eq('teacher_id', staffId)
       .eq('is_active', true)
       .eq('is_group', false)
-      .ilike('note', `%${MAKEUP_NOTE_TAG}%`)
       .order('date', { ascending: false })
       .order('time_slot', { ascending: true })
       .order('minute_slot', { ascending: true })
 
     if (error) throw error
-    setMakeupScheduleRows((data ?? []) as ScheduleEntryRow[])
+    setMakeupScheduleRows(((data ?? []) as ScheduleEntryRow[]).filter((row) => isMakeupScheduleNote(row.note) || isTimeMakeupScheduleRow(row)))
   }
 
   async function loadClassLogs(staffId: number) {
@@ -876,7 +1079,7 @@ export default function EmployeePage() {
   async function loadChildInfoLogs(childId: number, monthKey: string) {
     const { start, end } = getMonthStartEndFromKey(monthKey)
 
-    const [monthlyResult, absentResult, makeupResult] = await Promise.all([
+    const [monthlyResult, allLogResult, scheduleResult, timeMakeupResult] = await Promise.all([
       supabase
         .from('class_logs')
         .select('*')
@@ -889,7 +1092,6 @@ export default function EmployeePage() {
         .from('class_logs')
         .select('*')
         .eq('child_id', childId)
-        .in('status', ['absent', 'same_day_absent'])
         .order('class_date', { ascending: true })
         .order('created_at', { ascending: true }),
       supabase
@@ -898,28 +1100,36 @@ export default function EmployeePage() {
         .eq('child_id', childId)
         .eq('is_active', true)
         .eq('is_group', false)
-        .ilike('note', `%${MAKEUP_NOTE_TAG}%`)
         .order('date', { ascending: true })
         .order('time_slot', { ascending: true })
         .order('minute_slot', { ascending: true }),
+      supabase
+        .from('makeup_time_logs')
+        .select('*')
+        .eq('child_id', childId)
+        .order('makeup_date', { ascending: true }),
     ])
 
     if (monthlyResult.error) throw monthlyResult.error
-    if (absentResult.error) throw absentResult.error
-    if (makeupResult.error) throw makeupResult.error
+    if (allLogResult.error) throw allLogResult.error
+    if (scheduleResult.error) throw scheduleResult.error
+    if (timeMakeupResult.error) {
+      setChildInfoMakeupTimeLogs([])
+    } else {
+      setChildInfoMakeupTimeLogs((timeMakeupResult.data ?? []) as MakeupTimeLogRow[])
+    }
 
     setChildMonthlyLogRows((monthlyResult.data ?? []) as ClassLogRow[])
-    setChildAllAbsentLogRows((absentResult.data ?? []) as ClassLogRow[])
-    setChildAllMakeupScheduleRows((makeupResult.data ?? []) as ScheduleEntryRow[])
+    setChildAllAbsentLogRows((allLogResult.data ?? []) as ClassLogRow[])
+    setChildAllMakeupScheduleRows((scheduleResult.data ?? []) as ScheduleEntryRow[])
   }
 
   async function loadMakeupAbsentCandidates(childId: number) {
-    const [absentResult, makeupResult] = await Promise.all([
+    const [allLogResult, scheduleResult, timeMakeupResult] = await Promise.all([
       supabase
         .from('class_logs')
         .select('*')
         .eq('child_id', childId)
-        .in('status', ['absent', 'same_day_absent'])
         .order('class_date', { ascending: false })
         .order('created_at', { ascending: true }),
       supabase
@@ -927,15 +1137,24 @@ export default function EmployeePage() {
         .select('*')
         .eq('child_id', childId)
         .eq('is_active', true)
-        .eq('is_group', false)
-        .ilike('note', `%${MAKEUP_NOTE_TAG}%`),
+        .eq('is_group', false),
+      supabase
+        .from('makeup_time_logs')
+        .select('*')
+        .eq('child_id', childId)
+        .order('makeup_date', { ascending: true }),
     ])
 
-    if (absentResult.error) throw absentResult.error
-    if (makeupResult.error) throw makeupResult.error
+    if (allLogResult.error) throw allLogResult.error
+    if (scheduleResult.error) throw scheduleResult.error
+    if (timeMakeupResult.error) {
+      setScheduleChildMakeupTimeLogs([])
+    } else {
+      setScheduleChildMakeupTimeLogs((timeMakeupResult.data ?? []) as MakeupTimeLogRow[])
+    }
 
-    setMakeupAbsentCandidateLogs((absentResult.data ?? []) as ClassLogRow[])
-    setMakeupAbsentCandidateSchedules((makeupResult.data ?? []) as ScheduleEntryRow[])
+    setMakeupAbsentCandidateLogs((allLogResult.data ?? []) as ClassLogRow[])
+    setMakeupAbsentCandidateSchedules((scheduleResult.data ?? []) as ScheduleEntryRow[])
   }
 
   async function loadAll(staffId: number) {
@@ -983,6 +1202,7 @@ export default function EmployeePage() {
     if (!scheduleChildId) {
       setMakeupAbsentCandidateLogs([])
       setMakeupAbsentCandidateSchedules([])
+      setScheduleChildMakeupTimeLogs([])
       return
     }
 
@@ -998,20 +1218,28 @@ export default function EmployeePage() {
 
   function renderMakeupScheduleFields(inputClassName: string) {
     return (
-      <>
-        <label className="flex items-center gap-1 rounded border border-orange-200 bg-orange-50 px-2 py-1 text-xs font-semibold text-orange-700">
-          <input
-            type="checkbox"
-            checked={isMakeupSchedule}
-            onChange={(e) => {
-              setIsMakeupSchedule(e.target.checked)
-              if (!e.target.checked) setMakeupAbsentDate('')
-            }}
-          />
-          보강
-        </label>
+      <div className="space-y-1 rounded border border-orange-200 bg-orange-50 px-2 py-2 text-xs">
+        <div className="text-[11px] font-semibold text-orange-700">보강유형</div>
+        <select
+          value={scheduleMakeupType}
+          onChange={(e) => {
+            const nextType = e.target.value as ScheduleMakeupType
+            setScheduleMakeupType(nextType)
+            setIsMakeupSchedule(nextType !== 'none')
+            setMakeupAbsentDate('')
+            setScheduleTimeMakeupMinutes('10')
+            if (nextType === 'time') {
+              setSelectedVoucher((prev) => prev || '일반')
+            }
+          }}
+          className={inputClassName}
+        >
+          <option value="none">일반</option>
+          <option value="day">일보강</option>
+          <option value="time">시간보강</option>
+        </select>
 
-        {isMakeupSchedule && scheduleChildId ? (
+        {scheduleMakeupType !== 'none' && scheduleChildId ? (
           <div className="space-y-1.5">
             <div className="text-[11px] font-semibold text-orange-700">결석날짜 선택</div>
             <select
@@ -1019,12 +1247,15 @@ export default function EmployeePage() {
               onChange={(e) => setMakeupAbsentDate(e.target.value)}
               className={inputClassName}
             >
-              <option value="">없음</option>
-              {makeupAbsentDateOptions.map((date) => (
-                <option key={date} value={date}>
-                  {date}
-                </option>
-              ))}
+              <option value="">결석날짜 선택</option>
+              {makeupAbsentDateOptions.map((date) => {
+                const progress = scheduleMakeupAbsentProgressItems.find((row) => row.absent_date === date)
+                return (
+                  <option key={date} value={date}>
+                    {date}{progress?.teacher_name ? ` (${progress.teacher_name})` : ''}
+                  </option>
+                )
+              })}
             </select>
             {makeupAbsentDateOptions.length === 0 ? (
               <div className="text-[11px] text-orange-600">
@@ -1033,7 +1264,34 @@ export default function EmployeePage() {
             ) : null}
           </div>
         ) : null}
-      </>
+
+        {scheduleMakeupType === 'time' && scheduleChildId ? (
+          <div className="space-y-1.5">
+            <div className="text-[11px] font-semibold text-orange-700">보강시간</div>
+            <select
+              value={scheduleTimeMakeupMinutes}
+              onChange={(e) => setScheduleTimeMakeupMinutes(e.target.value)}
+              className={inputClassName}
+              disabled={scheduleAvailableTimeMakeupMinutes.length === 0}
+            >
+              {scheduleAvailableTimeMakeupMinutes.length === 0 ? (
+                <option value="">남은 보강시간 없음</option>
+              ) : (
+                scheduleAvailableTimeMakeupMinutes.map((minute) => (
+                  <option key={minute} value={String(minute)}>
+                    {minute}분
+                  </option>
+                ))
+              )}
+            </select>
+            {selectedScheduleMakeupProgress ? (
+              <div className="text-[11px] text-orange-700">
+                {selectedScheduleMakeupProgress.teacher_name ? `담당 ${selectedScheduleMakeupProgress.teacher_name} / ` : ''}진행 {selectedScheduleMakeupProgress.completed_minutes}/{selectedScheduleMakeupProgress.required_minutes}분 / 남음 {selectedScheduleMakeupProgress.remaining_minutes}분
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
     )
   }
 
@@ -1045,6 +1303,8 @@ export default function EmployeePage() {
     setSelectedVoucher('')
     setScheduleMemo('')
     setIsMakeupSchedule(false)
+    setScheduleMakeupType('none')
+    setScheduleTimeMakeupMinutes('10')
     setMakeupAbsentDate('')
     setIsGroupLesson(false)
     setGroupName('')
@@ -1067,6 +1327,10 @@ export default function EmployeePage() {
       const minute = Number(selectedMinute)
 
       if (isGroupLesson) {
+        if (scheduleMakeupType === 'time') {
+          setMessage('시간보강은 개인수업으로 학생 1명만 선택해서 저장하세요.')
+          return
+        }
         if (selectedGroupChildIds.length === 0) {
           setMessage('그룹수업 학생을 1명 이상 선택하세요.')
           return
@@ -1108,6 +1372,92 @@ export default function EmployeePage() {
           setMessage('학생을 선택하세요.')
           return
         }
+
+        if (scheduleMakeupType === 'time') {
+          if (!makeupAbsentDate) {
+            setMessage('시간보강할 결석날짜를 선택하세요.')
+            return
+          }
+
+          const minutes = Number(scheduleTimeMakeupMinutes)
+          if (!Number.isFinite(minutes) || minutes <= 0) {
+            setMessage('시간보강 시간을 선택하세요.')
+            return
+          }
+
+          const progress = scheduleMakeupAbsentProgressItems.find((row) => row.absent_date === makeupAbsentDate)
+          if (!progress) {
+            setMessage('이미 보강이 완료되었거나 선택할 수 없는 결석날짜입니다.')
+            return
+          }
+          if (minutes > progress.remaining_minutes) {
+            setMessage(`남은 시간은 ${progress.remaining_minutes}분입니다. ${progress.remaining_minutes}분 이하로 선택하세요.`)
+            return
+          }
+
+          const cleanMemo = scheduleMemo.trim()
+          const timeMakeupNote = [`[시간보강:${minutes}분]`, `[결석일:${makeupAbsentDate}]`, `[담당:${staff?.name ?? user.name}]`, cleanMemo]
+            .filter(Boolean)
+            .join(' ')
+
+          const timeMakeupPayload = {
+            date: dateStr,
+            time_slot: hourSlot,
+            minute_slot: minute,
+            teacher_id: Number(user.id),
+            teacher_name: staff?.name ?? user.name,
+            child_id: Number(scheduleChildId),
+            voucher_type: '시간보강',
+            note: timeMakeupNote,
+            is_active: true,
+            is_group: false,
+            group_id: null,
+            group_name: null,
+          }
+
+          if (editingEntryId) {
+            const oldEntry = scheduleRows.find((row) => row.id === editingEntryId)
+            if (oldEntry && isTimeMakeupScheduleRow(oldEntry)) {
+              const oldAbsentDate = parseMakeupAbsentDate(oldEntry.note)
+              const oldMinutes = Number(parseTimeMakeupMinutes(oldEntry.note) || 0)
+              if (oldEntry.child_id && oldAbsentDate && oldMinutes > 0) {
+                const { error: oldTimeMakeupDeleteError } = await supabase
+                  .from('makeup_time_logs')
+                  .delete()
+                  .eq('child_id', Number(oldEntry.child_id))
+                  .eq('absent_date', oldAbsentDate)
+                  .eq('makeup_date', oldEntry.date)
+                  .eq('minutes', oldMinutes)
+                if (oldTimeMakeupDeleteError) throw oldTimeMakeupDeleteError
+              }
+            }
+
+            const { error: scheduleError } = await supabase
+              .from('schedule_entries')
+              .update(timeMakeupPayload)
+              .eq('id', editingEntryId)
+            if (scheduleError) throw scheduleError
+          } else {
+            const { error: scheduleError } = await supabase.from('schedule_entries').insert(timeMakeupPayload)
+            if (scheduleError) throw scheduleError
+          }
+
+          const { error: timeMakeupError } = await supabase.from('makeup_time_logs').insert({
+            child_id: Number(scheduleChildId),
+            absent_date: makeupAbsentDate,
+            makeup_date: dateStr,
+            minutes,
+            note: cleanMemo || null,
+          })
+
+          if (timeMakeupError) throw timeMakeupError
+
+          resetScheduleEditor()
+          await Promise.all([loadSchedules(user.id), loadMakeupSchedules(user.id), loadClassLogs(user.id), loadMakeupAbsentCandidates(Number(scheduleChildId))])
+          setMessage(`시간표에 시간보강 ${minutes}분이 저장되었습니다. 출석/보강 처리 완료 시 미보강 시간이 차감됩니다.`)
+          return
+        }
+
         if (!selectedVoucher) {
           setMessage('바우처를 선택하세요.')
           return
@@ -1120,7 +1470,7 @@ export default function EmployeePage() {
               child_id: Number(scheduleChildId),
               minute_slot: minute,
               voucher_type: selectedVoucher,
-              note: buildScheduleNote(scheduleMemo, isMakeupSchedule, makeupAbsentDate),
+              note: buildScheduleNote(scheduleMemo, scheduleMakeupType === 'day', makeupAbsentDate, staff?.name ?? user.name),
               is_group: false,
               group_id: null,
               group_name: null,
@@ -1137,7 +1487,7 @@ export default function EmployeePage() {
             teacher_name: staff?.name ?? user.name,
             child_id: Number(scheduleChildId),
             voucher_type: selectedVoucher,
-            note: buildScheduleNote(scheduleMemo, isMakeupSchedule, makeupAbsentDate),
+            note: buildScheduleNote(scheduleMemo, scheduleMakeupType === 'day', makeupAbsentDate, staff?.name ?? user.name),
             is_active: true,
             is_group: false,
             group_id: null,
@@ -1149,7 +1499,7 @@ export default function EmployeePage() {
       }
 
       resetScheduleEditor()
-      await Promise.all([loadSchedules(user.id), loadMakeupSchedules(user.id)])
+      await Promise.all([loadSchedules(user.id), loadMakeupSchedules(user.id), loadClassLogs(user.id)])
       setMessage('시간표가 저장되었습니다.')
     } catch (err: any) {
       setMessage(err?.message ?? '시간표 저장 실패')
@@ -1195,6 +1545,23 @@ export default function EmployeePage() {
 
     await deleteClassLogsForScheduleRow(row)
 
+    if (isTimeMakeupScheduleRow(row)) {
+      const absentDate = parseMakeupAbsentDate(row.note)
+      const minutes = Number(parseTimeMakeupMinutes(row.note) || 0)
+
+      if (row.child_id && absentDate && minutes > 0) {
+        const { error: timeMakeupDeleteError } = await supabase
+          .from('makeup_time_logs')
+          .delete()
+          .eq('child_id', Number(row.child_id))
+          .eq('absent_date', absentDate)
+          .eq('makeup_date', row.date)
+          .eq('minutes', minutes)
+
+        if (timeMakeupDeleteError) throw timeMakeupDeleteError
+      }
+    }
+
     const { error } = await supabase
       .from('schedule_entries')
       .delete()
@@ -1218,7 +1585,7 @@ export default function EmployeePage() {
 
       await deleteScheduleRowOnly(targetRow)
 
-      await Promise.all([loadSchedules(user.id), loadMakeupSchedules(user.id)])
+      await Promise.all([loadSchedules(user.id), loadMakeupSchedules(user.id), loadClassLogs(user.id)])
       setMessage('선택한 일정 row 1건과 연결된 출결 기록이 DB에서 삭제되었습니다.')
     } catch (err: any) {
       setMessage(err?.message ?? '삭제 실패')
@@ -1236,7 +1603,7 @@ export default function EmployeePage() {
 
       await deleteScheduleRowOnly(row)
 
-      await Promise.all([loadSchedules(user.id), loadMakeupSchedules(user.id)])
+      await Promise.all([loadSchedules(user.id), loadMakeupSchedules(user.id), loadClassLogs(user.id)])
       setMessage('선택한 일정 row 1건과 연결된 출결 기록이 DB에서 삭제되었습니다.')
     } catch (err: any) {
       setMessage(err?.message ?? '삭제 실패')
@@ -1292,7 +1659,7 @@ export default function EmployeePage() {
         if (error) throw error
       }
 
-      if ((recordModal.status === 'absent' || recordModal.status === 'same_day_absent') && recordMakeupDate) {
+      if (recordModal.status === 'absent' && recordMakeupDate) {
         const { error: makeupScheduleError } = await supabase.from('schedule_entries').insert({
           date: recordMakeupDate,
           time_slot: recordMakeupHour,
@@ -1366,7 +1733,7 @@ export default function EmployeePage() {
       return 'bg-red-50'
     }
 
-    if (isMakeupScheduleNote(item.note)) {
+    if (isMakeupScheduleNote(item.note) || isTimeMakeupScheduleNote(item.note)) {
       return 'bg-orange-50'
     }
 
@@ -1385,7 +1752,7 @@ export default function EmployeePage() {
     return (
       <div
         key={item.key}
-        className={`rounded-lg border px-1.5 py-1.5 text-[10px] shadow-sm transition ${isMakeupScheduleNote(item.note) ? 'border-orange-300 ring-1 ring-orange-100' : 'border-slate-200'} ${getScheduleCardBgClass(item, classLogRows)}`}
+        className={`rounded-lg border px-1.5 py-1.5 text-[10px] shadow-sm transition ${isMakeupScheduleNote(item.note) || isTimeMakeupScheduleNote(item.note) ? 'border-orange-300 ring-1 ring-orange-100' : 'border-slate-200'} ${getScheduleCardBgClass(item, classLogRows)}`}
       >
         {isEditing ? (
           <div className="space-y-2">
@@ -1399,6 +1766,8 @@ export default function EmployeePage() {
                   setScheduleChildId('')
                   setSelectedGroupChildIds([])
                   setIsMakeupSchedule(false)
+                  setScheduleMakeupType('none')
+                  setScheduleTimeMakeupMinutes('10')
                   setMakeupAbsentDate('')
                 }}
               />
@@ -1533,9 +1902,13 @@ export default function EmployeePage() {
                   그룹
                 </span>
               ) : null}
-              {isMakeupScheduleNote(item.note) ? (
+              {isTimeMakeupScheduleNote(item.note) ? (
+                <span className="rounded-full border border-amber-200 bg-amber-50 px-[2px] py-0.5 text-[11px] font-semibold text-amber-700">
+                  시간보강
+                </span>
+              ) : isMakeupScheduleNote(item.note) ? (
                 <span className="rounded-full border border-orange-200 bg-orange-50 px-[2px] py-0.5 text-[11px] font-semibold text-orange-700">
-                  보강
+                  일보강
                 </span>
               ) : null}
             </div>
@@ -1545,9 +1918,11 @@ export default function EmployeePage() {
                 <span title={stripSystemScheduleTags(item.note)}>메모: {compactScheduleName(stripSystemScheduleTags(item.note), 14)}</span>
               </div>
             ) : null}
-            {isMakeupScheduleNote(item.note) && parseMakeupAbsentDate(item.note) ? (
+            {(isMakeupScheduleNote(item.note) || isTimeMakeupScheduleNote(item.note)) && parseMakeupAbsentDate(item.note) ? (
               <div className="mt-0 text-[11px] font-semibold text-orange-700">
                 결석일: {parseMakeupAbsentDate(item.note)}
+                {parseMakeupTeacherName(item.note) ? ` / ${parseMakeupTeacherName(item.note)}` : ''}
+                {parseTimeMakeupMinutes(item.note) ? ` / ${parseTimeMakeupMinutes(item.note)}분` : ''}
               </div>
             ) : null}
 
@@ -1641,6 +2016,8 @@ export default function EmployeePage() {
                           setScheduleChildId('')
                           setSelectedGroupChildIds([])
                           setIsMakeupSchedule(false)
+                          setScheduleMakeupType('none')
+                          setScheduleTimeMakeupMinutes('10')
                           setMakeupAbsentDate('')
                         }}
                       />
@@ -1835,12 +2212,16 @@ export default function EmployeePage() {
             메모: {displayMemo}
           </div>
         ) : null}
-        {isMakeupScheduleNote(row.note) ? (
+        {isMakeupScheduleNote(row.note) || isTimeMakeupScheduleNote(row.note) ? (
           <div className="mt-2 flex flex-wrap gap-1">
-            <span className="rounded-full border border-orange-200 bg-orange-100 px-2 py-1 text-xs font-semibold text-orange-700">보강</span>
+            <span className="rounded-full border border-orange-200 bg-orange-100 px-2 py-1 text-xs font-semibold text-orange-700">
+              {isTimeMakeupScheduleNote(row.note) ? '시간보강' : '일보강'}
+            </span>
             {parseMakeupAbsentDate(row.note) ? (
               <span className="rounded-full border border-orange-200 bg-white px-2 py-1 text-xs text-orange-700">
                 결석일: {parseMakeupAbsentDate(row.note)}
+                {parseMakeupTeacherName(row.note) ? ` / ${parseMakeupTeacherName(row.note)}` : ''}
+                {parseTimeMakeupMinutes(row.note) ? ` / ${parseTimeMakeupMinutes(row.note)}분` : ''}
               </span>
             ) : null}
           </div>
@@ -1911,6 +2292,36 @@ export default function EmployeePage() {
           >
             주간보기
           </button>
+
+          <div className="relative">
+            <input
+              value={studentInfoSearch}
+              onChange={(e) => setStudentInfoSearch(e.target.value)}
+              placeholder="학생정보 확인"
+              className="w-[180px] rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold shadow-sm"
+            />
+            {studentInfoSearch.trim() ? (
+              <div className="absolute left-0 top-12 z-50 w-[220px] rounded-xl border bg-white p-2 shadow-xl">
+                {filteredStudentInfoChildren.length === 0 ? (
+                  <div className="p-2 text-sm text-slate-500">검색 결과 없음</div>
+                ) : (
+                  filteredStudentInfoChildren.map((child) => (
+                    <button
+                      key={child.id}
+                      type="button"
+                      onClick={() => {
+                        openChildInfoModal(child)
+                        setStudentInfoSearch('')
+                      }}
+                      className="block w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-slate-100"
+                    >
+                      {getDisplayName(child)}
+                    </button>
+                  ))
+                )}
+              </div>
+            ) : null}
+          </div>
         </div>
 
         {message ? <p className="mb-4 text-sm text-red-500">{message}</p> : null}
@@ -2025,6 +2436,8 @@ export default function EmployeePage() {
                                       setScheduleChildId('')
                                       setSelectedGroupChildIds([])
                                       setIsMakeupSchedule(false)
+                                      setScheduleMakeupType('none')
+                                      setScheduleTimeMakeupMinutes('10')
                                       setMakeupAbsentDate('')
                                     }}
                                   />
@@ -2295,7 +2708,7 @@ export default function EmployeePage() {
                 ))}
               </select>
 
-              {recordModal.status === 'absent' || recordModal.status === 'same_day_absent' ? (
+              {recordModal.status === 'absent' ? (
                 <div className="mb-4 rounded-xl border border-orange-200 bg-orange-50 p-3">
                   <div className="mb-2 text-sm font-bold text-orange-700">보강 일정 입력</div>
                   <div className="mb-2 text-xs text-orange-700">선택하지 않으면 없음으로 저장됩니다.</div>
@@ -2397,9 +2810,8 @@ export default function EmployeePage() {
                   <div><span className="font-medium">출석:</span> {childInfoDates.attended || '-'}</div>
                   <div><span className="font-medium">보강:</span> {childInfoDates.makeup || '-'}</div>
                   <div><span className="font-medium">결석/보강:</span> {childInfoDates.absent || '-'}</div>
-                  <div><span className="font-medium">당일결석:</span> {childInfoDates.sameDayAbsent || '-'}</div>
                   <div><span className="font-medium">그룹출석/보강:</span> {childInfoDates.groupAttended || '-'}</div>
-                  <div><span className="font-medium">그룹결석/당일결석:</span> {childInfoDates.groupAbsent || '-'}</div>
+                  <div><span className="font-medium">그룹결석:</span> {childInfoDates.groupAbsent || '-'}</div>
                   <div className="mt-3 rounded-xl border border-rose-100 bg-rose-50 px-3 py-2">
                     <span className="font-semibold text-rose-700">미보강결석:</span>{' '}
                     <span className="text-rose-700">{childInfoDates.unrecoveredAbsent || '-'}</span>
