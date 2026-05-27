@@ -2068,6 +2068,28 @@ export default function AdminPage() {
     setRegularGroupChildInputs(next)
   }
 
+
+  async function loadClassLogsForScheduleRows(scheduleRows: ScheduleEntryRow[]) {
+    const activeRows = scheduleRows.filter((row) => row.is_active)
+    if (activeRows.length === 0) return [] as ClassLogRow[]
+
+    const dates = Array.from(new Set(activeRows.map((row) => row.date).filter(Boolean)))
+    const childIds = Array.from(new Set(activeRows.map((row) => Number(row.child_id)).filter((value) => Number.isFinite(value) && value > 0)))
+    const staffIds = Array.from(new Set(activeRows.map((row) => Number(row.teacher_id)).filter((value) => Number.isFinite(value) && value > 0)))
+
+    if (dates.length === 0 || childIds.length === 0 || staffIds.length === 0) return [] as ClassLogRow[]
+
+    const { data, error } = await supabase
+      .from('class_logs')
+      .select('*')
+      .in('class_date', dates)
+      .in('child_id', childIds)
+      .in('staff_id', staffIds)
+
+    if (error) throw error
+    return (data ?? []) as ClassLogRow[]
+  }
+
   async function handleSaveRegularClass() {
     try {
       if (!regularForm.childId) {
@@ -2149,15 +2171,16 @@ export default function AdminPage() {
         .from('schedule_entries')
         .select('*')
         .like('note', `${buildRegularNoteTag(Number(ruleId))}%`)
-        .gte('date', regularForm.startDate)
-        .lte('date', endDate)
         .eq('is_active', true)
 
       if (existingError) throw existingError
 
+      const existingScheduleRows = (existingRows ?? []) as ScheduleEntryRow[]
+      const existingClassLogs = await loadClassLogsForScheduleRows(existingScheduleRows)
+
       const { loggedRows, unloggedRows } = splitLoggedSchedules(
-        (existingRows ?? []) as ScheduleEntryRow[],
-        classLogs
+        existingScheduleRows,
+        existingClassLogs
       )
 
       if (unloggedRows.length > 0) {
@@ -2339,9 +2362,12 @@ export default function AdminPage() {
 
       if (existingError) throw existingError
 
+      const existingScheduleRows = (existingRows ?? []) as ScheduleEntryRow[]
+      const existingClassLogs = await loadClassLogsForScheduleRows(existingScheduleRows)
+
       const { loggedRows, unloggedRows } = splitLoggedSchedules(
-        (existingRows ?? []) as ScheduleEntryRow[],
-        classLogs
+        existingScheduleRows,
+        existingClassLogs
       )
 
       if (unloggedRows.length > 0) {
