@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '@/lib/supabase'
+import { saveScheduleRows } from '@/lib/saveScheduleRows'
+import { cancelOccurrences } from '@/lib/cancelOccurrences'
 
 type StaffRole = 'admin' | 'employee'
 
@@ -338,130 +340,39 @@ export default function AdminStaffWeekPage() {
     }
   }
 
-  async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: number) {
-    try {
-      const staff = employeeStaffs.find((s) => Number(s.id) === Number(staffId))
-      const minute = Number(selectedMinute)
-
-      if (isGroupLesson) {
-        if (selectedGroupChildIds.length === 0) {
-          setMessage('그룹수업 학생을 1명 이상 선택하세요.')
-          return
-        }
-        if (selectedGroupChildIds.length > 8) {
-          setMessage('그룹수업은 최대 8명까지 가능합니다.')
-          return
-        }
-
-        const groupId =
-          editingGroupId || (typeof crypto !== 'undefined' ? crypto.randomUUID() : `group-${Date.now()}`)
-
-        if (editingGroupId) {
-          const { error: clearError } = await supabase
-            .from('schedule_entries')
-            .update({ is_active: false })
-            .eq('group_id', editingGroupId)
-          if (clearError) throw clearError
-        }
-
-        const rows = selectedGroupChildIds.map((childId) => ({
-          date: dateStr,
-          time_slot: hourSlot,
-          room_number: 1,
-          teacher_id: Number(staffId),
-          teacher_name: staff?.name ?? '',
-          class_type: 'group',
-          child_id: Number(childId),
-          voucher_type: '그룹수업',
-          status: 'scheduled',
-          minute_slot: minute,
-          is_active: true,
-          note: scheduleMemo || null,
-          is_group: true,
-          group_id: groupId,
-          group_name: groupName || '그룹수업',
-        }))
-
-        const { error } = await supabase.from('schedule_entries').insert(rows)
-        if (error) throw error
-      } else {
-        if (!scheduleChildId) {
-          setMessage('학생을 선택하세요.')
-          return
-        }
-        if (!selectedVoucher) {
-          setMessage('바우처를 선택하세요.')
-          return
-        }
-
-        const payload = {
-          child_id: Number(scheduleChildId),
-          minute_slot: minute,
-          voucher_type: selectedVoucher,
-          note: scheduleMemo || null,
-          is_group: false,
-          group_id: null,
-          group_name: null,
-          class_type: 'individual',
-          room_number: 1,
-          status: 'scheduled',
-        }
-
-        if (editingEntryId) {
-          const { error } = await supabase
-            .from('schedule_entries')
-            .update(payload)
-            .eq('id', editingEntryId)
-          if (error) throw error
-        } else {
-          const { error } = await supabase.from('schedule_entries').insert({
-            date: dateStr,
-            time_slot: hourSlot,
-            teacher_id: Number(staffId),
-            teacher_name: staff?.name ?? '',
-            is_active: true,
-            ...payload,
-          })
-          if (error) throw error
-        }
-      }
-
-      resetScheduleEditor()
-      await loadSchedules()
-      setMessage('시간표가 저장되었습니다.')
-    } catch (err: any) {
-      setMessage(err?.message ?? '시간표 저장 실패')
-    }
-  }
+  async function handleSaveSchedule(dateStr:string,hourSlot:string,staffId:number) {
+ try {
+  
+  const replaceRows=editingGroupId ? allScheduleEntries.filter(row=>row.is_active && row.group_id===editingGroupId && row.date===dateStr && row.time_slot===hourSlot && Number(row.teacher_id)===staffId) : allScheduleEntries.filter(row=>row.id===editingEntryId)
+  if(replaceRows.some(row=>/^\[정기(수업|그룹):/.test(row.note??''))){throw new Error('정기수업 변경은 정기수업 관리에서 적용일을 지정하세요.')}
+  if(replaceRows.some(row=>/보강/.test(row.note??'') || row.status==='makeup'))throw new Error('보강 일정은 관리자 메인 시간표에서 수정하세요.')
+  const minute=Number(selectedMinute)
+  if(!Number.isInteger(minute)||minute<0||minute>50||minute%10!==0)throw new Error('시작 분을 확인하세요.')
+  let note=scheduleMemo || null
+  let absentLogId:number|null=null
+  
+  const childIds=isGroupLesson?Array.from(new Set(selectedGroupChildIds.map(Number))):[Number(scheduleChildId)]
+  if(!childIds.length||childIds.length>8||childIds.some(id=>!id))throw new Error('학생을 선택하세요. 그룹은 최대 8명입니다.')
+  if(!isGroupLesson&&!selectedVoucher)throw new Error('바우처를 선택하세요.')
+  const groupId=isGroupLesson?(editingGroupId||crypto.randomUUID()):null
+  const rows=childIds.map(childId=>({date:dateStr,time_slot:hourSlot,minute_slot:minute,room_number:1,teacher_id:staffId,child_id:childId,
+   voucher_type:isGroupLesson?'그룹수업':selectedVoucher,
+   status:'scheduled',note,is_active:true,is_group:isGroupLesson,group_id:groupId,group_name:isGroupLesson?(groupName||'그룹수업'):null,absent_class_log_id:absentLogId}))
+  await saveScheduleRows(rows,replaceRows.map(row=>row.id))
+  await loadSchedules()
+  resetScheduleEditor()
+  setMessage('일정이 저장되었습니다. 보강은 출결 완료 시 차감됩니다.')
+ }catch(err:any){setMessage(err.message||'일정 저장 실패')}
+}
 
   async function handleDeleteSchedule(item: DisplayScheduleItem) {
-    try {
-      const ok = window.confirm('이 시간표를 삭제할까요?')
-      if (!ok) return
-
-      if (item.isGroup && item.groupId) {
-        const { error } = await supabase
-          .from('schedule_entries')
-          .update({ is_active: false })
-          .eq('group_id', item.groupId)
-        if (error) throw error
-      } else {
-        const targetId = item.rows[0]?.id
-        if (!targetId) return
-
-        const { error } = await supabase
-          .from('schedule_entries')
-          .update({ is_active: false })
-          .eq('id', targetId)
-        if (error) throw error
-      }
-
-      await loadSchedules()
-      setMessage('시간표가 삭제되었습니다.')
-    } catch (err: any) {
-      setMessage(err?.message ?? '삭제 실패')
-    }
-  }
+ try {
+  if (!window.confirm('이 화면에서 선택한 회차만 취소할까요? 출결 기록은 보존됩니다.')) return
+  await cancelOccurrences(item.rows.map(row=>row.id))
+  await loadSchedules()
+  setMessage('선택한 회차를 취소했습니다.')
+ } catch(err:any) {setMessage(err.message || '취소 실패')}
+}
 
   function renderScheduleCard(item: DisplayScheduleItem, dateStr: string, staffId: number) {
     const firstChild = children.find((c) => c.id === Number(item.rows[0]?.child_id))
@@ -661,7 +572,7 @@ export default function AdminStaffWeekPage() {
 
         <div className="space-y-3">
           {hourSlots.map((hourSlot) => {
-            const items = selectedStaff ? buildDisplayItems(dateStr, hourSlot, Number(selectedStaff.id)) : []
+            const items = selectedStaff ? buildDisplayItems(dateStr, hourSlot, Number(selectedStaff?.id)) : []
             const isEditing =
               editingCell?.date === dateStr &&
               editingCell?.hour === hourSlot &&
@@ -770,7 +681,7 @@ export default function AdminStaffWeekPage() {
 
                     <div className="flex gap-2">
                       <button
-                        onClick={() => handleSaveSchedule(dateStr, hourSlot, Number(selectedStaff.id))}
+                        onClick={() => handleSaveSchedule(dateStr, hourSlot, Number(selectedStaff?.id))}
                         className="flex-1 rounded bg-indigo-600 px-3 py-2 text-sm text-white"
                       >
                         저장
@@ -789,7 +700,7 @@ export default function AdminStaffWeekPage() {
                       <button
                         type="button"
                         onClick={() => {
-                          setEditingCell({ date: dateStr, hour: hourSlot, staffId: Number(selectedStaff.id) })
+                          setEditingCell({ date: dateStr, hour: hourSlot, staffId: Number(selectedStaff?.id) })
                           setEditingEntryId(null)
                           setEditingGroupId(null)
                           setScheduleChildId('')
@@ -811,7 +722,7 @@ export default function AdminStaffWeekPage() {
                       <div className="text-xs text-slate-400">등록 없음</div>
                     ) : (
                       <div className="space-y-2">
-                        {items.map((item) => renderScheduleCard(item, dateStr, Number(selectedStaff.id)))}
+                        {items.map((item) => renderScheduleCard(item, dateStr, Number(selectedStaff?.id)))}
                       </div>
                     )}
                   </>
@@ -929,11 +840,11 @@ export default function AdminStaffWeekPage() {
 
                       {weekDates.map((date) => {
                         const dateStr = toDateString(date)
-                        const items = buildDisplayItems(dateStr, hourSlot, Number(selectedStaff.id))
+                        const items = buildDisplayItems(dateStr, hourSlot, Number(selectedStaff?.id))
                         const isEditing =
                           editingCell?.date === dateStr &&
                           editingCell?.hour === hourSlot &&
-                          Number(editingCell?.staffId) === Number(selectedStaff.id)
+                          Number(editingCell?.staffId) === Number(selectedStaff?.id)
 
                         return (
                           <td
@@ -1049,7 +960,7 @@ export default function AdminStaffWeekPage() {
                                 <div className="flex gap-1">
                                   <button
                                     onClick={() =>
-                                      handleSaveSchedule(dateStr, hourSlot, Number(selectedStaff.id))
+                                      handleSaveSchedule(dateStr, hourSlot, Number(selectedStaff?.id))
                                     }
                                     className="flex-1 rounded bg-indigo-600 px-2 py-1 text-xs text-white"
                                   >
@@ -1071,7 +982,7 @@ export default function AdminStaffWeekPage() {
                                     setEditingCell({
                                       date: dateStr,
                                       hour: hourSlot,
-                                      staffId: Number(selectedStaff.id),
+                                      staffId: Number(selectedStaff?.id),
                                     })
                                     setEditingEntryId(null)
                                     setEditingGroupId(null)
@@ -1090,7 +1001,7 @@ export default function AdminStaffWeekPage() {
                                 </button>
 
                                 {items.map((item) =>
-                                  renderScheduleCard(item, dateStr, Number(selectedStaff.id))
+                                  renderScheduleCard(item, dateStr, Number(selectedStaff?.id))
                                 )}
                               </div>
                             )}
