@@ -2,6 +2,13 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '@/lib/supabase'
+import { recordAttendance } from '@/lib/recordAttendance'
+import { saveScheduleRows } from '@/lib/saveScheduleRows'
+import { validAttendance, latestLog, makeupKind, absentDate, plannedMinutes, isCompleted, makeupBalances, balanceText, matchesSchedule } from '@/lib/attendanceReport'
+import { loadReportHistory, fetchAllRows } from '@/lib/reportData'
+import { cancelOccurrences } from '@/lib/cancelOccurrences'
+import { saveRegularChange, askEffectiveDate } from '@/lib/regularClient'
+import { MAKEUP_REQUIRED_MINUTES, MAKEUP_MINUTE_OPTIONS } from '@/lib/makeupPolicy'
 
 type MainTab = 'schedule' | 'children' | 'staff' | 'summary' | 'regular'
 type ViewMode = 'all' | 'staff' | 'daily' | 'studentInfo'
@@ -35,6 +42,8 @@ type ChildRow = {
 }
 
 type ScheduleEntryRow = {
+  regular_credit_month?: string | null
+  absent_class_log_id?: number | null
   id: string
   date: string
   time_slot: string
@@ -57,6 +66,7 @@ type ScheduleEntryRow = {
 }
 
 type ClassLogRow = {
+  schedule_entry_id?: string | null
   id: number
   staff_id: number
   child_id: number
@@ -83,6 +93,10 @@ type MakeupTimeLogRow = {
 }
 
 type MakeupAbsentProgressRow = {
+  absent_log_id?: number
+  used_count?: number
+  reserved_minutes?: number
+  ambiguous?: boolean
   absent_date: string
   teacher_name?: string
   required_minutes: number
@@ -266,7 +280,7 @@ type WeeklyAttendanceRow = {
 }
 
 const VOUCHER_OPTIONS = ['일반', '디딤', '아청심1', '아청심2', '드림스타트', '배움'] as const
-const MAKEUP_REQUIRED_MINUTES = 40
+
 
 function toDateString(date: Date) {
   const y = date.getFullYear()
@@ -410,9 +424,7 @@ function isCompletedTimeMakeupAttendanceStatus(status?: AttendanceStatus | null)
   return status === 'attended' || status === 'makeup'
 }
 
-function findClassLogForScheduleRow(row: ScheduleEntryRow, logs: ClassLogRow[]) {
-  return logs.find((log) => isSameAttendanceLog(row, log)) ?? null
-}
+function findClassLogForScheduleRow(row: ScheduleEntryRow, logs: ClassLogRow[]) { return (latestLog(row,logs) as ClassLogRow | undefined) ?? null }
 
 function buildCompletedTimeMakeupMinuteMap(rows: ScheduleEntryRow[], logs: ClassLogRow[]) {
   const minuteMap = new Map<string, number>()
@@ -455,15 +467,7 @@ function downloadCsvFile(
   URL.revokeObjectURL(url)
 }
 
-function buildClassTimestamp(
-  date: string,
-  hourSlot: string,
-  minute: string | number | null | undefined
-) {
-  const hh = hourSlot.slice(0, 2)
-  const mm = String(Number(minute ?? 0)).padStart(2, '0')
-  return `${date}T${hh}:${mm}:00+09:00`
-}
+
 
 function toMonthDayText(value: string) {
   const match = value.match(/^(\d{4})-(\d{2})-(\d{2})$/)
@@ -471,12 +475,7 @@ function toMonthDayText(value: string) {
   return `${match[2]}-${match[3]}`
 }
 
-function uniqueDateList(values: string[]) {
-  return Array.from(new Set(values.filter(Boolean)))
-    .sort()
-    .map(toMonthDayText)
-    .join(', ')
-}
+
 
 function uniqueAbsentDateListWithMakeupDate(values: string[], makeupDateMap: Map<string, string[]>) {
   return Array.from(new Set(values.filter(Boolean)))
@@ -519,17 +518,18 @@ function stripMakeupTags(note?: string | null) {
   if (!note) return ''
   return note
     .replace(/\[보강\]/g, '')
+    .replace(/\[결석기록:\d+\]/g, '')
     .replace(/\s*\[결석일:[^\]]+\]\s*/g, ' ')
     .replace(/\s*\[담당:[^\]]+\]\s*/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
 }
 
-function buildScheduleNoteWithMakeup(baseNote: string, isMakeup: boolean, absentDate: string) {
+function buildScheduleNoteWithMakeup(baseNote: string, isMakeup: boolean, absentDate: string, absentLogId?: number) {
   const cleanNote = stripMakeupTags(baseNote)
   if (!isMakeup) return cleanNote || null
 
-  const tags = [MAKEUP_NOTE_TAG, `${MAKEUP_ABSENT_DATE_PREFIX}${absentDate || '없음'}]`]
+  const tags = [MAKEUP_NOTE_TAG, `${MAKEUP_ABSENT_DATE_PREFIX}${absentDate || '없음'}]`, ...(absentLogId ? [`[결석기록:${absentLogId}]`] : [])]
   return [tags.join(' '), cleanNote].filter(Boolean).join(' ').trim()
 }
 
@@ -582,14 +582,7 @@ function getCurrentMonthKey() {
   return toDateString(new Date()).slice(0, 7)
 }
 
-function getMonthRange(monthKey: string) {
-  const safeMonth = /^\d{4}-\d{2}$/.test(monthKey) ? monthKey : getCurrentMonthKey()
-  const start = `${safeMonth}-01`
-  const endDate = new Date(start)
-  endDate.setMonth(endDate.getMonth() + 1)
-  endDate.setDate(0)
-  return { start, end: toDateString(endDate) }
-}
+
 
 function getWeekOfMonth(dateString: string) {
   const day = Number(dateString.slice(8, 10))
@@ -604,38 +597,18 @@ function getWeeksInMonth(monthKey: string) {
   return Math.ceil(firstDay.getDate() / 7)
 }
 
-function uniqueSortedMonthDayArray(values: string[]) {
-  return Array.from(new Set(values.filter(Boolean).map(toMonthDayDate))).sort()
-}
+
 
 
 function getWeekdayLabel(weekday: number) {
   return ['일', '월', '화', '수', '목', '금', '토'][weekday] ?? ''
 }
 
-function getDateRangeMatchingWeekday(startDate: string, endDate: string, weekday: number) {
-  const result: string[] = []
-  const start = new Date(startDate)
-  const end = new Date(endDate)
-  start.setHours(0, 0, 0, 0)
-  end.setHours(0, 0, 0, 0)
 
-  for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
-    if (d.getDay() === weekday) {
-      result.push(toDateString(new Date(d)))
-    }
-  }
 
-  return result
-}
 
-function buildRegularNoteTag(ruleId: number) {
-  return `[정기수업:${ruleId}]`
-}
 
-function buildRegularGroupNoteTag(ruleId: number) {
-  return `[정기그룹:${ruleId}]`
-}
+
 
 function getVoucherPrices(child: ChildRow) {
   const value = child.voucher_prices
@@ -677,83 +650,13 @@ function buildLogicalAttendanceKey(params: {
 }
 
 
-function chunkArray<T>(items: T[], size: number) {
-  const result: T[][] = []
 
-  for (let i = 0; i < items.length; i += size) {
-    result.push(items.slice(i, i + size))
-  }
 
-  return result
-}
 
-async function deleteScheduleEntriesByIds(ids: string[]) {
-  const uniqueIds = Array.from(new Set(ids.filter(Boolean)))
-  const chunks = chunkArray(uniqueIds, 200)
 
-  for (const chunk of chunks) {
-    const { error } = await supabase
-      .from('schedule_entries')
-      .delete()
-      .in('id', chunk)
 
-    if (error) throw error
-  }
-}
 
-async function deactivateScheduleEntriesByIds(ids: string[]) {
-  const uniqueIds = Array.from(new Set(ids.filter(Boolean)))
-  const chunks = chunkArray(uniqueIds, 200)
 
-  for (const chunk of chunks) {
-    const { error } = await supabase
-      .from('schedule_entries')
-      .update({ is_active: false })
-      .in('id', chunk)
-
-    if (error) throw error
-  }
-}
-
-function splitLoggedSchedules(
-  scheduleRows: ScheduleEntryRow[],
-  logs: ClassLogRow[]
-) {
-  const loggedKeySet = new Set(
-    logs
-      .map((log) => {
-        const minuteTotal = getLogMinuteTotal(log)
-        if (minuteTotal == null) return ''
-        return buildLogicalAttendanceKey({
-          classDate: log.class_date,
-          minuteTotal,
-          staffId: Number(log.staff_id),
-          childId: Number(log.child_id),
-          isGroup: Boolean(log.is_group),
-          groupId: log.group_id ?? null,
-        })
-      })
-      .filter(Boolean)
-  )
-
-  const loggedRows: ScheduleEntryRow[] = []
-  const unloggedRows: ScheduleEntryRow[] = []
-
-  scheduleRows.forEach((row) => {
-    const key = buildLogicalAttendanceKey({
-      classDate: row.date,
-      minuteTotal: getEntryMinuteTotal(row),
-      staffId: Number(row.teacher_id),
-      childId: Number(row.child_id),
-      isGroup: Boolean(row.is_group),
-      groupId: row.group_id ?? null,
-    })
-    if (loggedKeySet.has(key)) loggedRows.push(row)
-    else unloggedRows.push(row)
-  })
-
-  return { loggedRows, unloggedRows }
-}
 
 function isSameAttendanceLog(entry: ScheduleEntryRow, log: ClassLogRow) {
   const logMinute = getLogMinuteTotal(log)
@@ -1049,7 +952,9 @@ export default function AdminPage() {
   const [isScheduleMakeup, setIsScheduleMakeup] = useState(false)
   const [scheduleMakeupType, setScheduleMakeupType] = useState<ScheduleMakeupType>('none')
   const [scheduleTimeMakeupMinutes, setScheduleTimeMakeupMinutes] = useState('10')
-  const [makeupAbsentDate, setMakeupAbsentDate] = useState('')
+  const [makeupAbsentSelection, setMakeupAbsentDate] = useState('')
+  const makeupAbsentDate = makeupAbsentSelection.split('|')[0]
+  const makeupAbsentLogId = Number(makeupAbsentSelection.split('|')[1] || 0)
   const [scheduleMemo, setScheduleMemo] = useState('')
   const [isGroupLesson, setIsGroupLesson] = useState(false)
   const [groupName, setGroupName] = useState('')
@@ -1303,6 +1208,11 @@ export default function AdminPage() {
     setRegularGroupMembers((data ?? []) as RegularGroupClassMemberRow[])
   }
 
+  useEffect(() => {
+    const date = new URLSearchParams(window.location.search).get('date')
+    if(date && /^\d{4}-\d{2}-\d{2}$/.test(date)) setDailyDate(date)
+  }, [])
+
   function getScheduleQueryRange() {
     const weekStart = toDateString(weekDates[0])
     const weekEnd = toDateString(weekDates[weekDates.length - 1])
@@ -1325,21 +1235,10 @@ export default function AdminPage() {
   }
 
   async function loadSchedules() {
-    const { start, end } = getScheduleQueryRange()
-
-    const { data, error } = await supabase
-      .from('schedule_entries')
-      .select('*')
-      .gte('date', start)
-      .lte('date', end)
-      .eq('is_active', true)
-      .order('date', { ascending: true })
-      .order('time_slot', { ascending: true })
-      .order('minute_slot', { ascending: true })
-
-    if (error) throw error
-    setAllScheduleEntries((data ?? []) as ScheduleEntryRow[])
-  }
+ const {start,end}=getScheduleQueryRange()
+ const rows=await fetchAllRows<ScheduleEntryRow>('schedule_entries','date',end,{is_active:true},start)
+ setAllScheduleEntries(rows.sort((a,b)=>(a.date+a.time_slot+String(a.minute_slot??0).padStart(2,'0')).localeCompare(b.date+b.time_slot+String(b.minute_slot??0).padStart(2,'0'))))
+}
 
   async function loadMakeupSchedules() {
     const { data, error } = await supabase
@@ -1354,19 +1253,9 @@ export default function AdminPage() {
   }
 
   async function loadClassLogsForVisibleScheduleRange() {
-    const { start, end } = getScheduleQueryRange()
-
-    const { data, error } = await supabase
-      .from('class_logs')
-      .select('*')
-      .gte('class_date', start)
-      .lte('class_date', end)
-      .order('class_date', { ascending: true })
-      .order('class_time', { ascending: true })
-
-    if (error) throw error
-    setClassLogs(dedupeClassLogsByLogicalKey((data ?? []) as ClassLogRow[]))
-  }
+ const {start,end}=getScheduleQueryRange()
+ setClassLogs(await fetchAllRows<ClassLogRow>('class_logs','class_date',end,{},start))
+}
 
   async function loadMonthlyGroupPrices() {
     const { data, error } = await supabase
@@ -1424,71 +1313,21 @@ export default function AdminPage() {
     )
   }, [csvMonth])
 
-  async function loadChildInfoHistory(childId: number) {
-    try {
-      setChildInfoLoading(true)
-      const [
-        { data: logData, error: logError },
-        { data: makeupData, error: makeupError },
-        { data: timeMakeupData, error: timeMakeupError },
-      ] = await Promise.all([
-        supabase
-          .from('class_logs')
-          .select('*')
-          .eq('child_id', childId)
-          .order('class_date', { ascending: true }),
-        supabase
-          .from('schedule_entries')
-          .select('*')
-          .eq('child_id', childId)
-          .eq('is_active', true)
-          .order('date', { ascending: true }),
-        supabase
-          .from('makeup_time_logs')
-          .select('*')
-          .eq('child_id', childId)
-          .order('makeup_date', { ascending: true }),
-      ])
+  async function loadChildInfoHistory(childId:number) {
+ setChildInfoLoading(true)
+ try {
+ const [logs,rows]=await Promise.all([fetchAllRows<ClassLogRow>('class_logs',undefined,undefined,{child_id:childId}),fetchAllRows<ScheduleEntryRow>('schedule_entries',undefined,undefined,{child_id:childId})])
+ setChildInfoAllLogs(validAttendance(rows,logs));setChildInfoAllMakeupRows(rows);setChildInfoMakeupTimeLogs([])
+ }catch(err:any){setMessage(err.message);setChildInfoAllLogs([]);setChildInfoAllMakeupRows([])}finally{setChildInfoLoading(false)}
+}
 
-      if (logError) throw logError
-      if (makeupError) throw makeupError
-      if (timeMakeupError) throw timeMakeupError
-
-      setChildInfoAllLogs(dedupeClassLogsByLogicalKey((logData ?? []) as ClassLogRow[]))
-      setChildInfoAllMakeupRows((makeupData ?? []) as ScheduleEntryRow[])
-      setChildInfoMakeupTimeLogs((timeMakeupData ?? []) as MakeupTimeLogRow[])
-    } catch (err: any) {
-      setChildInfoAllLogs([])
-      setChildInfoAllMakeupRows([])
-      setChildInfoMakeupTimeLogs([])
-      setMessage(err?.message ?? '아이 출결 정보 불러오기 실패')
-    } finally {
-      setChildInfoLoading(false)
-    }
-  }
-
-  async function loadChildInfoMonthlyLogs(childId: number, monthKey: string) {
-    try {
-      setChildInfoMonthLoading(true)
-      const { start, end } = getMonthRange(monthKey)
-
-      const { data, error } = await supabase
-        .from('class_logs')
-        .select('*')
-        .eq('child_id', childId)
-        .gte('class_date', start)
-        .lte('class_date', end)
-        .order('class_date', { ascending: true })
-
-      if (error) throw error
-      setChildInfoMonthlyLogs(dedupeClassLogsByLogicalKey((data ?? []) as ClassLogRow[]))
-    } catch (err: any) {
-      setChildInfoMonthlyLogs([])
-      setMessage(err?.message ?? '선택 월 출결 정보 불러오기 실패')
-    } finally {
-      setChildInfoMonthLoading(false)
-    }
-  }
+  async function loadChildInfoMonthlyLogs(childId:number,monthKey:string) {
+ setChildInfoMonthLoading(true)
+ try {
+ const [logs,rows]=await Promise.all([fetchAllRows<ClassLogRow>('class_logs',undefined,undefined,{child_id:childId}),fetchAllRows<ScheduleEntryRow>('schedule_entries',undefined,undefined,{child_id:childId})])
+ setChildInfoMonthlyLogs(validAttendance(rows,logs).filter(l=>l.class_date.startsWith(monthKey)))
+ }catch(err:any){setMessage(err.message);setChildInfoMonthlyLogs([])}finally{setChildInfoMonthLoading(false)}
+}
 
   async function refreshOpenChildInfo() {
     const child = childInfoModal.child
@@ -1527,7 +1366,7 @@ export default function AdminPage() {
 
       setScheduleChildAllAbsentLogs(dedupeClassLogsByLogicalKey((classLogResult.data ?? []) as ClassLogRow[]))
       setScheduleChildMakeupTimeLogs((timeMakeupLogResult.data ?? []) as MakeupTimeLogRow[])
-      setScheduleChildTimeMakeupRows(((timeMakeupScheduleResult.data ?? []) as ScheduleEntryRow[]).filter((row) => isTimeMakeupScheduleRow(row)))
+      setScheduleChildTimeMakeupRows((timeMakeupScheduleResult.data ?? []) as ScheduleEntryRow[])
     } catch (err: any) {
       setScheduleChildAllAbsentLogs([])
       setScheduleChildMakeupTimeLogs([])
@@ -1569,33 +1408,9 @@ export default function AdminPage() {
   }, [scheduleChildId, scheduleMakeupType])
 
 
-  async function deleteUnloggedRegularClassSchedulesOnServer(ruleId: number) {
-    for (;;) {
-      const { data, error } = await supabase.rpc('delete_unlogged_regular_class_schedules', {
-        p_rule_id: ruleId,
-        p_batch_size: 200,
-      })
+  
 
-      if (error) throw error
-
-      const deletedCount = Number(data ?? 0)
-      if (deletedCount <= 0) break
-    }
-  }
-
-  async function deleteUnloggedRegularGroupSchedulesOnServer(ruleId: number) {
-    for (;;) {
-      const { data, error } = await supabase.rpc('delete_unlogged_regular_group_schedules', {
-        p_rule_id: String(ruleId),
-        p_batch_size: 20,
-      })
-
-      if (error) throw error
-
-      const deletedCount = Number(data ?? 0)
-      if (deletedCount <= 0) break
-    }
-  }
+  
 
   function resetScheduleEditor() {
     setEditingCell(null)
@@ -1665,7 +1480,7 @@ export default function AdminPage() {
           (row) =>
             Number(row.child_id) === Number(scheduleChildId) &&
             row.id !== editingEntryId &&
-            row.is_active &&
+            row.is_active && isCompleted(row, scheduleChildAllAbsentLogs) &&
             !isTimeMakeupScheduleNote(row.note) &&
             row.voucher_type !== '시간보강' &&
             (isMakeupScheduleStatus(row.status) || isMakeupScheduleNote(row.note))
@@ -1673,71 +1488,25 @@ export default function AdminPage() {
         .map((row) => parseMakeupAbsentDate(row.note))
         .filter(Boolean)
     )
-  }, [makeupScheduleRows, scheduleChildId, editingEntryId])
+  }, [makeupScheduleRows, scheduleChildId, editingEntryId, scheduleChildAllAbsentLogs])
 
   const scheduleTimeMakeupMinuteMap = useMemo(() => {
     return buildCompletedTimeMakeupMinuteMap(scheduleChildTimeMakeupRows, scheduleChildAllAbsentLogs)
   }, [scheduleChildTimeMakeupRows, scheduleChildAllAbsentLogs])
 
 
-  const scheduleMakeupAbsentProgressItems = useMemo<MakeupAbsentProgressRow[]>(() => {
-    if (!scheduleChildId) return []
-
-    const sourceLogs = scheduleChildAllAbsentLogs.length > 0
-      ? scheduleChildAllAbsentLogs
-      : classLogs.filter(
-          (log) =>
-            Number(log.child_id) === Number(scheduleChildId) &&
-            (log.status === 'absent' || log.status === 'same_day_absent')
-        )
-
-    const staffNameMap = new Map(staffs.map((staff) => [Number(staff.id), staff.name]))
-
-    const absentDates = Array.from(
-      new Set(
-        sourceLogs
-          .filter((log) => !log.is_group && (log.status === 'absent' || log.status === 'same_day_absent'))
-          .map((log) => log.class_date)
-          .filter(Boolean)
-      )
-    ).sort().reverse()
-
-    return absentDates
-      .map((absentDate) => {
-        const absentLog = sourceLogs.find(
-          (log) => !log.is_group && log.class_date === absentDate && (log.status === 'absent' || log.status === 'same_day_absent')
-        )
-        const completedByFullMakeup = scheduleFullMakeupAbsentDateSet.has(absentDate)
-        const completedMinutes = completedByFullMakeup
-          ? MAKEUP_REQUIRED_MINUTES
-          : Math.min(MAKEUP_REQUIRED_MINUTES, scheduleTimeMakeupMinuteMap.get(absentDate) ?? 0)
-        const remainingMinutes = Math.max(0, MAKEUP_REQUIRED_MINUTES - completedMinutes)
-
-        return {
-          absent_date: absentDate,
-          teacher_name: absentLog ? staffNameMap.get(Number(absentLog.staff_id)) ?? '' : '',
-          required_minutes: MAKEUP_REQUIRED_MINUTES,
-          completed_minutes: completedMinutes,
-          remaining_minutes: remainingMinutes,
-          completed: remainingMinutes <= 0,
-        }
-      })
-      .filter((row) => !row.completed)
-  }, [classLogs, scheduleChildAllAbsentLogs, scheduleChildId, scheduleFullMakeupAbsentDateSet, scheduleTimeMakeupMinuteMap, staffs])
+  const scheduleMakeupAbsentProgressItems = useMemo<MakeupAbsentProgressRow[]>(() => makeupBalances(scheduleChildTimeMakeupRows.filter(row=>row.id!==editingEntryId),scheduleChildAllAbsentLogs).filter(b=>b.remainingMinutes>0).map(b=>({
+ absent_log_id:b.absence.id,absent_date:b.absence.class_date,teacher_name:(staffs.find(s=>Number(s.id)===b.absence.staff_id)?.name??'')+' '+(b.absence.class_time ? new Date(b.absence.class_time).toLocaleTimeString('ko-KR',{timeZone:'Asia/Seoul',hour:'2-digit',minute:'2-digit',hour12:false}):''),
+ required_minutes:MAKEUP_REQUIRED_MINUTES,completed_minutes:b.usedMinutes,remaining_minutes:b.remainingMinutes,completed:false,used_count:b.usedCount,reserved_minutes:b.reservedMinutes,ambiguous:b.ambiguous
+ })),[scheduleChildTimeMakeupRows,scheduleChildAllAbsentLogs,editingEntryId,staffs])
 
   const makeupAbsentDateOptions = useMemo(() => {
     return scheduleMakeupAbsentProgressItems.map((row) => row.absent_date)
   }, [scheduleMakeupAbsentProgressItems])
 
-  const selectedScheduleMakeupProgress = useMemo(() => {
-    if (!makeupAbsentDate) return null
-    return scheduleMakeupAbsentProgressItems.find((row) => row.absent_date === makeupAbsentDate) ?? null
-  }, [makeupAbsentDate, scheduleMakeupAbsentProgressItems])
+  const selectedScheduleMakeupProgress = useMemo(() => scheduleMakeupAbsentProgressItems.find(row=>row.absent_log_id===makeupAbsentLogId)??null,[scheduleMakeupAbsentProgressItems,makeupAbsentLogId])
 
-  const scheduleAvailableTimeMakeupMinutes = useMemo(() => {
-    const remainingMinutes = selectedScheduleMakeupProgress?.remaining_minutes ?? 0
-    return [10, 20, 30, 40].filter((minute) => minute <= remainingMinutes)
-  }, [selectedScheduleMakeupProgress])
+  const scheduleAvailableTimeMakeupMinutes = useMemo(() => MAKEUP_MINUTE_OPTIONS.filter(minutes=>minutes <= ((selectedScheduleMakeupProgress?.remaining_minutes??0)-(selectedScheduleMakeupProgress?.reserved_minutes??0))),[selectedScheduleMakeupProgress])
 
   useEffect(() => {
     if (scheduleMakeupType !== 'time') return
@@ -1784,16 +1553,12 @@ export default function AdminPage() {
           <div className="space-y-1">
             <div className="text-[11px] font-semibold text-orange-700">결석날짜 선택</div>
             <select
-              value={makeupAbsentDate}
+              value={makeupAbsentSelection}
               onChange={(e) => setMakeupAbsentDate(e.target.value)}
               className={inputClassName}
             >
               <option value="">결석날짜 선택</option>
-              {makeupAbsentDateOptions.map((date) => (
-                <option key={date} value={date}>
-                  {date}{scheduleMakeupAbsentProgressItems.find((row) => row.absent_date === date)?.teacher_name ? ` (${scheduleMakeupAbsentProgressItems.find((row) => row.absent_date === date)?.teacher_name})` : ''}
-                </option>
-              ))}
+              {scheduleMakeupAbsentProgressItems.map(row=>(<option key={row.absent_log_id} value={row.absent_date+'|'+row.absent_log_id}>{row.absent_date} {row.teacher_name} · 사용 {row.used_count}번 / 남음 {row.remaining_minutes}분{row.ambiguous?' (기존 연결 확인 필요)':''}</option>))}
             </select>
             {makeupAbsentDateOptions.length === 0 ? (
               <div className="text-[11px] text-orange-600">
@@ -1805,7 +1570,7 @@ export default function AdminPage() {
 
         {scheduleMakeupType === 'time' && scheduleChildId ? (
           <div className="space-y-1">
-            <div className="text-[11px] font-semibold text-orange-700">보강시간</div>
+            <div className="text-[11px] font-semibold text-orange-700">보강시간 (보강 1회 = {MAKEUP_REQUIRED_MINUTES}분)</div>
             <select
               value={scheduleTimeMakeupMinutes}
               onChange={(e) => setScheduleTimeMakeupMinutes(e.target.value)}
@@ -2015,15 +1780,7 @@ export default function AdminPage() {
     }
   }
 
-  function toggleRegularGroupChild(childId: number) {
-    setRegularGroupForm((prev) => {
-      const exists = prev.childIds.includes(childId)
-      return {
-        ...prev,
-        childIds: exists ? prev.childIds.filter((id) => id !== childId) : [...prev.childIds, childId],
-      }
-    })
-  }
+  
 
   function getChildSearchLabelById(childId: number | '' | null | undefined) {
     if (!childId) return ''
@@ -2070,745 +1827,100 @@ export default function AdminPage() {
   }
 
 
-  async function loadClassLogsForScheduleRows(scheduleRows: ScheduleEntryRow[]) {
-    const activeRows = scheduleRows.filter((row) => row.is_active)
-    if (activeRows.length === 0) return [] as ClassLogRow[]
+  
 
-    const dates = Array.from(new Set(activeRows.map((row) => row.date).filter(Boolean)))
-    const childIds = Array.from(new Set(activeRows.map((row) => Number(row.child_id)).filter((value) => Number.isFinite(value) && value > 0)))
-    const staffIds = Array.from(new Set(activeRows.map((row) => Number(row.teacher_id)).filter((value) => Number.isFinite(value) && value > 0)))
+  
 
-    if (dates.length === 0 || childIds.length === 0 || staffIds.length === 0) return [] as ClassLogRow[]
-
-    const { data, error } = await supabase
-      .from('class_logs')
-      .select('*')
-      .in('class_date', dates)
-      .in('child_id', childIds)
-      .in('staff_id', staffIds)
-
-    if (error) throw error
-    return (data ?? []) as ClassLogRow[]
-  }
-
-  async function cleanupUnloggedRegularClassSchedulesForRecreate(ruleId: number, previousRule: RegularClassRow | null) {
-    const ruleTag = buildRegularNoteTag(Number(ruleId))
-    const rowMap = new Map<string, ScheduleEntryRow>()
-
-    const { data: taggedRows, error: taggedError } = await supabase
-      .from('schedule_entries')
-      .select('*')
-      .eq('is_active', true)
-      .eq('is_group', false)
-      .ilike('note', `%${ruleTag}%`)
-
-    if (taggedError) throw taggedError
-    ;((taggedRows ?? []) as ScheduleEntryRow[]).forEach((row) => rowMap.set(row.id, row))
-
-    // 예전 생성 데이터에 [정기수업:id] 태그가 누락되었거나 형식이 달라진 경우를 대비한 보조 매칭.
-    // 기존 규칙의 학생/선생님/요일/시간/기간과 일치하는 미출결 일정도 정리 대상에 포함한다.
-    if (previousRule) {
-      const previousEndDate = previousRule.end_date || addYearsDate(previousRule.start_date, 5)
-      const { data: fallbackRows, error: fallbackError } = await supabase
-        .from('schedule_entries')
-        .select('*')
-        .eq('is_active', true)
-        .eq('is_group', false)
-        .eq('child_id', Number(previousRule.child_id))
-        .eq('teacher_id', Number(previousRule.teacher_id))
-        .eq('time_slot', previousRule.time_slot)
-        .eq('minute_slot', Number(previousRule.minute_slot ?? 0))
-        .gte('date', previousRule.start_date)
-        .lte('date', previousEndDate)
-
-      if (fallbackError) throw fallbackError
-      ;((fallbackRows ?? []) as ScheduleEntryRow[])
-        .filter((row) => new Date(`${row.date}T00:00:00`).getDay() === Number(previousRule.weekday))
-        .forEach((row) => rowMap.set(row.id, row))
-    }
-
-    const targetRows = Array.from(rowMap.values())
-    const logs = await loadClassLogsForScheduleRows(targetRows)
-    const { loggedRows, unloggedRows } = splitLoggedSchedules(targetRows, logs)
-
-    if (unloggedRows.length > 0) {
-      await deleteScheduleEntriesByIds(unloggedRows.map((row) => row.id))
-    }
-
-    return { loggedRows, deletedCount: unloggedRows.length }
-  }
-
-  async function cleanupUnloggedRegularGroupSchedulesForRecreate(ruleId: number, previousRule: RegularGroupClassRow | null) {
-    const ruleTag = buildRegularGroupNoteTag(Number(ruleId))
-    const rowMap = new Map<string, ScheduleEntryRow>()
-
-    const { data: linkedRows, error: linkedError } = await supabase
-      .from('schedule_entries')
-      .select('*')
-      .eq('is_active', true)
-      .eq('is_group', true)
-      .or(`group_id.eq.${String(ruleId)},note.ilike.%${ruleTag}%`)
-
-    if (linkedError) throw linkedError
-    ;((linkedRows ?? []) as ScheduleEntryRow[]).forEach((row) => rowMap.set(row.id, row))
-
-    // group_id/note가 깨진 예전 데이터 대비 보조 매칭.
-    if (previousRule) {
-      const previousEndDate = previousRule.end_date || addYearsDate(previousRule.start_date, 5)
-      const { data: fallbackRows, error: fallbackError } = await supabase
-        .from('schedule_entries')
-        .select('*')
-        .eq('is_active', true)
-        .eq('is_group', true)
-        .eq('teacher_id', Number(previousRule.teacher_id))
-        .eq('time_slot', previousRule.time_slot)
-        .eq('minute_slot', Number(previousRule.minute_slot ?? 0))
-        .eq('group_name', previousRule.group_name)
-        .gte('date', previousRule.start_date)
-        .lte('date', previousEndDate)
-
-      if (fallbackError) throw fallbackError
-      ;((fallbackRows ?? []) as ScheduleEntryRow[])
-        .filter((row) => new Date(`${row.date}T00:00:00`).getDay() === Number(previousRule.weekday))
-        .forEach((row) => rowMap.set(row.id, row))
-    }
-
-    const targetRows = Array.from(rowMap.values())
-    const logs = await loadClassLogsForScheduleRows(targetRows)
-    const { loggedRows, unloggedRows } = splitLoggedSchedules(targetRows, logs)
-
-    if (unloggedRows.length > 0) {
-      await deleteScheduleEntriesByIds(unloggedRows.map((row) => row.id))
-    }
-
-    return { loggedRows, deletedCount: unloggedRows.length }
-  }
+  
 
 
   async function handleSaveRegularClass() {
-    try {
-      if (!regularForm.childId) {
-        setMessage('학생을 선택하세요.')
-        return
-      }
-      if (!regularForm.teacherId) {
-        setMessage('선생님을 선택하세요.')
-        return
-      }
-      if (regularForm.weekday === '') {
-        setMessage('요일을 선택하세요.')
-        return
-      }
-      if (!regularForm.startDate) {
-        setMessage('시작일을 선택하세요.')
-        return
-      }
-      if (!regularForm.voucherType) {
-        setMessage('바우처를 선택하세요.')
-        return
-      }
-
-      const isEditing = Boolean(regularForm.id)
-      const editRuleId = regularForm.id ? Number(regularForm.id) : null
-      const previousRule = editRuleId
-        ? regularClasses.find((row) => Number(row.id) === Number(editRuleId)) ?? null
-        : null
-      const endDate = regularForm.endDate || addYearsDate(regularForm.startDate, 5)
-      const voucherOptions = getVoucherOptionsForChild(regularForm.childId)
-      const effectiveVoucherType =
-        regularForm.voucherType && voucherOptions.includes(regularForm.voucherType)
-          ? regularForm.voucherType
-          : ''
-
-      const payload = {
-        child_id: Number(regularForm.childId),
-        teacher_id: Number(regularForm.teacherId),
-        weekday: Number(regularForm.weekday),
-        time_slot: regularForm.timeSlot,
-        minute_slot: Number(regularForm.minuteSlot),
-        start_date: regularForm.startDate,
-        end_date: endDate,
-        voucher_type: effectiveVoucherType,
-        note: regularForm.note || null,
-        is_active: regularForm.isActive,
-      }
-
-      let ruleId = regularForm.id
-      let loggedRows: ScheduleEntryRow[] = []
-      let deletedCount = 0
-
-      if (isEditing && editRuleId) {
-        // 1) 기존 정기수업에서 생성된 미출결 schedule_entries 전부 삭제
-        const cleanup = await cleanupUnloggedRegularClassSchedulesForRecreate(editRuleId, previousRule)
-        loggedRows = cleanup.loggedRows
-        deletedCount = cleanup.deletedCount
-
-        // 2) regular_classes row 업데이트
-        const { error } = await supabase
-          .from('regular_classes')
-          .update(payload)
-          .eq('id', editRuleId)
-
-        if (error) throw error
-        ruleId = editRuleId
-      } else {
-        const { data, error } = await supabase
-          .from('regular_classes')
-          .insert(payload)
-          .select('id')
-          .single()
-
-        if (error) throw error
-        ruleId = data?.id ?? null
-      }
-
-      if (!ruleId) {
-        setMessage('정기수업 저장 후 rule id를 찾지 못했습니다.')
-        return
-      }
-
-      const teacher = staffs.find((s) => Number(s.id) === Number(regularForm.teacherId))
-      const teacherName = teacher?.name ?? ''
-      const generatedDates = getDateRangeMatchingWeekday(
-        regularForm.startDate,
-        endDate,
-        Number(regularForm.weekday)
-      )
-      const currentRuleTag = buildRegularNoteTag(Number(ruleId))
-
-      const loggedDateChildKeys = new Set(
-        loggedRows.map((row) => [row.date, Number(row.child_id)].join('|'))
-      )
-
-      // 3) 새 조건으로 regenerate. 출결 완료된 날짜/학생은 기존 기록을 유지하고 중복 생성하지 않는다.
-      const rowsToInsert = generatedDates
-        .map((date) => ({
-          date,
-          time_slot: regularForm.timeSlot,
-          minute_slot: Number(regularForm.minuteSlot),
-          room_number: 1,
-          teacher_id: Number(regularForm.teacherId),
-          teacher_name: teacherName,
-          class_type: 'individual',
-          child_id: Number(regularForm.childId),
-          voucher_type: effectiveVoucherType,
-          status: 'scheduled',
-          note: `${currentRuleTag}${regularForm.note ? ` ${regularForm.note}` : ''}`,
-          is_active: true,
-          is_group: false,
-          group_id: null,
-          group_name: null,
-        }))
-        .filter((row) => {
-          const dateChildKey = [row.date, Number(row.child_id)].join('|')
-          return !loggedDateChildKeys.has(dateChildKey)
-        })
-
-      if (rowsToInsert.length > 0) {
-        const { error: insertError } = await supabase
-          .from('schedule_entries')
-          .insert(rowsToInsert)
-
-        if (insertError) throw insertError
-      }
-
-      await Promise.all([loadRegularClasses(), loadSchedules(), loadClassLogsForVisibleScheduleRange()])
-      setRegularForm({
-        id: null,
-        childId: '',
-        teacherId: '',
-        weekday: '',
-        timeSlot: '09:00',
-        minuteSlot: '00',
-        startDate: toDateString(new Date()),
-        endDate: addYearsDate(toDateString(new Date()), 5),
-        voucherType: '',
-        note: '',
-        isActive: true,
-      })
-      setRegularChildQuery('')
-      setRegularTeacherQuery('')
-      setMessage(
-        isEditing
-          ? `정기수업이 수정되었습니다. 미출결 ${deletedCount}건 삭제 후 새 조건으로 ${rowsToInsert.length}건 재생성했습니다. 출결 완료 ${loggedRows.length}건은 유지했습니다.`
-          : '정기수업이 저장되었습니다.'
-      )
-    } catch (err: any) {
-      setMessage(err?.message ?? '정기수업 저장 실패')
-    }
-  }
+  try {
+    const effectiveDate = regularForm.id ? askEffectiveDate() : regularForm.startDate
+    if (!effectiveDate) return
+    const result = await saveRegularChange({kind:'individual', id:regularForm.id || null, effectiveDate,
+      childId: regularForm.childId, teacherId:regularForm.teacherId, weekday:regularForm.weekday,
+      timeSlot:regularForm.timeSlot, minuteSlot:regularForm.minuteSlot,
+      endDate:regularForm.endDate || addYearsDate(effectiveDate,5), voucherType:regularForm.voucherType,
+      note:regularForm.note, isActive:regularForm.isActive})
+    await Promise.all([loadRegularClasses(), loadRegularGroupClasses(), loadRegularGroupMembers(), loadSchedules(), loadClassLogsForVisibleScheduleRange()])
+    window.location.href = '/admin/regular'
+    setMessage('정기수업 저장 완료: 적용일 '+effectiveDate+', 기존 '+result.cancelled+'건 취소, 새 일정 '+result.inserted+'건 생성. 이전 기록은 보존됩니다.')
+  } catch(err:any) { setMessage(err.message || '정기수업 저장 실패') }
+ }
 
   async function handleSaveRegularGroupClass() {
-    try {
-      if (!regularGroupForm.teacherId) {
-        setMessage('선생님을 선택하세요.')
-        return
-      }
-      if (regularGroupForm.weekday === '') {
-        setMessage('요일을 선택하세요.')
-        return
-      }
-      if (!regularGroupForm.startDate) {
-        setMessage('시작일을 선택하세요.')
-        return
-      }
-      if (!regularGroupForm.groupName.trim()) {
-        setMessage('그룹명을 입력하세요.')
-        return
-      }
-      if (regularGroupForm.childIds.length === 0) {
-        setMessage('그룹 학생을 1명 이상 선택하세요.')
-        return
-      }
+  try {
+    const effectiveDate = regularGroupForm.id ? askEffectiveDate() : regularGroupForm.startDate
+    if (!effectiveDate) return
+    const result = await saveRegularChange({kind:'group', id:regularGroupForm.id || null, effectiveDate,
+      teacherId:regularGroupForm.teacherId, teacherId2:null, weekday:regularGroupForm.weekday,
+      timeSlot:regularGroupForm.timeSlot, minuteSlot:regularGroupForm.minuteSlot,
+      endDate:regularGroupForm.endDate || addYearsDate(effectiveDate,5), groupName:regularGroupForm.groupName,
+      childIds:regularGroupForm.childIds, note:regularGroupForm.note, isActive:regularGroupForm.isActive})
+    await Promise.all([loadRegularClasses(), loadRegularGroupClasses(), loadRegularGroupMembers(), loadSchedules(), loadClassLogsForVisibleScheduleRange()])
+    window.location.href = '/admin/regular'
+    setMessage('정기 그룹수업 저장 완료: '+result.cancelled+'건 취소, '+result.inserted+'건 생성. 이전 기록은 보존됩니다.')
+  } catch(err:any) { setMessage(err.message || '정기 그룹수업 저장 실패') }
+ }
 
-      const isEditing = Boolean(regularGroupForm.id)
-      const editRuleId = regularGroupForm.id ? Number(regularGroupForm.id) : null
-      const previousRule = editRuleId
-        ? regularGroupClasses.find((row) => Number(row.id) === Number(editRuleId)) ?? null
-        : null
-      const endDate = regularGroupForm.endDate || addYearsDate(regularGroupForm.startDate, 5)
-      const payload = {
-        teacher_id: Number(regularGroupForm.teacherId),
-        weekday: Number(regularGroupForm.weekday),
-        time_slot: regularGroupForm.timeSlot,
-        minute_slot: Number(regularGroupForm.minuteSlot),
-        start_date: regularGroupForm.startDate,
-        end_date: endDate,
-        group_name: regularGroupForm.groupName,
-        note: regularGroupForm.note || null,
-        is_active: regularGroupForm.isActive,
-      }
 
-      let ruleId = regularGroupForm.id
-      let loggedRows: ScheduleEntryRow[] = []
-      let deletedCount = 0
+async function handleDeleteRegularGroupClass(id:number) {
+  try {
+    const effectiveDate=askEffectiveDate('정기 그룹수업 종료')
+    if (!effectiveDate) return
+    if (!window.confirm(effectiveDate+'부터 미진행 그룹 일정을 취소합니다. 이전 기록은 보존합니다.')) return
+    const result=await saveRegularChange({kind:'group',action:'stop',id,effectiveDate})
+    await Promise.all([loadRegularClasses(), loadRegularGroupClasses(), loadRegularGroupMembers(), loadSchedules(), loadClassLogsForVisibleScheduleRange()])
+    setMessage('정기 그룹수업 종료: '+result.cancelled+'건 취소. 이전 기록은 보존됩니다.')
+  } catch(err:any) { setMessage(err.message || '정기수업 종료 실패') }
+ }
 
-      if (isEditing && editRuleId) {
-        // 1) 기존 정기그룹수업에서 생성된 미출결 schedule_entries 전부 삭제
-        const cleanup = await cleanupUnloggedRegularGroupSchedulesForRecreate(editRuleId, previousRule)
-        loggedRows = cleanup.loggedRows
-        deletedCount = cleanup.deletedCount
+  async function handleDeleteRegularClass(id:number) {
+  try {
+    const effectiveDate=askEffectiveDate('정기수업 종료')
+    if (!effectiveDate) return
+    if (!window.confirm(effectiveDate+'부터 미진행 일정을 취소합니다. 이전 기록은 보존합니다.')) return
+    const result=await saveRegularChange({kind:'individual',action:'stop',id,effectiveDate})
+    await Promise.all([loadRegularClasses(), loadRegularGroupClasses(), loadRegularGroupMembers(), loadSchedules(), loadClassLogsForVisibleScheduleRange()])
+    setMessage('정기수업 종료: '+result.cancelled+'건 취소. 이전 기록은 보존됩니다.')
+  } catch(err:any) { setMessage(err.message || '정기수업 종료 실패') }
+ }
 
-        // 2) regular_group_classes row 업데이트
-        const { error } = await supabase
-          .from('regular_group_classes')
-          .update(payload)
-          .eq('id', editRuleId)
 
-        if (error) throw error
-
-        const { error: memberOffError } = await supabase
-          .from('regular_group_class_members')
-          .update({ is_active: false })
-          .eq('regular_group_class_id', editRuleId)
-
-        if (memberOffError) throw memberOffError
-        ruleId = editRuleId
-      } else {
-        const { data, error } = await supabase
-          .from('regular_group_classes')
-          .insert(payload)
-          .select('id')
-          .single()
-
-        if (error) throw error
-        ruleId = data?.id ?? null
-      }
-
-      if (!ruleId) {
-        setMessage('정기 그룹수업 저장 후 rule id를 찾지 못했습니다.')
-        return
-      }
-
-      const memberRows = regularGroupForm.childIds.map((childId) => ({
-        regular_group_class_id: Number(ruleId),
-        child_id: Number(childId),
-        is_active: true,
-      }))
-
-      const { error: memberInsertError } = await supabase
-        .from('regular_group_class_members')
-        .insert(memberRows)
-
-      if (memberInsertError) throw memberInsertError
-
-      const teacher = staffs.find((s) => Number(s.id) === Number(regularGroupForm.teacherId))
-      const teacherName = teacher?.name ?? ''
-      const generatedDates = getDateRangeMatchingWeekday(
-        regularGroupForm.startDate,
-        endDate,
-        Number(regularGroupForm.weekday)
-      )
-      const currentRuleTag = buildRegularGroupNoteTag(Number(ruleId))
-
-      const loggedDateChildKeys = new Set(
-        loggedRows.map((row) => [row.date, Number(row.child_id)].join('|'))
-      )
-
-      // 3) 새 조건으로 regenerate. 출결 완료된 날짜/학생은 기존 기록을 유지하고 중복 생성하지 않는다.
-      const rowsToInsert = generatedDates.flatMap((date) =>
-        regularGroupForm.childIds
-          .map((childId) => ({
-            date,
-            time_slot: regularGroupForm.timeSlot,
-            minute_slot: Number(regularGroupForm.minuteSlot),
-            room_number: 1,
-            teacher_id: Number(regularGroupForm.teacherId),
-            teacher_name: teacherName,
-            class_type: 'group',
-            child_id: Number(childId),
-            voucher_type: '그룹수업',
-            status: 'scheduled',
-            note: `${currentRuleTag}${regularGroupForm.note ? ` ${regularGroupForm.note}` : ''}`,
-            is_active: true,
-            is_group: true,
-            group_id: String(ruleId),
-            group_name: regularGroupForm.groupName,
-          }))
-          .filter((row) => {
-            const dateChildKey = [row.date, Number(row.child_id)].join('|')
-            return !loggedDateChildKeys.has(dateChildKey)
-          })
-      )
-
-      if (rowsToInsert.length > 0) {
-        const { error: insertError } = await supabase
-          .from('schedule_entries')
-          .insert(rowsToInsert)
-
-        if (insertError) throw insertError
-      }
-
-      await Promise.all([loadRegularGroupClasses(), loadRegularGroupMembers(), loadSchedules(), loadClassLogsForVisibleScheduleRange()])
-      setRegularGroupForm({
-        id: null,
-        teacherId: '',
-        weekday: '',
-        timeSlot: '09:00',
-        minuteSlot: '00',
-        startDate: toDateString(new Date()),
-        endDate: addYearsDate(toDateString(new Date()), 5),
-        groupName: '',
-        note: '',
-        isActive: true,
-        childIds: [],
-      })
-      setRegularGroupChildInputs(Array(6).fill(''))
-      setMessage(
-        isEditing
-          ? `정기 그룹수업이 수정되었습니다. 미출결 ${deletedCount}건 삭제 후 새 조건으로 ${rowsToInsert.length}건 재생성했습니다. 출결 완료 ${loggedRows.length}건은 유지했습니다.`
-          : '정기 그룹수업이 저장되었습니다.'
-      )
-    } catch (err: any) {
-      setMessage(err?.message ?? '정기 그룹수업 저장 실패')
-    }
+async function handleSaveSchedule(dateStr:string,hourSlot:string,staffId:number) {
+ try {
+  
+  const replaceRows=editingGroupId ? allScheduleEntries.filter(row=>row.is_active && row.group_id===editingGroupId && row.date===dateStr && row.time_slot===hourSlot && Number(row.teacher_id)===staffId) : allScheduleEntries.filter(row=>row.id===editingEntryId)
+  if(replaceRows.some(row=>/^\[정기(수업|그룹):/.test(row.note??''))){throw new Error('정기수업 변경은 정기수업 관리에서 적용일을 지정하세요.')}
+  
+  const minute=Number(selectedMinute)
+  if(!Number.isInteger(minute)||minute<0||minute>50||minute%10!==0)throw new Error('시작 분을 확인하세요.')
+  let note=buildScheduleNoteWithMakeup(scheduleMemo,scheduleMakeupType==='day',makeupAbsentDate,makeupAbsentLogId)
+  let absentLogId:number|null=null
+  if(scheduleMakeupType!=='none'){
+   if(isGroupLesson)throw new Error('보강은 원래 결석한 개인 수업을 선택해 등록하세요.')
+   const progress=scheduleMakeupAbsentProgressItems.find(row=>row.absent_log_id===makeupAbsentLogId)
+   if(!progress)throw new Error('보강할 결석 수업을 다시 선택하세요.')
+   if(progress.ambiguous)throw new Error('기존 보강의 결석 연결을 먼저 확인하세요.')
+   const minutes=scheduleMakeupType==='day'?MAKEUP_REQUIRED_MINUTES:Number(scheduleTimeMakeupMinutes)
+   if(!Number.isInteger(minutes)||minutes<=0||minutes>MAKEUP_REQUIRED_MINUTES||minutes>progress.remaining_minutes-(progress.reserved_minutes??0))throw new Error('예약 가능한 보강 시간을 초과했습니다.')
+   absentLogId=makeupAbsentLogId
+   if(scheduleMakeupType==='time')note=['[시간보강:'+minutes+'분]','[결석일:'+makeupAbsentDate+']','[결석기록:'+makeupAbsentLogId+']',stripMakeupTags(scheduleMemo)].filter(Boolean).join(' ')
   }
-
-
-async function handleDeleteRegularGroupClass(id: number) {
-    try {
-      const ok = window.confirm('정기 그룹수업을 삭제할까요? 출결체크된 일정은 유지되고 미출결 일정만 삭제됩니다.')
-      if (!ok) return
-
-      await deleteUnloggedRegularGroupSchedulesOnServer(id)
-
-      const { error } = await supabase
-        .from('regular_group_classes')
-        .update({ is_active: false })
-        .eq('id', id)
-
-      if (error) throw error
-
-      const { error: memberError } = await supabase
-        .from('regular_group_class_members')
-        .update({ is_active: false })
-        .eq('regular_group_class_id', id)
-
-      if (memberError) throw memberError
-
-      await Promise.all([loadRegularGroupClasses(), loadRegularGroupMembers(), loadSchedules()])
-      if (Number(regularGroupForm.id) === Number(id)) {
-        setRegularGroupForm({
-          id: null,
-          teacherId: '',
-          weekday: '',
-          timeSlot: '09:00',
-          minuteSlot: '00',
-          startDate: toDateString(new Date()),
-          endDate: addYearsDate(toDateString(new Date()), 5),
-          groupName: '',
-          note: '',
-          isActive: true,
-          childIds: [],
-        })
-        setRegularGroupChildInputs(Array(6).fill(''))
-      }
-
-      setMessage('정기 그룹수업 규칙은 중지되었고 출결체크된 일정은 유지, 미출결 일정만 삭제되었습니다.')
-    } catch (err: any) {
-      setMessage(err?.message ?? '정기 그룹수업 삭제 실패')
-    }
-  }
-
-  async function handleDeleteRegularClass(id: number) {
-    try {
-      const ok = window.confirm('이 정기수업을 삭제할까요? 출결체크된 일정은 유지되고 미출결 일정만 삭제됩니다.')
-      if (!ok) return
-
-      await deleteUnloggedRegularClassSchedulesOnServer(id)
-
-      const { error } = await supabase
-        .from('regular_classes')
-        .update({ is_active: false })
-        .eq('id', id)
-
-      if (error) throw error
-
-      await Promise.all([loadRegularClasses(), loadSchedules()])
-      if (Number(regularForm.id) === Number(id)) {
-        setRegularForm({
-          id: null,
-          childId: '',
-          teacherId: '',
-          weekday: '',
-          timeSlot: '09:00',
-          minuteSlot: '00',
-          startDate: toDateString(new Date()),
-          endDate: addYearsDate(toDateString(new Date()), 5),
-          voucherType: '',
-          note: '',
-          isActive: true,
-        })
-        setRegularChildQuery('')
-        setRegularTeacherQuery('')
-      }
-
-      setMessage('정기수업 규칙은 중지되었고 출결체크된 일정은 유지, 미출결 일정만 삭제되었습니다.')
-    } catch (err: any) {
-      setMessage(err?.message ?? '정기수업 삭제 실패')
-    }
-  }
-
-
-async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: number) {
-    try {
-      const staff = employeeStaffs.find((s) => Number(s.id) === Number(staffId))
-      const minute = Number(selectedMinute)
-
-      if (isGroupLesson) {
-        if (scheduleMakeupType === 'time') {
-          setMessage('시간보강은 개인수업으로 학생 1명만 선택해서 저장하세요.')
-          return
-        }
-        if (selectedGroupChildIds.length === 0) {
-          setMessage('그룹수업 학생을 1명 이상 선택하세요.')
-          return
-        }
-        if (selectedGroupChildIds.length > 8) {
-          setMessage('그룹수업은 최대 8명까지 가능합니다.')
-          return
-        }
-
-        const groupId =
-          editingGroupId || (typeof crypto !== 'undefined' ? crypto.randomUUID() : `group-${Date.now()}`)
-
-        if (editingGroupId) {
-          const oldGroupRows = allScheduleEntries.filter((row) => row.group_id === editingGroupId && row.is_active)
-
-          const { error: clearError } = await supabase
-            .from('schedule_entries')
-            .update({ is_active: false })
-            .eq('group_id', editingGroupId)
-          if (clearError) throw clearError
-
-          for (const row of oldGroupRows) {
-            await supabase
-              .from('class_logs')
-              .delete()
-              .match({
-                class_date: row.date,
-                staff_id: Number(row.teacher_id),
-                child_id: Number(row.child_id),
-              })
-          }
-        }
-
-        const groupRows = selectedGroupChildIds.map((childId) => ({
-          date: dateStr,
-          time_slot: hourSlot,
-          room_number: 1,
-          teacher_id: Number(staffId),
-          teacher_name: staff?.name ?? '',
-          class_type: 'group',
-          child_id: Number(childId),
-          child_ids: [],
-          voucher_type: '그룹수업',
-          status: isScheduleMakeup ? 'makeup' : 'scheduled',
-          minute_slot: minute,
-          is_active: true,
-          note: buildScheduleNoteWithMakeup(scheduleMemo, isScheduleMakeup, makeupAbsentDate),
-          is_group: true,
-          group_id: groupId,
-          group_name: groupName || '그룹수업',
-        }))
-
-        const { error } = await supabase.from('schedule_entries').insert(groupRows)
-        if (error) throw error
-      } else {
-        if (!scheduleChildId) {
-          setMessage('학생을 선택하세요.')
-          return
-        }
-
-        if (scheduleMakeupType === 'time') {
-          if (!makeupAbsentDate) {
-            setMessage('시간보강할 결석날짜를 선택하세요.')
-            return
-          }
-
-          const minutes = Number(scheduleTimeMakeupMinutes)
-          if (!Number.isFinite(minutes) || minutes <= 0) {
-            setMessage('시간보강 시간을 선택하세요.')
-            return
-          }
-
-          const progress = scheduleMakeupAbsentProgressItems.find((row) => row.absent_date === makeupAbsentDate)
-          if (!progress) {
-            setMessage('이미 보강이 완료되었거나 선택할 수 없는 결석날짜입니다.')
-            return
-          }
-          if (minutes > progress.remaining_minutes) {
-            setMessage(`남은 시간은 ${progress.remaining_minutes}분입니다. ${progress.remaining_minutes}분 이하로 선택하세요.`)
-            return
-          }
-
-          const cleanMemo = scheduleMemo.trim()
-          const timeMakeupNote = [`[시간보강:${minutes}분]`, `[결석일:${makeupAbsentDate}]`, `[담당:${staff?.name ?? ''}]`, cleanMemo]
-            .filter(Boolean)
-            .join(' ')
-
-          const { error: scheduleError } = await supabase.from('schedule_entries').insert({
-            date: dateStr,
-            time_slot: hourSlot,
-            room_number: 1,
-            teacher_id: Number(staffId),
-            teacher_name: staff?.name ?? '',
-            class_type: 'individual',
-            child_id: Number(scheduleChildId),
-            voucher_type: '시간보강',
-            status: 'scheduled',
-            minute_slot: minute,
-            is_active: true,
-            note: timeMakeupNote,
-            is_group: false,
-            group_id: null,
-            group_name: null,
-          })
-
-          if (scheduleError) throw scheduleError
-
-          const selectedChild = children.find((child) => Number(child.id) === Number(scheduleChildId))
-          const { error: timeMakeupError } = await supabase.from('makeup_time_logs').insert({
-            child_id: Number(scheduleChildId),
-            child_name: selectedChild?.child_name ?? null,
-            absent_date: makeupAbsentDate,
-            makeup_date: dateStr,
-            minutes,
-            accumulated_minutes: Math.min(MAKEUP_REQUIRED_MINUTES, progress.completed_minutes + minutes),
-            remaining_minutes: Math.max(0, MAKEUP_REQUIRED_MINUTES - progress.completed_minutes - minutes),
-            used_minutes: minutes,
-            note: scheduleMemo.trim() || null,
-          })
-
-          if (timeMakeupError) throw timeMakeupError
-
-          const savedChildId = Number(scheduleChildId)
-          resetScheduleEditor()
-          await loadSchedules()
-          await loadMakeupSchedules()
-          await loadClassLogsForVisibleScheduleRange()
-          if (childInfoModal.open && childInfoModal.child && Number(childInfoModal.child.id) === savedChildId) {
-            await refreshOpenChildInfo()
-          }
-          setMessage(`시간표에 시간보강 ${minutes}분이 저장되었습니다.`)
-          return
-        }
-
-        if (!selectedVoucher) {
-          setMessage('바우처를 선택하세요.')
-          return
-        }
-
-        if (editingEntryId) {
-          const oldEntry = allScheduleEntries.find((row) => row.id === editingEntryId)
-
-          const payload = {
-            date: dateStr,
-            time_slot: hourSlot,
-            room_number: 1,
-            teacher_id: Number(staffId),
-            teacher_name: staff?.name ?? '',
-            class_type: 'individual',
-            child_id: Number(scheduleChildId),
-            voucher_type: selectedVoucher,
-            status: isScheduleMakeup ? 'makeup' : 'scheduled',
-            minute_slot: minute,
-            is_active: true,
-            note: buildScheduleNoteWithMakeup(scheduleMemo, isScheduleMakeup, makeupAbsentDate),
-            is_group: false,
-            group_id: null,
-            group_name: null,
-          }
-
-          const { error } = await supabase
-            .from('schedule_entries')
-            .update(payload)
-            .eq('id', editingEntryId)
-          if (error) throw error
-
-          if (oldEntry) {
-            await supabase
-              .from('class_logs')
-              .delete()
-              .match({
-                class_date: oldEntry.date,
-                staff_id: Number(oldEntry.teacher_id),
-                child_id: Number(oldEntry.child_id),
-              })
-          }
-        } else {
-          const payload = {
-            date: dateStr,
-            time_slot: hourSlot,
-            room_number: 1,
-            teacher_id: Number(staffId),
-            teacher_name: staff?.name ?? '',
-            class_type: 'individual',
-            child_id: Number(scheduleChildId),
-            voucher_type: selectedVoucher,
-            status: isScheduleMakeup ? 'makeup' : 'scheduled',
-            minute_slot: minute,
-            is_active: true,
-            note: buildScheduleNoteWithMakeup(scheduleMemo, isScheduleMakeup, makeupAbsentDate),
-            is_group: false,
-            group_id: null,
-            group_name: null,
-          }
-
-          const { error } = await supabase.from('schedule_entries').insert(payload)
-          if (error) throw error
-        }
-      }
-
-      resetScheduleEditor()
-      await loadSchedules()
-      await loadMakeupSchedules()
-      await loadClassLogsForVisibleScheduleRange()
-      setMessage('시간표가 저장되었습니다.')
-    } catch (err: any) {
-      setMessage(err?.message ?? '시간표 저장 실패')
-    }
-  }
+  const childIds=isGroupLesson?Array.from(new Set(selectedGroupChildIds.map(Number))):[Number(scheduleChildId)]
+  if(!childIds.length||childIds.length>8||childIds.some(id=>!id))throw new Error('학생을 선택하세요. 그룹은 최대 8명입니다.')
+  if(!isGroupLesson&&!selectedVoucher&&scheduleMakeupType!=='time')throw new Error('바우처를 선택하세요.')
+  const groupId=isGroupLesson?(editingGroupId||crypto.randomUUID()):null
+  const rows=childIds.map(childId=>({date:dateStr,time_slot:hourSlot,minute_slot:minute,room_number:1,teacher_id:staffId,child_id:childId,
+   voucher_type:isGroupLesson?'그룹수업':scheduleMakeupType==='time'?'시간보강':selectedVoucher,
+   status:scheduleMakeupType==='day'?'makeup':'scheduled',note,is_active:true,is_group:isGroupLesson,group_id:groupId,group_name:isGroupLesson?(groupName||'그룹수업'):null,absent_class_log_id:absentLogId}))
+  await saveScheduleRows(rows,replaceRows.map(row=>row.id))
+  await Promise.all([loadSchedules(),loadMakeupSchedules(),loadClassLogsForVisibleScheduleRange()]); if(scheduleChildId) await loadScheduleChildAbsentLogs(Number(scheduleChildId)); if(childInfoModal.open) await refreshOpenChildInfo()
+  resetScheduleEditor()
+  setMessage('일정이 저장되었습니다. 보강은 출결 완료 시 차감됩니다.')
+ }catch(err:any){setMessage(err.message||'일정 저장 실패')}
+}
 
   async function handleUpdateScheduleMemo(item: DisplayScheduleItem) {
     try {
@@ -2832,64 +1944,15 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
     }
   }
 
-  async function deleteClassLogsForScheduleRow(row: ScheduleEntryRow) {
-    let query = supabase
-      .from('class_logs')
-      .select('*')
-      .eq('class_date', row.date)
-      .eq('staff_id', Number(row.teacher_id))
-      .eq('child_id', Number(row.child_id))
+  
 
-    const { data, error: fetchError } = await query
-    if (fetchError) throw fetchError
-
-    const targetIds = ((data ?? []) as ClassLogRow[])
-      .filter((log) => isSameAttendanceLog(row, log))
-      .map((log) => log.id)
-
-    if (targetIds.length === 0) return
-
-    const { error } = await supabase
-      .from('class_logs')
-      .delete()
-      .in('id', targetIds)
-
-    if (error) throw error
-  }
-
-  async function deleteScheduleRowOnly(row: ScheduleEntryRow) {
-    await deleteClassLogsForScheduleRow(row)
-
-    if (isTimeMakeupScheduleRow(row)) {
-      const absentDate = parseMakeupAbsentDate(row.note)
-      const minutes = Number(parseTimeMakeupMinutes(row.note) || 0)
-
-      if (row.child_id && absentDate && minutes > 0) {
-        const { error: timeMakeupDeleteError } = await supabase
-          .from('makeup_time_logs')
-          .delete()
-          .eq('child_id', Number(row.child_id))
-          .eq('absent_date', absentDate)
-          .eq('makeup_date', row.date)
-          .eq('minutes', minutes)
-
-        if (timeMakeupDeleteError) throw timeMakeupDeleteError
-      }
-    }
-
-    const { error } = await supabase
-      .from('schedule_entries')
-      .delete()
-      .eq('id', row.id)
-
-    if (error) throw error
-  }
+  async function deleteScheduleRowOnly(row: ScheduleEntryRow) { await cancelOccurrences([row.id]) }
 
   async function handleDeleteScheduleRow(row: ScheduleEntryRow) {
     try {
       const child = children.find((c) => Number(c.id) === Number(row.child_id))
       const ok = window.confirm(
-        `${row.date} ${row.time_slot.slice(0, 2)}:${String(row.minute_slot ?? 0).padStart(2, '0')} ${child?.child_name ?? '학생'} 일정 1건만 DB에서 삭제할까요?`
+        `${row.date} ${row.time_slot.slice(0, 2)}:${String(row.minute_slot ?? 0).padStart(2, '0')} ${child?.child_name ?? '학생'} 일정 1건만 취소할까요? 출결 기록이 있으면 취소되지 않습니다.`
       )
       if (!ok) return
 
@@ -2901,7 +1964,7 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
       if (childInfoModal.open && childInfoModal.child && Number(childInfoModal.child.id) === Number(row.child_id)) {
         await refreshOpenChildInfo()
       }
-      setMessage('선택한 일정 row 1건과 연결된 출결 기록이 DB에서 삭제되었습니다.')
+      setMessage('선택한 일정 1건을 취소했습니다. 출결 이력은 보존됩니다.')
     } catch (err: any) {
       setMessage(err?.message ?? '삭제 실패')
     }
@@ -2914,8 +1977,8 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
 
       const ok = window.confirm(
         item.isGroup
-          ? '이 그룹수업의 선택된 학생 일정 1건만 DB에서 삭제할까요?'
-          : '이 일정 1건만 DB에서 삭제할까요?'
+          ? '이 그룹수업의 선택된 학생 일정 1건만 취소할까요? 출결 기록이 있으면 취소되지 않습니다.'
+          : '이 일정 1건만 취소할까요? 출결 기록이 있으면 취소되지 않습니다.'
       )
       if (!ok) return
 
@@ -2927,13 +1990,17 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
       if (childInfoModal.open && childInfoModal.child && Number(childInfoModal.child.id) === Number(targetRow.child_id)) {
         await refreshOpenChildInfo()
       }
-      setMessage('선택한 일정 row 1건과 연결된 출결 기록이 DB에서 삭제되었습니다.')
+      setMessage('선택한 일정 1건을 취소했습니다. 출결 이력은 보존됩니다.')
     } catch (err: any) {
       setMessage(err?.message ?? '삭제 실패')
     }
   }
 
   function handleEditSchedule(item: DisplayScheduleItem) {
+    if (item.rows.some(row => /^\[정기(수업|그룹):/.test(row.note ?? ''))) {
+      setMessage('정기수업의 시간·요일 변경은 관리자 정기수업 화면에서 적용일을 지정해 주세요. 특정 회차만 취소하려면 취소 버튼을 이용하세요.')
+      return
+    }
     setEditingCell({
       date: item.date,
       hour: item.hourSlot,
@@ -3058,98 +2125,18 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
     })
   }
 
-  async function handleSaveAttendanceFromModal() {
-    try {
-      if (!recordModal.entry) return
-
-      const entry = recordModal.entry
-      const status = recordModal.status
-      const targetEntries =
-        entry.is_group && entry.group_id
-          ? allScheduleEntries.filter((row) => {
-              const sameGroup = Boolean(row.is_group) && (row.group_id ?? '') === (entry.group_id ?? '')
-              const sameDate = row.date === entry.date
-              const sameTime = row.time_slot === entry.time_slot && Number(row.minute_slot ?? 0) === Number(entry.minute_slot ?? 0)
-              const sameChild = Number(row.child_id) === Number(entry.child_id)
-              return sameGroup && sameDate && sameTime && sameChild && row.is_active
-            })
-          : [entry]
-
-      for (const targetEntry of targetEntries) {
-        const targetClassTime = buildClassTimestamp(targetEntry.date, targetEntry.time_slot, targetEntry.minute_slot)
-        const existing = findExistingClassLog(targetEntry)
-
-        if (existing?.id) {
-          const { error } = await supabase
-            .from('class_logs')
-            .update({
-              status,
-              voucher_type: targetEntry.voucher_type ?? null,
-              is_group: Boolean(targetEntry.is_group),
-              group_id: targetEntry.group_id ?? null,
-              group_name: targetEntry.group_name ?? null,
-            })
-            .eq('id', existing.id)
-
-          if (error) throw error
-        } else {
-          const { error } = await supabase.from('class_logs').insert({
-            staff_id: Number(targetEntry.teacher_id),
-            child_id: Number(targetEntry.child_id),
-            class_date: targetEntry.date,
-            class_time: targetClassTime,
-            status,
-            voucher_type: targetEntry.voucher_type ?? null,
-            is_group: Boolean(targetEntry.is_group),
-            group_id: targetEntry.group_id ?? null,
-            group_name: targetEntry.group_name ?? null,
-          })
-
-          if (error) throw error
-        }
-      }
-
-      if ((status === 'absent' || status === 'same_day_absent') && recordMakeupDate) {
-        const { error: makeupScheduleError } = await supabase.from('schedule_entries').insert({
-          date: recordMakeupDate,
-          time_slot: recordMakeupHour,
-          minute_slot: Number(recordMakeupMinute),
-          room_number: 1,
-          teacher_id: Number(entry.teacher_id),
-          teacher_name: entry.teacher_name ?? '',
-          class_type: 'individual',
-          child_id: Number(entry.child_id),
-          voucher_type: entry.voucher_type ?? '일반',
-          status: 'makeup',
-          note: buildScheduleNoteWithMakeup(`결석 ${entry.date} 수업 보강`, true, entry.date),
-          is_active: true,
-          is_group: false,
-          group_id: null,
-          group_name: null,
-        })
-
-        if (makeupScheduleError) throw makeupScheduleError
-      }
-
-      await loadClassLogsForVisibleScheduleRange()
-      await loadSchedules()
-      await loadMakeupSchedules()
-      if (entry.child_id) {
-        await loadScheduleChildAbsentLogs(Number(entry.child_id))
-      }
-      if (childInfoModal.open && childInfoModal.child && Number(childInfoModal.child.id) === Number(entry.child_id)) {
-        await refreshOpenChildInfo()
-      }
-      setRecordModal({
-        open: false,
-        entry: null,
-        status: 'attended',
-      })
-      setMessage(entry.is_group && targetEntries.length > 1 ? '그룹 출결이 모든 담당 선생님에게 저장되었습니다.' : '출결이 저장되었습니다.')
-    } catch (err: any) {
-      setMessage(err?.message ?? '출결 저장 실패')
-    }
-  }
+  async function handleSaveAttendanceFromModal(){
+ try{
+  const entry=recordModal.entry;if(!entry)return
+  const targets=entry.is_group&&entry.group_id?allScheduleEntries.filter(row=>row.is_active&&row.is_group&&row.group_id===entry.group_id&&row.date===entry.date&&row.time_slot===entry.time_slot&&Number(row.minute_slot??0)===Number(entry.minute_slot??0)&&Number(row.child_id)===Number(entry.child_id)):[entry]
+  const makeup=recordMakeupDate?{date:recordMakeupDate,timeSlot:recordMakeupHour,minuteSlot:Number(recordMakeupMinute)}:null
+  await recordAttendance(targets.map(row=>row.id),recordModal.status,makeup)
+  await Promise.all([loadSchedules(),loadClassLogsForVisibleScheduleRange(),loadMakeupSchedules()])
+  if(entry.child_id)await loadScheduleChildAbsentLogs(Number(entry.child_id))
+  if(childInfoModal.open)await refreshOpenChildInfo()
+  setRecordModal({open:false,entry:null,status:'attended'});setRecordMakeupDate('');setMessage('출결과 보강 예약이 저장되었습니다.')
+ }catch(err:any){setMessage(err.message||'출결 저장 실패')}
+}
 
   async function saveGroupUnitPrice(childId: number, value: string) {
     try {
@@ -3173,77 +2160,7 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
     }
   }
 
-  const validClassLogs = useMemo(() => {
-    const start = `${csvMonth}-01`
-    const endDate = new Date(start)
-    endDate.setMonth(endDate.getMonth() + 1)
-    endDate.setDate(0)
-    const end = toDateString(endDate)
-
-    const monthlySchedules = allScheduleEntries.filter(
-      (row) => row.date >= start && row.date <= end && row.is_active
-    )
-
-    const matchedLogs = classLogs.filter((log) => {
-      const logMinute = getLogMinuteTotal(log)
-      if (logMinute == null) return false
-
-      return monthlySchedules.some((row) => {
-        const rowMinute =
-          Number(row.time_slot.slice(0, 2)) * 60 + Number(row.minute_slot ?? 0)
-
-        if (row.is_group) {
-          return (
-            row.date === log.class_date &&
-            Number(row.teacher_id) === Number(log.staff_id) &&
-            Number(row.child_id) === Number(log.child_id) &&
-            rowMinute === logMinute &&
-            Boolean(log.is_group) &&
-            (row.group_id ?? '') === (log.group_id ?? '')
-          )
-        }
-
-        return (
-          row.date === log.class_date &&
-          Number(row.teacher_id) === Number(log.staff_id) &&
-          Number(row.child_id) === Number(log.child_id) &&
-          rowMinute === logMinute &&
-          !log.is_group
-        )
-      })
-    })
-
-    const dedupedMap = new Map<string, ClassLogRow>()
-
-    matchedLogs.forEach((log) => {
-      const minuteTotal = getLogMinuteTotal(log)
-      if (minuteTotal == null) return
-
-      const key = buildLogicalAttendanceKey({
-        classDate: log.class_date,
-        minuteTotal,
-        staffId: Number(log.staff_id),
-        childId: Number(log.child_id),
-        isGroup: Boolean(log.is_group),
-        groupId: log.group_id ?? null,
-      })
-
-      const prev = dedupedMap.get(key)
-      if (!prev) {
-        dedupedMap.set(key, log)
-        return
-      }
-
-      const prevTime = new Date(prev.updated_at ?? prev.created_at ?? 0).getTime()
-      const nextTime = new Date(log.updated_at ?? log.created_at ?? 0).getTime()
-
-      if (nextTime >= prevTime) {
-        dedupedMap.set(key, log)
-      }
-    })
-
-    return Array.from(dedupedMap.values())
-  }, [allScheduleEntries, classLogs, csvMonth])
+  const validClassLogs = useMemo(() => validAttendance(allScheduleEntries, classLogs).filter(log => log.class_date.startsWith(csvMonth)), [allScheduleEntries,classLogs,csvMonth])
 
   function getIndividualRowAmount(row: ScheduleEntryRow, child: ChildRow, didimIndex: number) {
     const voucherPrices = getVoucherPrices(child)
@@ -3452,7 +2369,7 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
     childInfoAllMakeupRows
       .filter(
         (row) =>
-          row.is_active &&
+          row.is_active && isCompleted(row, childInfoAllLogs) &&
           !row.is_group &&
           !isTimeMakeupScheduleNote(row.note) &&
           row.voucher_type !== '시간보강' &&
@@ -3467,7 +2384,7 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
       })
 
     return makeupDateMap
-  }, [childInfoAllMakeupRows])
+  }, [childInfoAllMakeupRows, childInfoAllLogs])
 
   const childInfoSelectedMonthSection = useMemo(() => {
     const monthLabel = childInfoSelectedMonth || getCurrentMonthKey()
@@ -3504,47 +2421,13 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
   }, [childInfoAllMakeupRows, childInfoAllLogs])
 
 
-  const childInfoUnrecoveredAbsentItems = useMemo<MakeupAbsentProgressRow[]>(() => {
-    const fullMakeupAbsentDateSet = new Set(Array.from(childInfoMakeupDateMap.keys()).filter(Boolean))
-    const staffNameMap = new Map(staffs.map((staff) => [Number(staff.id), staff.name]))
-    const absentDates = Array.from(
-      new Set(
-        childInfoAllLogs
-          .filter((log) => !log.is_group && (log.status === 'absent' || log.status === 'same_day_absent'))
-          .map((log) => log.class_date)
-          .filter(Boolean)
-      )
-    ).sort()
-
-    return absentDates
-      .map((absentDate) => {
-        const absentLog = childInfoAllLogs.find(
-          (log) => !log.is_group && log.class_date === absentDate && (log.status === 'absent' || log.status === 'same_day_absent')
-        )
-        const completedByFullMakeup = fullMakeupAbsentDateSet.has(absentDate)
-        const completedMinutes = completedByFullMakeup
-          ? MAKEUP_REQUIRED_MINUTES
-          : Math.min(MAKEUP_REQUIRED_MINUTES, childInfoTimeMakeupMinuteMap.get(absentDate) ?? 0)
-        const remainingMinutes = Math.max(0, MAKEUP_REQUIRED_MINUTES - completedMinutes)
-
-        return {
-          absent_date: absentDate,
-          teacher_name: absentLog ? staffNameMap.get(Number(absentLog.staff_id)) ?? '' : '',
-          required_minutes: MAKEUP_REQUIRED_MINUTES,
-          completed_minutes: completedMinutes,
-          remaining_minutes: remainingMinutes,
-          completed: completedMinutes >= MAKEUP_REQUIRED_MINUTES,
-        }
-      })
-      .filter((row) => !row.completed)
-  }, [childInfoAllLogs, childInfoMakeupDateMap, childInfoTimeMakeupMinuteMap, staffs])
-
-  const childInfoUnrecoveredAbsentAll = useMemo(() => {
-    return childInfoUnrecoveredAbsentItems
-      .map((row) => `${row.absent_date}${row.teacher_name ? ` (${row.teacher_name})` : ''} (${row.completed_minutes}/${row.required_minutes}분, 남음 ${row.remaining_minutes}분)`)
-      .join(', ')
-  }, [childInfoUnrecoveredAbsentItems])
-
+  const childInfoBalanceRows = useMemo(() => makeupBalances(childInfoAllMakeupRows, childInfoAllLogs), [childInfoAllMakeupRows,childInfoAllLogs])
+  const childInfoUnrecoveredAbsentItems = useMemo<MakeupAbsentProgressRow[]>(() => childInfoBalanceRows.filter(b=>b.remainingMinutes>0).map(b=>({
+    absent_date:b.absence.class_date,
+    teacher_name:staffs.find(s=>Number(s.id)===b.absence.staff_id)?.name ?? '',
+    required_minutes:MAKEUP_REQUIRED_MINUTES,completed_minutes:b.usedMinutes,remaining_minutes:b.remainingMinutes,completed:false
+  })),[childInfoBalanceRows,staffs])
+  const childInfoUnrecoveredAbsentAll = useMemo(() => childInfoBalanceRows.map(balanceText).join(' / '),[childInfoBalanceRows])
 
   function askCsvMonth() {
     const defaultMonth = dailyDate ? dailyDate.slice(0, 7) : toDateString(new Date()).slice(0, 7)
@@ -3561,245 +2444,69 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
   }
 
   async function downloadStudentCsv() {
-    try {
-      setMessage('')
-
-      const targetMonth = askCsvMonth()
-      if (!targetMonth) return
-
-      const start = `${targetMonth}-01`
-      const endDate = new Date(start)
-      endDate.setMonth(endDate.getMonth() + 1)
-      endDate.setDate(0)
-      const end = toDateString(endDate)
-
-      const [
-        { data: scheduleData, error: scheduleError },
-        { data: logData, error: logError },
-        { data: groupPriceData, error: groupPriceError },
-      ] = await Promise.all([
-        supabase
-          .from('schedule_entries')
-          .select('*')
-          .gte('date', start)
-          .lte('date', end)
-          .eq('is_active', true)
-          .order('date', { ascending: true })
-          .order('time_slot', { ascending: true })
-          .order('minute_slot', { ascending: true }),
-        supabase
-          .from('class_logs')
-          .select('*')
-          .gte('class_date', start)
-          .lte('class_date', end)
-          .order('class_date', { ascending: true }),
-        supabase
-          .from('monthly_group_prices')
-          .select('child_id, month_key, unit_price')
-          .eq('month_key', targetMonth),
-      ])
-
-      if (scheduleError) throw scheduleError
-      if (logError) throw logError
-      if (groupPriceError) throw groupPriceError
-
-      const monthlyScheduleRows = (scheduleData ?? []) as ScheduleEntryRow[]
-      const monthlyLogs = (logData ?? []) as ClassLogRow[]
-      const monthlyGroupPriceMap = new Map<number, number>()
-      ;((groupPriceData ?? []) as MonthlyGroupPriceRow[]).forEach((row) => {
-        monthlyGroupPriceMap.set(Number(row.child_id), Number(row.unit_price ?? 0))
-      })
-
-      const monthRows = children
-        .filter((child) => child.is_active)
-        .map((child) => {
-          const scheduleRows = monthlyScheduleRows.filter(
-            (row) => Number(row.child_id) === Number(child.id)
-          )
-          const attendanceRows = monthlyLogs.filter(
-            (log) => Number(log.child_id) === Number(child.id)
-          )
-
-          const groupRows = scheduleRows.filter((row) => Boolean(row.is_group))
-          const individualRows = scheduleRows.filter((row) => !row.is_group)
-
-          let didimCounter = 0
-          let individualAmount = 0
-
-          individualRows.forEach((row) => {
-            if (row.voucher_type === '디딤') {
-              didimCounter++
-              individualAmount += getIndividualRowAmount(row, child, didimCounter)
-            } else {
-              individualAmount += getIndividualRowAmount(row, child, didimCounter)
-            }
-          })
-
-          const groupUnitPrice = Number(monthlyGroupPriceMap.get(child.id) ?? 0)
-          const groupAmount = groupRows.length * groupUnitPrice
-
-          return [
-            targetMonth,
-            child.child_name,
-            getAgeText(child.birth_date),
-            getVoucherLabel(child.vouchers),
-            individualRows.length,
-            groupRows.length,
-            attendanceRows.filter((row) => !row.is_group && row.status === 'absent').length,
-            groupUnitPrice,
-            individualAmount + groupAmount,
-          ]
-        })
-
-      downloadCsvFile(
-        `학생CSV_${targetMonth}_월전체.csv`,
-        ['월', '학생', '나이', '바우처', '출석+보강횟수', '그룹횟수', '결석', '그룹단가', '총금액'],
-        monthRows
-      )
-    } catch (err: any) {
-      setMessage(err?.message ?? '학생 CSV 생성 실패')
-    }
-  }
+ try { const targetMonth=askCsvMonth(); if(!targetMonth) return
+ const [year,month]=targetMonth.split('-').map(Number)
+ if(month<1||month>12) throw new Error('월은 01~12입니다.')
+ const start=targetMonth+'-01',end=targetMonth+'-'+new Date(year,month,0).getDate()
+ const history=await loadReportHistory(end)
+ const allSchedules=history.schedules as ScheduleEntryRow[], allLogs=history.logs as ClassLogRow[]
+ const monthlySchedules=allSchedules.filter(r=>r.is_active && r.date>=start && r.date<=end)
+ const monthlyLogs=validAttendance(allSchedules,allLogs).filter(l=>l.class_date>=start && l.class_date<=end)
+ const balances=makeupBalances(allSchedules,allLogs)
+ const priceRows=await fetchAllRows<MonthlyGroupPriceRow>('monthly_group_prices')
+ const prices=new Map(priceRows.filter(r=>r.month_key===targetMonth).map(r=>[Number(r.child_id),Number(r.unit_price??0)]))
+ const rows=children.filter(c=>c.is_active).map(child=>{
+ const schedules=monthlySchedules.filter(r=>Number(r.child_id)===child.id)
+ const individual=schedules.filter(r=>!r.is_group),groupSchedules=schedules.filter(r=>r.is_group)
+ const group=Array.from(new Map(groupSchedules.map(r=>[[r.date,r.time_slot,r.minute_slot??0,r.group_id].join('|'),r])).values())
+ const completed=individual.filter(r=>isCompleted(r,allLogs))
+ const logs=monthlyLogs.filter(l=>l.child_id===child.id)
+ const balance=balances.filter(b=>b.absence.child_id===child.id)
+ let didim=0, amount=0
+ individual.sort((a,b)=>a.date.localeCompare(b.date)).forEach(r=>{if(r.voucher_type==='디딤')didim++;amount+=getIndividualRowAmount(r,child,didim)})
+ const groupPrice=prices.get(child.id)??0
+ return [targetMonth,child.child_name,getAgeText(child.birth_date),getVoucherLabel(child.vouchers),
+ completed.filter(r=>makeupKind(r)==='일반수업').length,completed.filter(r=>makeupKind(r)==='일보강').length,
+ completed.filter(r=>makeupKind(r)==='시간보강').length,completed.filter(r=>makeupKind(r)==='시간보강').reduce((sum,r)=>sum+plannedMinutes(r),0),
+ group.filter(r=>groupSchedules.some(other=>other.date===r.date && other.time_slot===r.time_slot && (other.minute_slot??0)===(r.minute_slot??0) && other.group_id===r.group_id && isCompleted(other,allLogs))).length,logs.filter(l=>!l.is_group&&l.status==='absent').length,logs.filter(l=>!l.is_group&&l.status==='same_day_absent').length,
+ balance.filter(b=>b.remainingMinutes>0).length,balance.reduce((sum,b)=>sum+b.remainingMinutes,0),balance.map(balanceText).join(' / '),
+ individual.length,group.length,groupPrice,amount+group.length*groupPrice]
+ })
+ downloadCsvFile('학생CSV_'+targetMonth+'_월전체.csv',['월','학생','나이','바우처','일반출석완료','일보강완료','시간보강사용횟수','시간보강완료분','그룹출석완료','결석','당일결석','미완료보강건(누적)','잔여보강분(누적)','보강상세(월말기준)','개인예정건수','그룹예정건수','그룹단가','일정기준금액'],rows)
+ } catch(err:any){setMessage(err.message||'학생 CSV 생성 실패')}
+ }
 
   async function downloadStaffCsv() {
-    try {
-      setMessage('')
-
-      const targetMonth = askCsvMonth()
-      if (!targetMonth) return
-
-      const start = `${targetMonth}-01`
-      const endDate = new Date(start)
-      endDate.setMonth(endDate.getMonth() + 1)
-      endDate.setDate(0)
-      const end = toDateString(endDate)
-
-      const { data, error } = await supabase
-        .from('schedule_entries')
-        .select('*')
-        .gte('date', start)
-        .lte('date', end)
-        .eq('is_active', true)
-        .order('date', { ascending: true })
-        .order('time_slot', { ascending: true })
-        .order('minute_slot', { ascending: true })
-
-      if (error) throw error
-
-      const monthRows = ((data ?? []) as ScheduleEntryRow[]).map((row) => {
-        const child = children.find((c) => c.id === Number(row.child_id))
-        return [
-          row.date,
-          row.teacher_name,
-          row.time_slot,
-          String(row.minute_slot ?? 0).padStart(2, '0'),
-          child?.child_name ?? row.child_id,
-          row.voucher_type,
-          row.is_group ? row.group_name || '그룹수업' : '',
-        ]
-      })
-
-      downloadCsvFile(
-        `선생님CSV_${targetMonth}_월전체.csv`,
-        ['날짜', '선생님', '시간', '분', '학생', '바우처', '그룹'],
-        monthRows
-      )
-    } catch (err: any) {
-      setMessage(err?.message ?? '선생님 CSV 생성 실패')
-    }
-  }
+ const month=askCsvMonth();if(!month)return
+ try {
+  setMessage('선생님 CSV를 준비하고 있습니다…')
+  const r=await fetch('/api/admin/staff-csv?month='+encodeURIComponent(month),{cache:'no-store'})
+  if(!r.ok)throw new Error('선생님 CSV 조회 실패: 관리자 로그인 상태를 확인해 주세요.')
+  const url=URL.createObjectURL(await r.blob());const a=document.createElement('a');a.href=url;a.download='선생님CSV_'+month+'_월전체.csv';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)
+  setMessage('선생님 CSV 다운로드 완료: 보강 내역과 확인사항 열을 확인하세요.')
+ } catch(e) {setMessage(e instanceof Error?e.message:'CSV 생성 실패')}
+}
 
   async function downloadWeeklyAttendanceCsv() {
-    try {
-      setMessage('')
-
-      const targetMonth = askCsvMonth()
-      if (!targetMonth) return
-
-      const start = `${targetMonth}-01`
-      const endDate = new Date(start)
-      endDate.setMonth(endDate.getMonth() + 1)
-      endDate.setDate(0)
-      const end = toDateString(endDate)
-
-      const { data, error } = await supabase
-        .from('class_logs')
-        .select('*')
-        .gte('class_date', start)
-        .lte('class_date', end)
-        .order('class_date', { ascending: true })
-
-      if (error) throw error
-
-      const monthlyLogs = (data ?? []) as ClassLogRow[]
-      const weeksInMonth = getWeeksInMonth(targetMonth)
-      const weekNumbers = Array.from({ length: weeksInMonth }, (_, i) => i + 1)
-
-      const rowMap = new Map<number, WeeklyAttendanceRow>()
-
-      monthlyLogs.forEach((log) => {
-        const child = children.find((c) => Number(c.id) === Number(log.child_id))
-        if (!child) return
-
-        const childId = Number(child.id)
-
-        if (!rowMap.has(childId)) {
-          const weekCells: WeeklyAttendanceRow['week_cells'] = {}
-
-          weekNumbers.forEach((week) => {
-            weekCells[String(week)] = { positive: [], negative: [] }
-          })
-
-          rowMap.set(childId, {
-            child_id: childId,
-            child_name: child.child_name,
-            age_text: getAgeText(child.birth_date),
-            week_cells: weekCells,
-          })
-        }
-
-        const row = rowMap.get(childId)!
-        const week = String(getWeekOfMonth(log.class_date))
-
-        if (!row.week_cells[week]) {
-          row.week_cells[week] = { positive: [], negative: [] }
-        }
-
-        if (log.status === 'attended' || log.status === 'makeup') {
-          row.week_cells[week].positive.push(log.class_date)
-        }
-
-        if (log.status === 'absent' || log.status === 'same_day_absent') {
-          row.week_cells[week].negative.push(log.class_date)
-        }
-      })
-
-      const headers = [
-        '학생이름(나이)',
-        ...weekNumbers.flatMap((week) => [
-          `${week}주차 출석/보강`,
-          `${week}주차 결석`,
-        ]),
-      ]
-
-      const rows = Array.from(rowMap.values())
-        .sort((a, b) => a.child_name.localeCompare(b.child_name, 'ko'))
-        .map((row) => [
-          row.age_text ? `${row.child_name}(${row.age_text})` : row.child_name,
-          ...weekNumbers.flatMap((week) => {
-            const cell = row.week_cells[String(week)] ?? { positive: [], negative: [] }
-            return [
-              uniqueSortedMonthDayArray(cell.positive).join(', '),
-              uniqueSortedMonthDayArray(cell.negative).join(', '),
-            ]
-          }),
-        ])
-
-      downloadCsvFile(`주차별출결CSV_${targetMonth}.csv`, headers, rows)
-    } catch (err: any) {
-      setMessage(err?.message ?? '주차별 출결 CSV 생성 실패')
-    }
-  }
+ try { const targetMonth=askCsvMonth(); if(!targetMonth) return
+ const [year,month]=targetMonth.split('-').map(Number)
+ if(month<1||month>12) throw new Error('월은 01~12입니다.')
+ const start=targetMonth+'-01',end=targetMonth+'-'+new Date(year,month,0).getDate()
+ const history=await loadReportHistory(end)
+ const allSchedules=history.schedules as ScheduleEntryRow[], allLogs=history.logs as ClassLogRow[]
+ const monthlySchedules=allSchedules.filter(r=>r.is_active && r.date>=start && r.date<=end)
+ const monthlyLogs=validAttendance(allSchedules,allLogs).filter(l=>l.class_date>=start && l.class_date<=end)
+ const weekNumbers=Array.from({length:getWeeksInMonth(targetMonth)},(_,i)=>i+1)
+ const rows=children.filter(c=>c.is_active && monthlyLogs.some(l=>l.child_id===c.id)).map(child=>[
+ child.child_name,
+ ...weekNumbers.flatMap(week=>{
+ const logs=monthlyLogs.filter(l=>l.child_id===child.id&&getWeekOfMonth(l.class_date)===week)
+ const label=(l:ClassLogRow)=>{const schedule=monthlySchedules.find(r=>matchesSchedule(r,l));return l.class_date+' '+(schedule?makeupKind(schedule):'')+' '+getStatusLabel(l.status)+(schedule&&absentDate(schedule)?' (결석일 '+absentDate(schedule)+')':'')}
+ return [logs.filter(l=>l.status==='attended'||l.status==='makeup').map(label).join(' / '),logs.filter(l=>l.status==='absent'||l.status==='same_day_absent').map(label).join(' / ')]
+ })])
+ downloadCsvFile('주차별출결CSV_'+targetMonth+'.csv',['학생',...weekNumbers.flatMap(w=>[w+'주차 출석/보강',w+'주차 결석'])],rows)
+ } catch(err:any){setMessage(err.message||'주차별 CSV 생성 실패')}
+ }
 
   function handleLogout() {
     localStorage.removeItem('staff_id')
@@ -4270,6 +2977,7 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
             >
               정기수업관리
             </button>
+            <button onClick={() => { window.location.href = "/admin/monthly-lessons" }} className="rounded-xl bg-indigo-700 px-4 py-2 text-white">월별 수업·이월</button>
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
@@ -5251,7 +3959,7 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
                         setRegularForm((p) => ({
                           ...p,
                           childId: matchedChild.id,
-                          voucherType: nextOptions.includes(p.voucherType) ? p.voucherType : '',
+                          voucherType: nextOptions.includes(p.voucherType ?? "") ? p.voucherType : '',
                         }))
                       } else {
                         setRegularForm((p) => ({ ...p, childId: '' }))
@@ -5989,12 +4697,13 @@ async function handleSaveSchedule(dateStr: string, hourSlot: string, staffId: nu
 
                     <div className="rounded-xl border border-rose-200 bg-white p-3">
                       <div className="mb-2 font-bold text-rose-700">미보강결석</div>
+                      <div className="mb-3 text-xs text-slate-700">보강 사용 내역 (현재 누적): {childInfoUnrecoveredAbsentAll || '없음'}</div>
                       {childInfoUnrecoveredAbsentItems.length === 0 ? (
                         <div>-</div>
                       ) : (
                         <div className="space-y-2">
-                          {childInfoUnrecoveredAbsentItems.map((row) => (
-                            <div key={row.absent_date} className="rounded-lg bg-rose-50 px-3 py-2">
+                          {childInfoUnrecoveredAbsentItems.map((row, index) => (
+                            <div key={`${row.absent_date}-${index}`} className="rounded-lg bg-rose-50 px-3 py-2">
                               <div className="font-semibold text-rose-800">{row.absent_date}{row.teacher_name ? ` (${row.teacher_name})` : ''}</div>
                               <div className="text-xs text-rose-700">
                                 진행 {row.completed_minutes}/{row.required_minutes}분 / 남음 {row.remaining_minutes}분

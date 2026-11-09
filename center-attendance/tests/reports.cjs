@@ -1,0 +1,28 @@
+const fs=require('fs'),ts=require('typescript'),assert=require('node:assert/strict');
+const dir=fs.mkdtempSync(require('node:path').join(require('node:os').tmpdir(),'center-report-test-'));
+for(const f of ['makeupPolicy','attendanceReport','staffCsv'])fs.writeFileSync(dir+'/'+f+'.js',ts.transpileModule(fs.readFileSync(__dirname+'/../lib/'+f+'.ts','utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2020}}).outputText);
+const r=require(dir+'/attendanceReport.js');
+const schedule=(id,date,note='',extra={})=>({id,date,time_slot:'09:00',minute_slot:30,teacher_id:2,child_id:1,is_active:true,note,...extra});
+const log=(id,date,status,extra={})=>({id,class_date:date,class_time:date+'T00:30:00Z',staff_id:2,child_id:1,status,...extra});
+const abs=schedule('abs','2026-05-05');const lesson=schedule('makeup','2026-10-10','[보강] [결석일:2026-05-05]',{voucher_type:'아청심2'});
+assert.equal(r.makeupKind(lesson),'일보강');assert.equal(r.absentDate(lesson),'2026-05-05');
+assert.equal(r.matchesSchedule(lesson,log(2,'2026-10-10','makeup')),true);
+let b=r.makeupBalances([abs,lesson],[log(1,'2026-05-05','absent')])[0];assert.equal(b.remainingMinutes,40);assert.equal(b.reservedMinutes,40);
+b=r.makeupBalances([abs,lesson],[log(1,'2026-05-05','absent'),log(2,'2026-10-10','makeup')])[0];assert.equal(b.remainingMinutes,0);
+const ten=schedule('ten','2026-10-11','[시간보강:10분] [결석일:2026-05-05]');
+const twenty=schedule('twenty','2026-10-12','[시간보강:20분] [결석일:2026-05-05]');
+const logs=[log(1,'2026-05-05','absent'),log(3,'2026-10-11','attended'),log(4,'2026-10-12','makeup')];
+b=r.makeupBalances([abs,ten,twenty],logs)[0];assert.equal(b.usedCount,2);assert.equal(b.usedMinutes,30);assert.equal(b.remainingMinutes,10);
+assert.equal(r.validAttendance([{...twenty,is_active:false}],logs).length,0);
+assert.equal(r.latestLog(twenty,[...logs,log(5,'2026-10-12','absent')]).status,'absent');
+const other=schedule('other','2026-05-05','',{minute_slot:40});
+b=r.makeupBalances([abs,other,ten],[...logs,log(6,'2026-05-05','absent',{class_time:'2026-05-05T00:40:00Z'})])[0];assert.equal(b.ambiguous,true);assert.equal(b.usedMinutes,0);
+// The authenticated download endpoint uses this same report builder.
+const {staffCsvRows,csvText,STAFF_CSV_HEADERS}=require(dir+'/staffCsv.js');
+const report=staffCsvRows('2026-10',[abs,{...lesson,teacher_name:'테스트교사'},ten,twenty],[...logs,log(2,'2026-10-10','makeup')],[{id:1,child_name:'테스트학생'}],[{id:2,name:'테스트교사'}]);
+assert.equal(report.length,3);assert.equal(report.filter(row=>row[6]==='시간보강').length,2);assert(report[0].includes('일보강'));assert(report[0].includes('2026-05-05'));assert(report[0].includes(40));
+const orphanLog=log(999,'2026-10-20','makeup');const review=staffCsvRows('2026-10',[],[orphanLog],[],[]);assert.equal(review.length,1);assert.equal(review[0][6],'보강(일정 연결 없음)');
+const cancelled=staffCsvRows('2026-10',[{...lesson,is_active:false}],[log(2,'2026-10-10','makeup')],[],[]);assert.equal(cancelled.length,0);
+assert(csvText(['name'],[['=formula']]).includes("'=formula"));assert.equal(STAFF_CSV_HEADERS.length,report[0].length);
+console.log('PASS: staff CSV keeps day/time makeup and unlinked-review rows, excludes cancellations, exports absence dates and 40-minute totals, escapes formula cells');
+fs.rmSync(dir,{recursive:true,force:true});

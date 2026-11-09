@@ -4,6 +4,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
+import { saveRegularChange, askEffectiveDate } from '@/lib/regularClient'
 
 type StaffRole = 'admin' | 'employee'
 
@@ -159,18 +160,11 @@ function getWeekdayLabel(weekday: number) {
   return ['일', '월', '화', '수', '목', '금', '토'][weekday] ?? ''
 }
 
-function buildRegularNoteTag(ruleId: number) {
-  return `[정기수업:${ruleId}]`
-}
 
-function buildRegularGroupNoteTag(ruleId: number) {
-  return `[정기그룹:${ruleId}]`
-}
 
-function buildAssistantTeacherTag(teacherId: number | '', teacherName: string) {
-  if (!teacherId) return ''
-  return `[보조교사:${teacherId}:${teacherName}]`
-}
+
+
+
 
 function parseAssistantTeacherId(note?: string | null) {
   if (!note) return null
@@ -184,92 +178,21 @@ function stripAssistantTeacherTag(note?: string | null) {
   return note.replace(/\s*\[보조교사:\d+:.*?\]\s*/g, ' ').trim()
 }
 
-function getDateRangeMatchingWeekday(
-  startDate: string,
-  endDate: string,
-  weekday: number
-) {
-  const result: string[] = []
-  const start = new Date(startDate)
-  const end = new Date(endDate)
 
-  start.setHours(0, 0, 0, 0)
-  end.setHours(0, 0, 0, 0)
 
-  for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
-    if (d.getDay() === weekday) {
-      result.push(toDateString(new Date(d)))
-    }
-  }
 
-  return result
-}
 
-function toMinuteNumberFromTimestamp(value?: string | null) {
-  if (!value) return null
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return null
-  return date.getHours() * 60 + date.getMinutes()
-}
 
-function getEntryMinuteTotal(entry: {
-  time_slot: string
-  minute_slot?: number | null
-}) {
-  return Number(entry.time_slot.slice(0, 2)) * 60 + Number(entry.minute_slot ?? 0)
-}
 
-function getLogMinuteTotal(log: { class_time: string }) {
-  return toMinuteNumberFromTimestamp(log.class_time)
-}
 
-function buildLogicalAttendanceKey(params: {
-  classDate: string
-  minuteTotal: number
-  staffId: number
-  childId: number
-  isGroup?: boolean | null
-  groupId?: string | null
-}) {
-  return [
-    params.classDate,
-    params.minuteTotal,
-    Number(params.staffId),
-    Number(params.childId),
-    params.isGroup ? 'group' : 'single',
-    params.groupId ?? '',
-  ].join('|')
-}
 
-function chunkArray<T>(items: T[], size: number) {
-  if (items.length === 0) return []
-  const result: T[][] = []
-  for (let i = 0; i < items.length; i += size) {
-    result.push(items.slice(i, i + size))
-  }
-  return result
-}
 
-async function deactivateScheduleEntriesByIds(ids: string[]) {
-  const uniqueIds = Array.from(new Set(ids.filter(Boolean)))
-  const chunks = chunkArray(uniqueIds, 200)
-  for (const chunk of chunks) {
-    const { error } = await supabase
-      .from('schedule_entries')
-      .update({ is_active: false })
-      .in('id', chunk)
-    if (error) throw error
-  }
-}
 
-async function insertScheduleEntriesInChunks(rows: Record<string, any>[]) {
-  if (rows.length === 0) return
-  const chunks = chunkArray(rows, 200)
-  for (const chunk of chunks) {
-    const { error } = await supabase.from('schedule_entries').insert(chunk)
-    if (error) throw error
-  }
-}
+
+
+
+
+
 
 function getVoucherOptionsForChild(childId: number | '', children: ChildRow[]) {
   if (!childId) return ['일반']
@@ -497,12 +420,7 @@ export default function Page() {
     setRegularGroupMembers((data ?? []) as RegularGroupClassMemberRow[])
   }
 
-  async function loadScheduleEntries() {
-    const { error } = await supabase
-      .from('schedule_entries')
-      .select('id', { count: 'exact', head: true })
-    if (error) throw error
-  }
+  
 
   async function loadAll() {
     try {
@@ -526,326 +444,13 @@ export default function Page() {
     void loadAll()
   }, [])
 
-  async function splitLoggedSchedules(scheduleRows: ScheduleEntryRow[]) {
-    if (scheduleRows.length === 0) {
-      return {
-        loggedRows: [] as ScheduleEntryRow[],
-        unloggedRows: [] as ScheduleEntryRow[],
-      }
-    }
+  
 
-    const minDate = scheduleRows.map((r) => r.date).sort()[0]
-    const maxDate = scheduleRows.map((r) => r.date).sort().slice(-1)[0]
-    const childIds = Array.from(
-      new Set(scheduleRows.map((r) => Number(r.child_id)).filter(Boolean))
-    )
-    const staffIds = Array.from(
-      new Set(scheduleRows.map((r) => Number(r.teacher_id)).filter(Boolean))
-    )
+  
 
-    let query = supabase
-      .from('class_logs')
-      .select('id, staff_id, child_id, class_date, class_time, status, is_group, group_id')
-      .gte('class_date', minDate)
-      .lte('class_date', maxDate)
+  
 
-    if (childIds.length > 0) query = query.in('child_id', childIds)
-    if (staffIds.length > 0) query = query.in('staff_id', staffIds)
-
-    const { data, error } = await query
-    if (error) throw error
-
-    const logs = (data ?? []) as ClassLogRow[]
-
-    const loggedKeySet = new Set(
-      logs
-        .map((log) => {
-          const minuteTotal = getLogMinuteTotal(log)
-          if (minuteTotal == null) return ''
-
-          return buildLogicalAttendanceKey({
-            classDate: log.class_date,
-            minuteTotal,
-            staffId: Number(log.staff_id),
-            childId: Number(log.child_id),
-            isGroup: Boolean(log.is_group),
-            groupId: log.group_id ?? null,
-          })
-        })
-        .filter(Boolean)
-    )
-
-    const loggedRows: ScheduleEntryRow[] = []
-    const unloggedRows: ScheduleEntryRow[] = []
-
-    scheduleRows.forEach((row) => {
-      const key = buildLogicalAttendanceKey({
-        classDate: row.date,
-        minuteTotal: getEntryMinuteTotal(row),
-        staffId: Number(row.teacher_id),
-        childId: Number(row.child_id),
-        isGroup: Boolean(row.is_group),
-        groupId: row.group_id ?? null,
-      })
-
-      if (loggedKeySet.has(key)) {
-        loggedRows.push(row)
-      } else {
-        unloggedRows.push(row)
-      }
-    })
-
-    return { loggedRows, unloggedRows }
-  }
-
-  async function upsertSingleRegularSchedules(
-    ruleId: number,
-    payload: {
-      childId: number
-      teacherId: number
-      teacherName: string
-      weekday: number
-      timeSlot: string
-      minuteSlot: number
-      startDate: string
-      endDate: string
-      voucherType: string
-      note: string
-    }
-  ) {
-    const tag = buildRegularNoteTag(ruleId)
-
-    const { data: existingRows, error: existingError } = await supabase
-      .from('schedule_entries')
-      .select(`
-        id,
-        date,
-        time_slot,
-        minute_slot,
-        teacher_id,
-        child_id,
-        is_group,
-        group_id
-      `)
-      .like('note', `${tag}%`)
-      .gte('date', payload.startDate)
-      .lte('date', payload.endDate)
-      .eq('is_active', true)
-
-    if (existingError) throw existingError
-
-    const { loggedRows, unloggedRows } = await splitLoggedSchedules(
-      (existingRows ?? []) as ScheduleEntryRow[]
-    )
-
-    if (unloggedRows.length > 0) {
-      const { error } = await supabase
-        .from('schedule_entries')
-        .update({ is_active: false })
-        .in('id', unloggedRows.map((r) => r.id))
-
-      if (error) throw error
-    }
-
-    const keepKeys = new Set(
-      loggedRows.map((row) =>
-        buildLogicalAttendanceKey({
-          classDate: row.date,
-          minuteTotal: getEntryMinuteTotal(row),
-          staffId: Number(row.teacher_id),
-          childId: Number(row.child_id),
-          isGroup: false,
-          groupId: null,
-        })
-      )
-    )
-
-    const generatedDates = getDateRangeMatchingWeekday(
-      payload.startDate,
-      payload.endDate,
-      payload.weekday
-    )
-
-    const rowsToInsert = generatedDates
-      .map((date) => ({
-        date,
-        time_slot: payload.timeSlot,
-        minute_slot: payload.minuteSlot,
-        room_number: 1,
-        teacher_id: payload.teacherId,
-        teacher_name: payload.teacherName,
-        class_type: 'individual',
-        child_id: payload.childId,
-        voucher_type: payload.voucherType,
-        status: 'scheduled',
-        note: `${tag}${payload.note ? ` ${payload.note}` : ''}`,
-        is_active: true,
-        is_group: false,
-        group_id: null,
-        group_name: null,
-      }))
-      .filter((row) => {
-        const key = buildLogicalAttendanceKey({
-          classDate: row.date,
-          minuteTotal:
-            Number(row.time_slot.slice(0, 2)) * 60 + Number(row.minute_slot ?? 0),
-          staffId: Number(row.teacher_id),
-          childId: Number(row.child_id),
-          isGroup: false,
-          groupId: null,
-        })
-
-        return !keepKeys.has(key)
-      })
-
-    if (rowsToInsert.length > 0) {
-      const { error } = await supabase.from('schedule_entries').insert(rowsToInsert)
-      if (error) throw error
-    }
-
-    return {
-      loggedRows,
-      unloggedRows,
-      insertedCount: rowsToInsert.length,
-    }
-  }
-
-  function pushRegularGroupDebug(message: string, extra?: any) {
-    const now = new Date()
-    const hh = String(now.getHours()).padStart(2, '0')
-    const mm = String(now.getMinutes()).padStart(2, '0')
-    const ss = String(now.getSeconds()).padStart(2, '0')
-    const line =
-      extra === undefined
-        ? `[${hh}:${mm}:${ss}] ${message}`
-        : `[${hh}:${mm}:${ss}] ${message} ${typeof extra === 'string' ? extra : JSON.stringify(extra)}`
-    console.log('[regular-group-visible-debug]', line)
-    setRegularGroupDebugSteps((prev) => [...prev, line])
-  }
-
-  async function upsertGroupRegularSchedules(
-    ruleId: number,
-    payload: {
-      teacherId: number
-      teacherName: string
-      teacherId2?: number | null
-      teacherName2?: string | null
-      weekday: number
-      timeSlot: string
-      minuteSlot: number
-      startDate: string
-      endDate: string
-      groupName: string
-      note: string
-      childIds: number[]
-    }
-  ) {
-    pushRegularGroupDebug('9. 그룹 일정 처리 시작', {
-      ruleId,
-      childIdsCount: payload.childIds.length,
-      startDate: payload.startDate,
-      endDate: payload.endDate,
-      teacherId: payload.teacherId,
-      teacherId2: payload.teacherId2 ?? null,
-    })
-
-    const { data: existingRows, error: existingError } = await supabase
-      .from('schedule_entries')
-      .select(`
-        id,
-        date,
-        time_slot,
-        minute_slot,
-        teacher_id,
-        child_id,
-        is_group,
-        group_id
-      `)
-      .eq('group_id', String(ruleId))
-      .eq('is_group', true)
-      .eq('is_active', true)
-      .gte('date', payload.startDate)
-      .lte('date', payload.endDate)
-
-    if (existingError) throw existingError
-
-    const { loggedRows, unloggedRows } = await splitLoggedSchedules(
-      (existingRows ?? []) as ScheduleEntryRow[]
-    )
-
-    if (unloggedRows.length > 0) {
-      await deactivateScheduleEntriesByIds(unloggedRows.map((r) => r.id))
-    }
-
-    const keepKeys = new Set(
-      loggedRows.map((row) =>
-        buildLogicalAttendanceKey({
-          classDate: row.date,
-          minuteTotal: getEntryMinuteTotal(row),
-          staffId: Number(row.teacher_id),
-          childId: Number(row.child_id),
-          isGroup: true,
-          groupId: String(ruleId),
-        })
-      )
-    )
-
-    const dates = getDateRangeMatchingWeekday(
-      payload.startDate,
-      payload.endDate,
-      payload.weekday
-    )
-
-    const teacherPairs = [
-      { id: payload.teacherId, name: payload.teacherName },
-      payload.teacherId2
-        ? { id: Number(payload.teacherId2), name: payload.teacherName2 ?? '' }
-        : null,
-    ].filter((teacher): teacher is { id: number; name: string } => Boolean(teacher))
-
-    const rowsToInsert = dates
-      .flatMap((date) =>
-        payload.childIds.flatMap((childId) =>
-          teacherPairs.map((teacher) => ({
-            date,
-            time_slot: payload.timeSlot,
-            minute_slot: payload.minuteSlot,
-            room_number: 1,
-            teacher_id: teacher.id,
-            teacher_name: teacher.name,
-            class_type: 'group',
-            child_id: childId,
-            voucher_type: '그룹수업',
-            status: 'scheduled',
-            note: `${buildRegularGroupNoteTag(ruleId)}${payload.note ? ` ${payload.note}` : ''}`,
-            is_active: true,
-            is_group: true,
-            group_id: String(ruleId),
-            group_name: payload.groupName,
-          }))
-        )
-      )
-      .filter((row) => {
-        const key = buildLogicalAttendanceKey({
-          classDate: row.date,
-          minuteTotal:
-            Number(row.time_slot.slice(0, 2)) * 60 + Number(row.minute_slot ?? 0),
-          staffId: Number(row.teacher_id),
-          childId: Number(row.child_id),
-          isGroup: true,
-          groupId: String(ruleId),
-        })
-        return !keepKeys.has(key)
-      })
-
-    await insertScheduleEntriesInChunks(rowsToInsert)
-
-    return {
-      loggedRows,
-      unloggedRows,
-      insertedCount: rowsToInsert.length,
-    }
-  }
+  
 
   function syncRegularGroupChildInput(index: number, value: string) {
     const nextInputs = [...regularGroupChildInputs]
@@ -967,368 +572,61 @@ export default function Page() {
   }
 
   async function handleSaveRegularClass() {
-    try {
-      if (
-        !regularForm.childId ||
-        !regularForm.teacherId ||
-        regularForm.weekday === '' ||
-        !regularForm.startDate ||
-        !regularForm.voucherType
-      ) {
-        setMessage('학생, 선생님, 요일, 시작일, 바우처를 확인하세요.')
-        return
-      }
-
-      if (editingRegularClassId && !regularChangeStartDate) {
-        setMessage('수업변경 시작 날짜를 선택하세요.')
-        return
-      }
-
-      const endDate =
-        regularForm.endDate || addYearsDate(regularForm.startDate, 5)
-      const effectiveStartDate = editingRegularClassId
-        ? regularChangeStartDate
-        : regularForm.startDate
-
-      if (effectiveStartDate > endDate) {
-        setMessage('수업변경 시작 날짜가 종료일보다 늦을 수 없습니다.')
-        return
-      }
-
-      const payload = {
-        child_id: Number(regularForm.childId),
-        teacher_id: Number(regularForm.teacherId),
-        weekday: Number(regularForm.weekday),
-        time_slot: regularForm.timeSlot,
-        minute_slot: Number(regularForm.minuteSlot),
-        start_date: editingRegularClassId ? regularForm.startDate : regularForm.startDate,
-        end_date: endDate,
-        voucher_type: regularForm.voucherType,
-        note: regularForm.note || null,
-        is_active: regularForm.isActive,
-      }
-
-      let ruleId = editingRegularClassId
-
-      if (editingRegularClassId) {
-        const { error } = await supabase
-          .from('regular_classes')
-          .update(payload)
-          .eq('id', editingRegularClassId)
-
-        if (error) throw error
-      } else {
-        const { data, error } = await supabase
-          .from('regular_classes')
-          .insert(payload)
-          .select('id')
-          .single()
-
-        if (error) throw error
-        ruleId = data?.id ?? null
-      }
-
-      if (!ruleId) {
-        setMessage('정기수업 rule id를 찾지 못했습니다.')
-        return
-      }
-
-      const teacher = staffs.find(
-        (s) => Number(s.id) === Number(regularForm.teacherId)
-      )
-      const teacherName = teacher?.name ?? ''
-
-      const result = await upsertSingleRegularSchedules(ruleId, {
-        childId: Number(regularForm.childId),
-        teacherId: Number(regularForm.teacherId),
-        teacherName,
-        weekday: Number(regularForm.weekday),
-        timeSlot: regularForm.timeSlot,
-        minuteSlot: Number(regularForm.minuteSlot),
-        startDate: effectiveStartDate,
-        endDate,
-        voucherType: regularForm.voucherType,
-        note: regularForm.note || '',
-      })
-
-      await loadRegularClasses()
-      resetRegularClassForm()
-
-      setMessage(
-        editingRegularClassId
-          ? `정기수업이 수정되었습니다. 변경 시작일(${effectiveStartDate}) 이후 미출결 ${result.unloggedRows.length}건은 중지, 출결 ${result.loggedRows.length}건은 유지, 새 일정 ${result.insertedCount}건 생성되었습니다.`
-          : '정기수업이 등록되었습니다.'
-      )
-    } catch (err: any) {
-      setMessage(err?.message ?? '정기수업 저장 실패')
-    }
-  }
+  try {
+    const effectiveDate = editingRegularClassId ? regularChangeStartDate : regularForm.startDate
+    if (!effectiveDate) return
+    const result = await saveRegularChange({kind:'individual', id:editingRegularClassId || null, effectiveDate,
+      childId: regularForm.childId, teacherId:regularForm.teacherId, weekday:regularForm.weekday,
+      timeSlot:regularForm.timeSlot, minuteSlot:regularForm.minuteSlot,
+      endDate:regularForm.endDate || addYearsDate(effectiveDate,5), voucherType:regularForm.voucherType,
+      note:regularForm.note, isActive:regularForm.isActive})
+    await loadAll()
+    resetRegularClassForm()
+    setMessage('정기수업 저장 완료: 적용일 '+effectiveDate+', 기존 '+result.cancelled+'건 취소, 새 일정 '+result.inserted+'건 생성. 이전 기록은 보존됩니다.')
+  } catch(err:any) { setMessage(err.message || '정기수업 저장 실패') }
+ }
 
   async function handleSaveRegularGroupClass() {
-    setRegularGroupDebugSteps([])
-    try {
-      pushRegularGroupDebug(editingRegularGroupClassId ? '1. 정기그룹수업 수정 시작' : '1. 정기그룹수업 저장 시작', {
-        editingRegularGroupClassId,
-        teacherId: regularGroupForm.teacherId,
-        teacherId2: regularGroupForm.teacherId2,
-        weekday: regularGroupForm.weekday,
-        startDate: regularGroupForm.startDate,
-        changeStartDate: regularGroupChangeStartDate,
-        endDate: regularGroupForm.endDate,
-        selectedChildIds: regularGroupForm.childIds.length,
-      })
-
-      if (!regularGroupForm.teacherId) {
-        setMessage('선생님1을 선택하세요.')
-        return
-      }
-
-      if (
-        regularGroupForm.teacherId2 &&
-        Number(regularGroupForm.teacherId2) === Number(regularGroupForm.teacherId)
-      ) {
-        setMessage('선생님1과 선생님2는 서로 다르게 선택하세요.')
-        return
-      }
-
-      if (regularGroupForm.weekday === '') {
-        setMessage('요일을 선택하세요.')
-        return
-      }
-
-      if (!regularGroupForm.startDate) {
-        setMessage('시작일을 선택하세요.')
-        return
-      }
-
-      if (editingRegularGroupClassId && !regularGroupChangeStartDate) {
-        setMessage('수업변경 시작 날짜를 선택하세요.')
-        return
-      }
-
-      if (!regularGroupForm.groupName.trim()) {
-        setMessage('그룹명을 입력하세요.')
-        return
-      }
-
-      if (regularGroupForm.childIds.length === 0) {
-        setMessage('그룹 학생을 1명 이상 선택하세요.')
-        return
-      }
-
-      const endDate =
-        regularGroupForm.endDate || addYearsDate(regularGroupForm.startDate, 5)
-      const effectiveStartDate = editingRegularGroupClassId
-        ? regularGroupChangeStartDate
-        : regularGroupForm.startDate
-
-      if (effectiveStartDate > endDate) {
-        setMessage('수업변경 시작 날짜가 종료일보다 늦을 수 없습니다.')
-        return
-      }
-
-      const teacher1 = staffs.find(
-        (s) => Number(s.id) === Number(regularGroupForm.teacherId)
-      )
-      const teacher2 = staffs.find(
-        (s) => Number(s.id) === Number(regularGroupForm.teacherId2)
-      )
-
-      const metaTag = buildAssistantTeacherTag(
-        regularGroupForm.teacherId2,
-        teacher2?.name ?? ''
-      )
-      const rawNote = regularGroupForm.note.trim()
-      const mergedNote = [rawNote, metaTag].filter(Boolean).join(' ').trim()
-
-      const payload = {
-        teacher_id: Number(regularGroupForm.teacherId),
-        weekday: Number(regularGroupForm.weekday),
-        time_slot: regularGroupForm.timeSlot,
-        minute_slot: Number(regularGroupForm.minuteSlot),
-        start_date: regularGroupForm.startDate,
-        end_date: endDate,
-        group_name: regularGroupForm.groupName,
-        note: mergedNote || null,
-        is_active: regularGroupForm.isActive,
-      }
-
-      let ruleId = editingRegularGroupClassId
-
-      if (editingRegularGroupClassId) {
-        const { error } = await supabase
-          .from('regular_group_classes')
-          .update(payload)
-          .eq('id', editingRegularGroupClassId)
-
-        if (error) throw error
-
-        const { error: memberOffError } = await supabase
-          .from('regular_group_class_members')
-          .update({ is_active: false })
-          .eq('regular_group_class_id', editingRegularGroupClassId)
-
-        if (memberOffError) throw memberOffError
-      } else {
-        const { data, error } = await supabase
-          .from('regular_group_classes')
-          .insert(payload)
-          .select('id')
-          .single()
-
-        if (error) throw error
-        ruleId = data?.id ?? null
-      }
-
-      if (!ruleId) {
-        setMessage('정기 그룹수업 rule id를 찾지 못했습니다.')
-        return
-      }
-
-      const memberRows = regularGroupForm.childIds.map((childId) => ({
-        regular_group_class_id: Number(ruleId),
-        child_id: Number(childId),
-        is_active: true,
-      }))
-
-      const { error: memberInsertError } = await supabase
-        .from('regular_group_class_members')
-        .insert(memberRows)
-
-      if (memberInsertError) throw memberInsertError
-
-      const result = await upsertGroupRegularSchedules(Number(ruleId), {
-        teacherId: Number(regularGroupForm.teacherId),
-        teacherName: teacher1?.name ?? '',
-        teacherId2: regularGroupForm.teacherId2 ? Number(regularGroupForm.teacherId2) : null,
-        teacherName2: teacher2?.name ?? '',
-        weekday: Number(regularGroupForm.weekday),
-        timeSlot: regularGroupForm.timeSlot,
-        minuteSlot: Number(regularGroupForm.minuteSlot),
-        startDate: effectiveStartDate,
-        endDate,
-        groupName: regularGroupForm.groupName,
-        note: stripAssistantTeacherTag(regularGroupForm.note || ''),
-        childIds: regularGroupForm.childIds.map((id) => Number(id)),
-      })
-
-      await Promise.all([
-        loadRegularGroupClasses(),
-        loadRegularGroupMembers(),
-        loadScheduleEntries(),
-      ])
-
-      const wasEditing = Boolean(editingRegularGroupClassId)
-      resetRegularGroupClassForm()
-
-      setMessage(
-        wasEditing
-          ? `정기 그룹수업이 수정되었습니다. 변경 시작일(${effectiveStartDate}) 이후 미출결 ${result.unloggedRows.length}건은 중지, 출결 ${result.loggedRows.length}건은 유지, 새 일정 ${result.insertedCount}건 생성되었습니다.`
-          : `정기 그룹수업이 등록되었습니다. 시간표 생성 ${result.insertedCount}건`
-      )
-    } catch (err: any) {
-      pushRegularGroupDebug('ERROR. 정기그룹수업 저장 실패', err?.message ?? String(err))
-      setMessage(err?.message ?? '정기 그룹수업 저장 실패')
-    }
-  }
+  try {
+    const effectiveDate = editingRegularGroupClassId ? regularGroupChangeStartDate : regularGroupForm.startDate
+    if (!effectiveDate) return
+    const result = await saveRegularChange({kind:'group', id:editingRegularGroupClassId || null, effectiveDate,
+      teacherId:regularGroupForm.teacherId, teacherId2:regularGroupForm.teacherId2 || null, weekday:regularGroupForm.weekday,
+      timeSlot:regularGroupForm.timeSlot, minuteSlot:regularGroupForm.minuteSlot,
+      endDate:regularGroupForm.endDate || addYearsDate(effectiveDate,5), groupName:regularGroupForm.groupName,
+      childIds:regularGroupForm.childIds, note:stripAssistantTeacherTag(regularGroupForm.note || ''), isActive:regularGroupForm.isActive})
+    await loadAll()
+    resetRegularGroupClassForm()
+    setMessage('정기 그룹수업 저장 완료: '+result.cancelled+'건 취소, '+result.inserted+'건 생성. 이전 기록은 보존됩니다.')
+  } catch(err:any) { setMessage(err.message || '정기 그룹수업 저장 실패') }
+ }
 
 
-  async function deleteUnloggedRegularClassSchedulesOnServer(ruleId: number) {
-    for (;;) {
-      const { data, error } = await supabase.rpc(
-        'delete_unlogged_regular_class_schedules',
-        {
-          p_rule_id: String(ruleId),
-          p_batch_size: 20,
-        }
-      )
+  
 
-      if (error) {
-        throw new Error(error.message || JSON.stringify(error))
-      }
+  
 
-      const deletedCount = Number(data ?? 0)
-      if (deletedCount <= 0) break
-    }
-  }
+  async function handleDeleteRegularClass(id:number) {
+  try {
+    const effectiveDate=askEffectiveDate('정기수업 종료')
+    if (!effectiveDate) return
+    if (!window.confirm(effectiveDate+'부터 미진행 일정을 취소합니다. 이전 기록은 보존합니다.')) return
+    const result=await saveRegularChange({kind:'individual',action:'stop',id,effectiveDate})
+    await loadAll()
+    setMessage('정기수업 종료: '+result.cancelled+'건 취소. 이전 기록은 보존됩니다.')
+  } catch(err:any) { setMessage(err.message || '정기수업 종료 실패') }
+ }
 
-  async function deleteUnloggedRegularGroupSchedulesOnServer(ruleId: number) {
-    for (;;) {
-      const { data, error } = await supabase.rpc(
-        'delete_unlogged_regular_group_schedules',
-        {
-          p_rule_id: String(ruleId),
-          p_batch_size: 20,
-        }
-      )
-
-      if (error) {
-        throw new Error(error.message || JSON.stringify(error))
-      }
-
-      const deletedCount = Number(data ?? 0)
-      if (deletedCount <= 0) break
-    }
-  }
-
-  async function handleDeleteRegularClass(id: number) {
-    try {
-      const ok = window.confirm(
-        '이 정기수업을 삭제할까요? 출결체크된 일정은 유지되고 미출결 일정만 삭제됩니다.'
-      )
-      if (!ok) return
-
-      await deleteUnloggedRegularClassSchedulesOnServer(id)
-
-      const { error } = await supabase
-        .from('regular_classes')
-        .update({ is_active: false })
-        .eq('id', id)
-
-      if (error) throw error
-
-      await loadRegularClasses()
-
-      setMessage(
-        '정기수업 규칙은 중지되었고 출결체크된 일정은 유지, 미출결 일정만 삭제되었습니다.'
-      )
-    } catch (err: any) {
-      setMessage(err?.message ?? '정기수업 삭제 실패')
-    }
-  }
-
-  async function handleDeleteRegularGroupClass(id: number) {
-    try {
-      const ok = window.confirm(
-        '정기 그룹수업을 삭제할까요? 출결체크된 일정은 유지되고 미출결 일정만 삭제됩니다.'
-      )
-      if (!ok) return
-
-      await deleteUnloggedRegularGroupSchedulesOnServer(id)
-
-      const { error } = await supabase
-        .from('regular_group_classes')
-        .update({ is_active: false })
-        .eq('id', id)
-
-      if (error) throw error
-
-      const { error: memberError } = await supabase
-        .from('regular_group_class_members')
-        .update({ is_active: false })
-        .eq('regular_group_class_id', id)
-
-      if (memberError) throw memberError
-
-      await Promise.all([loadRegularGroupClasses(), loadRegularGroupMembers()])
-
-      setMessage(
-        '정기 그룹수업 규칙은 중지되었고 출결체크된 일정은 유지, 미출결 일정만 삭제되었습니다.'
-      )
-    } catch (err: any) {
-      setMessage(err?.message ?? '정기 그룹수업 삭제 실패')
-    }
-  }
+  async function handleDeleteRegularGroupClass(id:number) {
+  try {
+    const effectiveDate=askEffectiveDate('정기 그룹수업 종료')
+    if (!effectiveDate) return
+    if (!window.confirm(effectiveDate+'부터 미진행 그룹 일정을 취소합니다. 이전 기록은 보존합니다.')) return
+    const result=await saveRegularChange({kind:'group',action:'stop',id,effectiveDate})
+    await loadAll()
+    setMessage('정기 그룹수업 종료: '+result.cancelled+'건 취소. 이전 기록은 보존됩니다.')
+  } catch(err:any) { setMessage(err.message || '정기수업 종료 실패') }
+ }
 
   return (
     <main className="min-h-screen bg-slate-50 p-3 md:p-6">
