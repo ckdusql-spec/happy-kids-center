@@ -37,6 +37,8 @@
     "**/*.mts"
   ],
   "exclude": [
-    "node_modules"
+    "node_modules",
+    "app/admin/page1.tsx",
+    "app/admin/page - 복사본.tsx"
   ]
 }
