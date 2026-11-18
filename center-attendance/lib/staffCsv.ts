@@ -10,8 +10,8 @@ export function staffCsvRows(month:string,schedules:StaffReportSchedule[],logs:A
   const id=s.absent_class_log_id||Number(s.note?.match(/\[결석기록:(\d+)\]/)?.[1]||0)
   const original=id?logs.find(l=>Number(l.id)===Number(id)):undefined
   const date=original?.class_date||absentDate(s)
-  const linked=balances.filter(b=>b.absence.child_id===Number(s.child_id)&&(id?b.absence.id===id:b.absence.class_date===date))
-  const warning=kind==='일반수업'&&(log?.status==='makeup'||/보강|보충/.test(s.note||''))?'보강 종류 확인 필요':kind!=='일반수업'&&linked.length!==1?'결석 연결 확인 필요':''
+  const linked=s.makeup_source_schedule_id&&!id?[]:balances.filter(b=>b.absence.child_id===Number(s.child_id)&&(id?b.absence.id===id:b.absence.class_date===date))
+  const warning=kind==='일반수업'&&(log?.status==='makeup'||/보강|보충/.test(s.note||''))?'보강 종류 확인 필요':kind!=='일반수업'&&linked.length!==1?(s.makeup_source_schedule_id&&!id?'사전 보강 예약 · 원수업 출결 대기':'결석 연결 확인 필요'):''
   return [s.date,staff.get(Number(s.teacher_id))||s.teacher_name||'담당 #'+s.teacher_id,s.time_slot.slice(0,2)+':'+String(s.minute_slot??0).padStart(2,'0'),names.get(Number(s.child_id))||'학생 #'+s.child_id,s.voucher_type||'',s.is_group?s.group_name||'그룹수업':'',log?.status==='makeup'&&kind==='일반수업'?'보강(유형 확인 필요)':kind,date,log?states[log.status]||log.status:'예약/미입력',plannedMinutes(s)||'',isCompleted(s,logs)?plannedMinutes(s)||'':'',linked.map(balanceText).join(' / '),kind==='일반수업'&&log?.status!=='makeup'?(s.regular_credit_month?.slice(0,7)||s.date.slice(0,7)):'보강 제외',s.id,warning]
  })
  // A makeup attendance with no surviving schedule must be visible for review, not silently discarded.

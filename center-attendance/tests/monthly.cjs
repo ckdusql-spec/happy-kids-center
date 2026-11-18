@@ -18,6 +18,10 @@ assert.equal(monthlySummaries('2024-11',[rows[0]],[],[],activeMonthlyCourses('20
 const makeupHistory=monthlySummaries('2024-11',[rows[4]],[],[],activeMonthlyCourses('2024-11',[deleted]))[0];
 assert.equal(makeupHistory.historyOnly,true);assert.equal(makeupHistory.target,0);assert.equal(makeupHistory.shortage,0);assert.equal(makeupHistory.makeupSchedules.length,1);
 console.log('PASS: inactive rules do not resurrect empty targets; active empty courses, historical sessions and makeup-only history retained');
+const yearBoundary=[row('last-dec','2025-01-03',{regular_credit_month:'2024-12-01'}),row('next-jan','2026-01-02',{regular_credit_month:'2025-12-01'}),row('makeup-year','2025-12-04',{note:'[보강]'})];
+const yearSummaries=Array.from({length:12},(_,i)=>monthlySummaries('2025-'+String(i+1).padStart(2,'0'),yearBoundary,[],[]));
+assert.equal(yearSummaries[0][0].carriedOut,1);assert.equal(yearSummaries[11][0].carriedIn,1);assert.equal(yearSummaries.flat().reduce((n,c)=>n+c.allocated,0),1);
+console.log('PASS: calendar-year overview preserves December/January carry and excludes makeup from annual regular counts');
 console.log('PASS: weekdays share monthly four, makeups excluded, carry counted once, three-session exception, empty regular course');
 (async()=>{
  const db=new PGlite();

@@ -4,7 +4,7 @@ export type ScheduleFact = {
   id: string; date: string; time_slot: string; minute_slot?: number | null;
   teacher_id: number | null; child_id: number | null; is_active?: boolean | null;
   is_group?: boolean | null; group_id?: string | null; voucher_type?: string | null;
-  absent_class_log_id?: number | null; note?: string | null; status?: string | null;
+  makeup_source_schedule_id?: string | null; absent_class_log_id?: number | null; note?: string | null; status?: string | null;
 }
 export type AttendanceFact = {
   id: number; schedule_entry_id?: string | null; staff_id: number; child_id: number; class_date: string; class_time?: string | null;
@@ -60,7 +60,7 @@ export type MakeupBalance = {
 // Never guess which of two same-day lessons a makeup belongs to.
 export function makeupBalances(rows: ScheduleFact[], logs: AttendanceFact[]): MakeupBalance[] {
   const valid=validAttendance(rows,logs)
-  const balances=valid.filter(l=>!l.is_group && ['absent','same_day_absent'].includes(l.status)).map(absence=>({
+  const balances=valid.filter(l=>!l.is_group && ['absent','same_day_absent'].includes(l.status) && !rows.some(r=>r.is_active && makeupKind(r)!=='일반수업' && matchesSchedule(r,l))).map(absence=>({
     absence,usedCount:0,usedMinutes:0,reservedMinutes:0,remainingMinutes:MAKEUP_REQUIRED_MINUTES,ambiguous:false
   }))
   const seen=new Set<string>()
@@ -69,6 +69,7 @@ export function makeupBalances(rows: ScheduleFact[], logs: AttendanceFact[]): Ma
     if(seen.has(key)) continue
     seen.add(key)
     const explicit=row.absent_class_log_id || row.note?.match(/\[결석기록:(\d+)\]/)?.[1]
+    if(row.makeup_source_schedule_id && !explicit) continue // Planned absence has no attendance record yet.
     let candidates=balances.filter(b=>b.absence.child_id===Number(row.child_id) && (explicit ? b.absence.id===Number(explicit) : b.absence.class_date===absentDate(row)))
     if(explicit) candidates=candidates.filter(b=>b.absence.id===Number(explicit))
     if(candidates.length!==1) { candidates.forEach(b=>b.ambiguous=true); continue }

@@ -1,4 +1,8 @@
 'use client'
+import {childHistory} from '@/lib/childHistory'
+import TaskDialog from '@/components/TaskDialog'
+import AttendancePicker from '@/components/AttendancePicker'
+import MakeupBalanceCard from '@/components/MakeupBalanceCard'
 
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '@/lib/supabase'
@@ -920,6 +924,10 @@ function AdminDailySchedule({
 
 export default function AdminPage() {
   const [tab, setTab] = useState<MainTab>('schedule')
+  useEffect(() => {
+    const section = new URLSearchParams(window.location.search).get('section')
+    if (section === 'children' || section === 'staff' || section === 'summary' || section === 'schedule') setTab(section)
+  }, [])
   const [viewMode, setViewMode] = useState<ViewMode>('all')
   const [summarySubTab, setSummarySubTab] = useState<SummarySubTab>('attendance')
 
@@ -1339,40 +1347,10 @@ export default function AdminPage() {
     ])
   }
 
-  async function loadScheduleChildAbsentLogs(childId: number) {
-    try {
-      const [classLogResult, timeMakeupLogResult, timeMakeupScheduleResult] = await Promise.all([
-        supabase
-          .from('class_logs')
-          .select('*')
-          .eq('child_id', childId)
-          .order('class_date', { ascending: false }),
-        supabase
-          .from('makeup_time_logs')
-          .select('*')
-          .eq('child_id', childId)
-          .order('makeup_date', { ascending: true }),
-        supabase
-          .from('schedule_entries')
-          .select('*')
-          .eq('child_id', childId)
-          .eq('is_active', true)
-          .order('date', { ascending: true }),
-      ])
-
-      if (classLogResult.error) throw classLogResult.error
-      if (timeMakeupLogResult.error) throw timeMakeupLogResult.error
-      if (timeMakeupScheduleResult.error) throw timeMakeupScheduleResult.error
-
-      setScheduleChildAllAbsentLogs(dedupeClassLogsByLogicalKey((classLogResult.data ?? []) as ClassLogRow[]))
-      setScheduleChildMakeupTimeLogs((timeMakeupLogResult.data ?? []) as MakeupTimeLogRow[])
-      setScheduleChildTimeMakeupRows((timeMakeupScheduleResult.data ?? []) as ScheduleEntryRow[])
-    } catch (err: any) {
-      setScheduleChildAllAbsentLogs([])
-      setScheduleChildMakeupTimeLogs([])
-      setScheduleChildTimeMakeupRows([])
-      setMessage(err?.message ?? '학생 결석 기록 불러오기 실패')
-    }
+  async function loadScheduleChildAbsentLogs(childId:number){
+    try{const {schedules,logs}=await childHistory<ScheduleEntryRow,ClassLogRow>(childId)
+      setScheduleChildAllAbsentLogs(logs);setScheduleChildTimeMakeupRows(schedules);setScheduleChildMakeupTimeLogs([])
+    }catch(err:any){setScheduleChildAllAbsentLogs([]);setScheduleChildTimeMakeupRows([]);setScheduleChildMakeupTimeLogs([]);setMessage(err.message)}
   }
 
   useEffect(() => {
@@ -1528,8 +1506,8 @@ export default function AdminPage() {
 
   function renderMakeupScheduleFields(inputClassName: string) {
     return (
-      <div className="space-y-1 rounded border border-orange-200 bg-orange-50 px-2 py-2 text-xs">
-        <div className="text-[11px] font-semibold text-orange-700">보강유형</div>
+      <div className="makeup-entry-panel">
+        <div className="text-[11px] font-semibold text-orange-700">수업 종류</div><p className="field-help">보강은 월 정규수업 횟수에 포함하지 않습니다.</p>
         <select
           value={scheduleMakeupType}
           onChange={(e) => {
@@ -1544,9 +1522,9 @@ export default function AdminPage() {
           }}
           className={inputClassName}
         >
-          <option value="none">일반</option>
-          <option value="day">일보강</option>
-          <option value="time">시간보강</option>
+          <option value="none">정규 / 일반 수업</option>
+          <option value="day">일보강 · 1회</option>
+          <option value="time">시간보강 · 분 단위</option>
         </select>
 
         {scheduleMakeupType !== 'none' && scheduleChildId ? (
@@ -1588,9 +1566,7 @@ export default function AdminPage() {
               )}
             </select>
             {selectedScheduleMakeupProgress ? (
-              <div className="text-[11px] text-orange-700">
-                {selectedScheduleMakeupProgress.teacher_name ? `담당 ${selectedScheduleMakeupProgress.teacher_name} / ` : ''}진행 {selectedScheduleMakeupProgress.completed_minutes}/{selectedScheduleMakeupProgress.required_minutes}분 / 남음 {selectedScheduleMakeupProgress.remaining_minutes}분
-              </div>
+              <MakeupBalanceCard completed={selectedScheduleMakeupProgress.completed_minutes} required={selectedScheduleMakeupProgress.required_minutes} remaining={selectedScheduleMakeupProgress.remaining_minutes} count={selectedScheduleMakeupProgress.used_count} />
             ) : null}
           </div>
         ) : null}
@@ -2946,62 +2922,9 @@ async function handleSaveSchedule(dateStr:string,hourSlot:string,staffId:number)
     <main className="min-h-screen bg-slate-50 p-3 md:p-6">
       <div className="relative mx-auto max-w-7xl rounded-[28px] border border-white/70 bg-white/85 p-4 shadow-[0_20px_60px_rgba(0,0,0,0.08)] backdrop-blur md:p-6">
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-          <div className="flex flex-wrap gap-2">
-            <button
-              onClick={() => setTab('schedule')}
-              className={`rounded-xl px-4 py-2 ${tab === 'schedule' ? 'bg-black text-white' : 'bg-slate-200'}`}
-            >
-              관리자 시간표
-            </button>
-            <button
-              onClick={() => setTab('children')}
-              className={`rounded-xl px-4 py-2 ${tab === 'children' ? 'bg-black text-white' : 'bg-slate-200'}`}
-            >
-              아이등록
-            </button>
-            <button
-              onClick={() => setTab('staff')}
-              className={`rounded-xl px-4 py-2 ${tab === 'staff' ? 'bg-black text-white' : 'bg-slate-200'}`}
-            >
-              선생님등록
-            </button>
-            <button
-              onClick={() => setTab('summary')}
-              className={`rounded-xl px-4 py-2 ${tab === 'summary' ? 'bg-black text-white' : 'bg-slate-200'}`}
-            >
-              월정산
-            </button>
-            <button
-              onClick={() => { window.location.href = '/admin/regular' }}
-              className="rounded-xl bg-black px-4 py-2 text-white"
-            >
-              정기수업관리
-            </button>
-            <button onClick={() => { window.location.href = "/admin/monthly-lessons" }} className="rounded-xl bg-indigo-700 px-4 py-2 text-white">월별 수업·이월</button>
-          </div>
-
+          <div><p className="workspace-eyebrow">CENTER WORKSPACE</p><h1 className="text-2xl font-bold text-slate-900">{tab === 'children' ? '학생 관리' : tab === 'staff' ? '선생님 관리' : tab === 'summary' ? '월 정산' : '시간표 · 출결'}</h1><p className="mt-1 text-sm text-slate-500">{tab === 'schedule' ? '날짜와 보기 방식을 선택하고 수업의 출결을 확인하세요.' : '필요한 정보를 확인하고 변경 사항을 저장하세요.'}</p></div>
           <div className="flex flex-wrap items-center gap-3">
-            <button
-              onClick={downloadStudentCsv}
-              className="rounded-xl bg-emerald-500 px-4 py-2 text-sm font-bold text-white shadow"
-            >
-              학생CSV(월전체)
-            </button>
-
-            <button
-              onClick={downloadStaffCsv}
-              className="rounded-xl bg-blue-500 px-4 py-2 text-sm font-bold text-white shadow"
-            >
-              선생님CSV(월전체)
-            </button>
-
-            <button
-              onClick={downloadWeeklyAttendanceCsv}
-              className="rounded-xl bg-orange-500 px-4 py-2 text-sm font-bold text-white shadow"
-            >
-              주차별출결CSV(월전체)
-            </button>
-
+            <details className="workspace-download"><summary>CSV 내려받기 <span aria-hidden="true">⌄</span></summary><div className="workspace-download-menu"><p>선택한 월 전체 자료</p><button onClick={downloadStudentCsv}>학생별 내역 CSV</button><button onClick={downloadStaffCsv}>선생님별 내역 · 보강 포함 CSV</button><button onClick={downloadWeeklyAttendanceCsv}>주차별 출결 CSV</button></div></details>
             <button
               onClick={handleLogout}
               className="rounded-xl bg-slate-700 px-4 py-2 text-sm font-bold text-white shadow"
@@ -3011,12 +2934,12 @@ async function handleSaveSchedule(dateStr:string,hourSlot:string,staffId:number)
           </div>
         </div>
 
-        {message ? <p className="mb-4 text-sm text-red-500">{message}</p> : null}
+        {message ? <p role="status" className="workspace-feedback">{message}</p> : null}
 
         {tab === 'schedule' ? (
           <div>
             <div className="mb-4 flex flex-col gap-3">
-              <h1 className="text-xl font-bold md:text-2xl">관리자 시간표</h1>
+              <h2 className="text-base font-semibold text-slate-700">시간표 보기</h2>
 
               <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                 <div className="flex flex-wrap gap-2">
@@ -3051,7 +2974,7 @@ async function handleSaveSchedule(dateStr:string,hourSlot:string,staffId:number)
                     <input
                       value={studentSearch}
                       onChange={(e)=>setStudentSearch(e.target.value)}
-                      placeholder="학생정보 확인"
+                      aria-label="학생 이름으로 정보 검색" placeholder="학생 이름 검색"
                       className="rounded-xl border px-3 py-2 text-sm w-[180px]"
                     />
 
@@ -3623,30 +3546,30 @@ async function handleSaveSchedule(dateStr:string,hourSlot:string,staffId:number)
             <div className="rounded-2xl border p-4">
               <h2 className="mb-3 text-xl font-bold">아이 등록 / 수정</h2>
               <div className="space-y-3">
-                <input
+                <label className="form-field"><span>차트번호</span><input
                   value={childForm.chartNo}
                   onChange={(e) => setChildForm((p) => ({ ...p, chartNo: e.target.value }))}
                   placeholder="차트번호"
                   className="w-full rounded-xl border px-3 py-3 md:py-2"
-                />
-                <input
+                /></label>
+                <label className="form-field"><span>학생 이름</span><input
                   value={childForm.childName}
                   onChange={(e) => setChildForm((p) => ({ ...p, childName: e.target.value }))}
                   placeholder="이름"
                   className="w-full rounded-xl border px-3 py-3 md:py-2"
-                />
-                <input
+                /></label>
+                <label className="form-field"><span>생년월일</span><input
                   type="date"
                   value={childForm.birthDate}
                   onChange={(e) => setChildForm((p) => ({ ...p, birthDate: e.target.value }))}
                   className="w-full rounded-xl border px-3 py-3 md:py-2"
-                />
-                <input
+                /></label>
+                <label className="form-field"><span>연락처</span><input
                   value={childForm.phone}
                   onChange={(e) => setChildForm((p) => ({ ...p, phone: e.target.value }))}
                   placeholder="핸드폰 번호"
                   className="w-full rounded-xl border px-3 py-3 md:py-2"
-                />
+                /></label>
 
                 <div>
                   <div className="mb-2 text-sm font-medium text-slate-700">바우처(여러 개 선택)</div>
@@ -3849,25 +3772,25 @@ async function handleSaveSchedule(dateStr:string,hourSlot:string,staffId:number)
             <div className="rounded-2xl border p-4">
               <h2 className="mb-3 text-xl font-bold">선생님 등록 / 수정</h2>
               <div className="space-y-3">
-                <input
+                <label className="form-field"><span>로그인 아이디</span><input
                   value={staffForm.loginId}
                   onChange={(e) => setStaffForm((p) => ({ ...p, loginId: e.target.value }))}
                   placeholder="로그인 ID"
                   className="w-full rounded-xl border px-3 py-3 md:py-2"
-                />
-                <input
+                /></label>
+                <label className="form-field"><span>선생님 이름</span><input
                   value={staffForm.name}
                   onChange={(e) => setStaffForm((p) => ({ ...p, name: e.target.value }))}
                   placeholder="이름"
                   className="w-full rounded-xl border px-3 py-3 md:py-2"
-                />
-                <input
+                /></label>
+                <label className="form-field"><span>비밀번호</span><input
                   type="password"
                   value={staffForm.password}
                   onChange={(e) => setStaffForm((p) => ({ ...p, password: e.target.value }))}
                   placeholder={staffForm.id ? '비밀번호 변경 시만 입력' : '비밀번호'}
                   className="w-full rounded-xl border px-3 py-3 md:py-2"
-                />
+                /></label>
                 <select
                   value={staffForm.role}
                   onChange={(e) => setStaffForm((p) => ({ ...p, role: e.target.value as StaffRole }))}
@@ -4561,11 +4484,9 @@ async function handleSaveSchedule(dateStr:string,hourSlot:string,staffId:number)
         ) : null}
 
         {recordModal.open && recordModal.entry ? (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-            <div className="w-full max-w-lg rounded-[28px] bg-white p-6 shadow-xl">
-              <h3 className="mb-4 text-2xl font-bold">수업 상태 선택</h3>
+          <TaskDialog title="수업 출결 기록" description="수업 정보를 확인하고 출결 상태를 저장하세요." onClose={() => { setRecordModal({open:false,entry:null,status:'attended'}); setRecordMakeupDate('') }}>
 
-              <div className="mb-2 text-lg text-slate-600">
+              <div className="lesson-context"><strong>{children.find(c => Number(c.id) === Number(recordModal.entry?.child_id))?.child_name || recordModal.entry.group_name || "수업"}</strong><br/>
                 {recordModal.entry.date} / {recordModal.entry.time_slot.slice(0, 2)}:
                 {String(recordModal.entry.minute_slot ?? 0).padStart(2, '0')}
               </div>
@@ -4577,33 +4498,20 @@ async function handleSaveSchedule(dateStr:string,hourSlot:string,staffId:number)
                   : 0}
               </div>
 
-              <select
-                value={recordModal.status}
-                onChange={(e) =>
-                  setRecordModal((prev) => ({
-                    ...prev,
-                    status: e.target.value as AttendanceStatus,
-                  }))
-                }
-                className="mb-5 w-full rounded-full border px-5 py-4 text-2xl"
-              >
-                <option value="attended">출석</option>
-                <option value="absent">결석</option>
-                <option value="makeup">보강</option>
-              </select>
+              <AttendancePicker value={recordModal.status} options={['attended','absent','makeup'] as AttendanceStatus[]} onChange={status => setRecordModal(prev => ({...prev,status}))} />
 
               {recordModal.status === 'absent' || recordModal.status === 'same_day_absent' ? (
                 <div className="mb-5 rounded-2xl border border-orange-200 bg-orange-50 p-4">
-                  <div className="mb-3 text-base font-bold text-orange-800">보강 일정 바로 입력</div>
+                  <div className="mb-3 text-base font-bold text-orange-800">보강 예약 · 선택 입력</div>
                   <div className="grid gap-2 md:grid-cols-3">
                     <input
                       type="date"
-                      value={recordMakeupDate}
+                      aria-label="보강 날짜" value={recordMakeupDate}
                       onChange={(e) => setRecordMakeupDate(e.target.value)}
                       className="rounded-xl border bg-white px-3 py-3 text-base"
                     />
                     <select
-                      value={recordMakeupHour}
+                      aria-label="보강 시작 시" value={recordMakeupHour}
                       onChange={(e) => setRecordMakeupHour(e.target.value)}
                       className="rounded-xl border bg-white px-3 py-3 text-base"
                     >
@@ -4614,7 +4522,7 @@ async function handleSaveSchedule(dateStr:string,hourSlot:string,staffId:number)
                       ))}
                     </select>
                     <select
-                      value={recordMakeupMinute}
+                      aria-label="보강 시작 분" value={recordMakeupMinute}
                       onChange={(e) => setRecordMakeupMinute(e.target.value)}
                       className="rounded-xl border bg-white px-3 py-3 text-base"
                     >
@@ -4631,13 +4539,11 @@ async function handleSaveSchedule(dateStr:string,hourSlot:string,staffId:number)
                 </div>
               ) : null}
 
-              <div className="flex gap-3">
+              <div className="dialog-actions">
                 <button
                   onClick={handleSaveAttendanceFromModal}
                   className="flex-1 rounded-2xl bg-blue-700 px-4 py-4 text-2xl font-bold text-white"
-                >
-                  저장
-                </button>
+                >출결 저장</button>
                 <button
                   onClick={() => {
                     setRecordModal({
@@ -4652,16 +4558,13 @@ async function handleSaveSchedule(dateStr:string,hourSlot:string,staffId:number)
                   취소
                 </button>
               </div>
-            </div>
-          </div>
+          </TaskDialog>
         ) : null}
 
         {childInfoModal.open && childInfoModal.child ? (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-            <div className="w-full max-w-xl rounded-[28px] bg-white p-6 shadow-xl">
-              <h3 className="mb-4 text-2xl font-bold">아이 정보</h3>
+          <TaskDialog title="학생 상세 정보" description="기본 정보와 월별 출결, 남은 보강을 확인하세요." onClose={() => setChildInfoModal({open:false,child:null})}>
 
-              <div className="space-y-2 text-lg">
+              <div className="student-facts">
                 <div>이름: {childInfoModal.child.child_name}</div>
                 <div>나이: {getAgeText(childInfoModal.child.birth_date)}세</div>
                 <div>차트번호: {childInfoModal.child.chart_no ?? '-'}</div>
@@ -4696,7 +4599,7 @@ async function handleSaveSchedule(dateStr:string,hourSlot:string,staffId:number)
                     </div>
 
                     <div className="rounded-xl border border-rose-200 bg-white p-3">
-                      <div className="mb-2 font-bold text-rose-700">미보강결석</div>
+                      <div className="mb-2 font-bold text-rose-700">남은 보강 확인</div>
                       <div className="mb-3 text-xs text-slate-700">보강 사용 내역 (현재 누적): {childInfoUnrecoveredAbsentAll || '없음'}</div>
                       {childInfoUnrecoveredAbsentItems.length === 0 ? (
                         <div>-</div>
@@ -4705,9 +4608,7 @@ async function handleSaveSchedule(dateStr:string,hourSlot:string,staffId:number)
                           {childInfoUnrecoveredAbsentItems.map((row, index) => (
                             <div key={`${row.absent_date}-${index}`} className="rounded-lg bg-rose-50 px-3 py-2">
                               <div className="font-semibold text-rose-800">{row.absent_date}{row.teacher_name ? ` (${row.teacher_name})` : ''}</div>
-                              <div className="text-xs text-rose-700">
-                                진행 {row.completed_minutes}/{row.required_minutes}분 / 남음 {row.remaining_minutes}분
-                              </div>
+                              <MakeupBalanceCard completed={row.completed_minutes} required={row.required_minutes} remaining={row.remaining_minutes} />
                             </div>
                           ))}
                         </div>
@@ -4728,8 +4629,7 @@ async function handleSaveSchedule(dateStr:string,hourSlot:string,staffId:number)
               >
                 닫기
               </button>
-            </div>
-          </div>
+          </TaskDialog>
         ) : null}
       </div>
     </main>

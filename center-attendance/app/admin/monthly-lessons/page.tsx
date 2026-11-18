@@ -1,5 +1,7 @@
 'use client'
 import { useEffect, useState } from 'react'
+import AnnualLessons from '@/components/AnnualLessons'
+import TaskDialog from '@/components/TaskDialog'
 import { readApiJson } from '@/lib/apiResponse'
 import { creditMonth, shiftMonth, type MonthlySummary, type MonthlySchedule } from '@/lib/monthlyLessons'
 import { absentDate, makeupKind, plannedMinutes, latestLog, type AttendanceFact } from '@/lib/attendanceReport'
@@ -10,19 +12,21 @@ const button='rounded-lg border px-3 py-2 text-sm disabled:opacity-40 hover:bg-s
 const statuses:Record<string,string>={attended:'출석',absent:'결석',same_day_absent:'당일결석',makeup:'보강'}
 export default function MonthlyLessonsPage() {
  const [month,setMonth]=useState(()=>new Intl.DateTimeFormat('sv-SE',{timeZone:'Asia/Seoul',year:'numeric',month:'2-digit'}).format(new Date()))
+ const [year,setYear]=useState(month.slice(0,4)),[detailKey,setDetailKey]=useState<string|null>(null)
+ const [revision,setRevision]=useState(0)
  const [data,setData]=useState<Payload|null>(null),[message,setMessage]=useState(''),[busy,setBusy]=useState(false),[loading,setLoading]=useState(true),[query,setQuery]=useState(''),[filter,setFilter]=useState('all'),[page,setPage]=useState(1),[exporting,setExporting]=useState(false)
- useEffect(()=>{const controller=new AbortController();setPage(1);setLoading(true);setData(null);setMessage('');
+ useEffect(()=>{if(detailKey===null)return;const controller=new AbortController();setPage(1);setLoading(true);setData(null);setMessage('');
   fetch('/api/admin/monthly-lessons?month='+month,{cache:'no-store',signal:controller.signal}).then(r=>readApiJson<Payload>(r)).then(setData).catch(e=>{if(e.name!=='AbortError')setMessage(e.message)}).finally(()=>{if(!controller.signal.aborted)setLoading(false)})
   return ()=>controller.abort()
- },[month])
- async function reload(){const r=await fetch('/api/admin/monthly-lessons?month='+month,{cache:'no-store'});const d=await readApiJson<Payload>(r);setData(d)}
+ },[month,detailKey])
+ async function reload(){const r=await fetch('/api/admin/monthly-lessons?month='+month,{cache:'no-store'});const d=await readApiJson<Payload>(r);setData(d);setRevision(r=>r+1)}
  async function save(p:Record<string,unknown>){if(busy)return;setBusy(true);setMessage('');try{const r=await fetch('/api/admin/monthly-lessons',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)});await readApiJson<{ok:boolean}>(r);await reload();setMessage('저장했습니다.')}catch(e){setMessage(e instanceof Error?e.message:'저장 실패')}finally{setBusy(false)}}
  function course(c:MonthlySummary){return {month,childId:c.child_id,teacherId:c.teacher_id,voucherType:c.voucher_type}}
  function target(c:MonthlySummary,n:number){const reason=n===3?window.prompt('3회로 마감하는 사유를 입력하세요.',c.reason):'';if(reason===null)return;void save({...course(c),action:'target',target:n,reason})}
  async function cancel(id:string){if(!window.confirm('이 회차를 휴무로 취소할까요? 출결이 있는 회차는 취소할 수 없습니다.'))return;setBusy(true);setMessage('');try{await cancelOccurrences([id]);await reload();setMessage('휴무 회차를 취소했습니다.')}catch(e){setMessage(e instanceof Error?e.message:'취소 실패')}finally{setBusy(false)}}
  const child=(id:number)=>data?.children.find(c=>c.id===id)?.child_name||'학생 #'+id
  const teacher=(id:number)=>data?.teachers.find(c=>c.id===id)?.name||'담당 #'+id
- const searched=data?.summary.filter(c=>(child(c.child_id)+' '+teacher(c.teacher_id)+' '+c.voucher_type).toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()))||[]
+ const searched=data?.summary.filter(c=>(detailKey==='*'||c.key===detailKey)&&(child(c.child_id)+' '+teacher(c.teacher_id)+' '+c.voucher_type).toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()))||[]
  const shown=searched.filter(c=>filter==='all'||filter==='attention'&&(c.shortage>0||c.excess>0)||filter==='makeup'&&c.makeupEntries>0||filter==='pending'&&c.pending>0||filter==='closed'&&c.closed)
  const pages=Math.max(1,Math.ceil(shown.length/12)),currentPage=Math.min(page,pages),visible=shown.slice((currentPage-1)*12,currentPage*12)
  const totals={courses:searched.filter(c=>!c.historyOnly).length,attention:searched.filter(c=>c.shortage>0||c.excess>0).length,makeup:searched.reduce((n,c)=>n+c.makeupCount,0),minutes:searched.reduce((n,c)=>n+c.makeupMinutes,0),pending:searched.reduce((n,c)=>n+c.pending,0)}
@@ -35,7 +39,10 @@ export default function MonthlyLessonsPage() {
   const url=URL.createObjectURL(new Blob(['\uFEFF'+rows.map(r=>r.map(escape).join(',')).join('\r\n')],{type:'text/csv;charset=utf-8'}));const a=document.createElement('a');a.href=url;a.download='월별수업_'+month+'.csv';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)
  }
  return <main className="min-h-screen bg-slate-50 p-4 text-slate-900 md:p-8"><div className="mx-auto max-w-7xl space-y-5">
-  <div className="flex flex-wrap items-center justify-between gap-3"><div><a href="/admin" className="text-sm underline">← 관리자 시간표</a><h1 className="mt-2 text-2xl font-bold">월별 정규수업 · 이월 관리</h1></div><div className="flex flex-wrap gap-2"><button className={button} disabled={busy||loading} aria-label="이전 달" onClick={()=>setMonth(shiftMonth(month,-1))}>←</button><input aria-label="조회 월" type="month" value={month} disabled={busy} onChange={e=>{if(e.target.value)setMonth(e.target.value)}} className="rounded-lg border p-2"/><button className={button} disabled={busy||loading} aria-label="다음 달" onClick={()=>setMonth(shiftMonth(month,1))}>→</button><button className={button} disabled={!data||busy||loading} onClick={csv}>검색 결과 요약 CSV</button><button className={button} disabled={!data||exporting} onClick={()=>void reportCsv("all")}>선생님 CSV · 월 전체</button><button className="rounded-lg bg-indigo-700 px-3 py-2 text-sm text-white disabled:opacity-40" disabled={!data||exporting} onClick={()=>void reportCsv("makeup")}>보강 CSV · 월 전체</button></div></div>
+  <div><a href="/admin" className="text-sm underline">← 관리자 시간표</a><h1 className="mt-2 text-2xl font-bold">연간 정규수업 · 이월 관리</h1></div>
+  <AnnualLessons year={year} onYear={setYear} onSelect={(m,key)=>{setMonth(m);setDetailKey(key);setQuery('');setFilter('all')}} revision={revision}/>
+  {detailKey!==null&&<TaskDialog title={month.replace('-','년 ')+'월 상세 관리'} description="선택한 수업의 해당 월 기록을 수정합니다. 닫으면 연간 조회로 돌아갑니다." onClose={()=>{if(!busy)setDetailKey(null)}}>
+  <div className="flex flex-wrap gap-2"><button className={button} disabled={busy||loading} aria-label="이전 달" onClick={()=>setMonth(shiftMonth(month,-1))}>←</button><input aria-label="조회 월" type="month" value={month} disabled={busy} onChange={e=>{if(e.target.value)setMonth(e.target.value)}} className="rounded-lg border p-2"/><button className={button} disabled={busy||loading} aria-label="다음 달" onClick={()=>setMonth(shiftMonth(month,1))}>→</button><button className={button} disabled={!data||busy||loading} onClick={csv}>검색 결과 요약 CSV</button><button className={button} disabled={!data||exporting} onClick={()=>void reportCsv("all")}>선생님 CSV · 월 전체</button><button className="rounded-lg bg-indigo-700 px-3 py-2 text-sm text-white disabled:opacity-40" disabled={!data||exporting} onClick={()=>void reportCsv("makeup")}>보강 CSV · 월 전체</button></div>
   <details className="rounded-xl border bg-white p-4 text-sm leading-7"><summary className="cursor-pointer font-semibold">월 4회 · 보강 · 이월 계산 안내</summary><div className="mt-2 text-slate-600">같은 아이 · 선생님 · 바우처의 모든 요일을 합쳐 <strong>정규수업 월 4회</strong>입니다. 보강은 제외합니다.<br/>결석도 배정된 정규 회차에는 포함되며 출석 횟수는 따로 표시합니다. 결석 보강 잔여량은 기존 보강 관리에서 확인하세요.<br/>전월에 부족한 수업은 다음 달 일정에서 <strong>전월분 배정</strong>을 누르세요. 그 회차는 당월 4회에 중복 포함되지 않습니다. 5주차 휴무는 해당 회차를 취소하세요.</div></details>
   <input aria-label="학생 또는 선생님 검색" placeholder="학생 · 선생님 · 바우처 검색" className="w-full rounded-lg border p-3" value={query} onChange={e=>{setQuery(e.target.value);setPage(1)}}/>
   <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">{[['정규수업 항목',totals.courses+'개'],['횟수 확인 필요',totals.attention+'개'],['보강 완료',totals.makeup+'회 · '+totals.minutes+'분'],['출결 입력 대기',totals.pending+'회']].map(([label,value])=><div key={label} className="rounded-xl border bg-white p-4"><p className="text-sm text-slate-500">{label}</p><p className="mt-1 text-xl font-bold">{value}</p></div>)}</div>
@@ -62,5 +69,6 @@ export default function MonthlyLessonsPage() {
   </details>)}
   {shown.length>12&&<div className="flex items-center justify-center gap-4"><button className={button} disabled={currentPage===1} onClick={()=>setPage(currentPage-1)}>이전</button><span className="text-sm">{currentPage} / {pages}</span><button className={button} disabled={currentPage===pages} onClick={()=>setPage(currentPage+1)}>다음</button></div>}
   <p className="text-sm text-slate-500">월 마감은 배정 횟수가 목표와 같고 모든 출결이 입력된 경우에 가능합니다. 마감 후 수정하려면 먼저 마감을 해제하세요. 이 화면은 청구 금액을 변경하지 않습니다.</p>
+ </TaskDialog>}
  </div></main>
 }

@@ -1,0 +1,26 @@
+const fs=require('fs'),assert=require('node:assert/strict'),{PGlite}=require('@electric-sql/pglite');
+(async()=>{const db=new PGlite();try{await db.exec(fs.readFileSync(__dirname+'/fixture-schema.sql','utf8'));for(const f of fs.readdirSync(__dirname+'/../migrations').filter(f=>/^0(0[1-9]|1[01])_/.test(f)).sort())await db.exec(fs.readFileSync(__dirname+'/../migrations/'+f,'utf8'));
+await db.exec("INSERT INTO staff_accounts(login_id,name,role) VALUES('admin','admin','admin'),('teacher','teacher','employee');INSERT INTO children(child_name) VALUES('test');");
+const id=(await db.query("INSERT INTO schedule_entries(date,time_slot,teacher_id,child_id,voucher_type,status,note) VALUES('2020-01-02','09:00',2,1,'일반','makeup','[보강]') RETURNING id")).rows[0].id;
+const payload={id,date:'2020-02-02',hour:'10:00',minute:20,minutes:60,teacherId:2,voucherType:'일반',state:'completed',reason:'관리자 실제 보강 정정',override:true,absenceId:'',originalDate:'2020-01-01'};
+await assert.rejects(()=>db.query('SELECT admin_manage_makeup_v5($1,2)',[payload]),/관리자만/);
+await assert.rejects(()=>db.query('SELECT admin_manage_makeup_v5($1,1)',[{...payload,override:false}]),/예외 처리/);
+await assert.rejects(()=>db.query('SELECT admin_manage_makeup_v5($1,1)',[{...payload,reason:''}]),/사유/);
+await db.query('SELECT admin_manage_makeup_v5($1,1)',[payload]);
+assert.equal((await db.query('SELECT count(*)::int n FROM class_logs WHERE schedule_entry_id=$1',[id])).rows[0].n,1);
+assert.equal((await db.query('SELECT date::text d,minute_slot FROM schedule_entries WHERE id=$1',[id])).rows[0].d,'2020-02-02');
+await db.query('SELECT admin_manage_makeup_v5($1,1)',[{...payload,state:'cancelled'}]);
+assert.equal((await db.query('SELECT is_active FROM schedule_entries WHERE id=$1',[id])).rows[0].is_active,false);
+assert.equal((await db.query('SELECT count(*)::int n FROM class_logs')).rows[0].n,1);
+await db.query('SELECT admin_manage_makeup_v5($1,1)',[{...payload,state:'reserved'}]);
+assert.equal((await db.query('SELECT is_active FROM schedule_entries WHERE id=$1',[id])).rows[0].is_active,true);
+assert.equal((await db.query('SELECT count(*)::int n FROM class_logs')).rows[0].n,0);
+assert.equal((await db.query("SELECT jsonb_array_length(before_data->'attendance') n FROM audit_logs WHERE action_type='admin_makeup_override' ORDER BY id DESC LIMIT 1")).rows[0].n,1);
+// Collision override is explicit, while the ordinary teacher writer still rejects it.
+await db.query("INSERT INTO schedule_entries(date,time_slot,minute_slot,teacher_id,child_id,voucher_type) VALUES('2020-02-02','10:00',20,2,1,'일반')");
+await db.query('SELECT admin_manage_makeup_v5($1,1)',[{...payload,state:'missed'}]);
+await assert.rejects(()=>db.query('SELECT save_schedule_batch_v2($1,ARRAY[]::uuid[],2)',[JSON.stringify([{date:'2020-02-02',time_slot:'10:00',minute_slot:20,teacher_id:2,child_id:1,voucher_type:'일반'}])]),/기존 일정/);
+await db.query('SELECT admin_manage_makeup_v5($1,1)',[{...payload,id:'',childId:1,state:'reserved'}]);
+assert.equal((await db.query("SELECT count(*)::int n FROM schedule_entries WHERE date='2020-02-02'")).rows[0].n,3);
+console.log('PASS: admin-only override; mandatory reason and acknowledgement; date/time and minutes edits; completion, cancellation and restoration; reset archives old attendance; teacher collision guard preserved.');
+}finally{await db.close()}})().catch(e=>{console.error(e);process.exit(1)});

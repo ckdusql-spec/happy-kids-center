@@ -1,6 +1,6 @@
 const fs=require('fs'),ts=require('typescript'),assert=require('node:assert/strict');
 const dir=fs.mkdtempSync(require('node:path').join(require('node:os').tmpdir(),'center-report-test-'));
-for(const f of ['makeupPolicy','attendanceReport','staffCsv'])fs.writeFileSync(dir+'/'+f+'.js',ts.transpileModule(fs.readFileSync(__dirname+'/../lib/'+f+'.ts','utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2020}}).outputText);
+for(const f of ['makeupPolicy','attendanceReport','staffCsv','makeupManagement'])fs.writeFileSync(dir+'/'+f+'.js',ts.transpileModule(fs.readFileSync(__dirname+'/../lib/'+f+'.ts','utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2020}}).outputText);
 const r=require(dir+'/attendanceReport.js');
 const schedule=(id,date,note='',extra={})=>({id,date,time_slot:'09:00',minute_slot:30,teacher_id:2,child_id:1,is_active:true,note,...extra});
 const log=(id,date,status,extra={})=>({id,class_date:date,class_time:date+'T00:30:00Z',staff_id:2,child_id:1,status,...extra});
@@ -24,5 +24,15 @@ assert.equal(report.length,3);assert.equal(report.filter(row=>row[6]==='시간�
 const orphanLog=log(999,'2026-10-20','makeup');const review=staffCsvRows('2026-10',[],[orphanLog],[],[]);assert.equal(review.length,1);assert.equal(review[0][6],'보강(일정 연결 없음)');
 const cancelled=staffCsvRows('2026-10',[{...lesson,is_active:false}],[log(2,'2026-10-10','makeup')],[],[]);assert.equal(cancelled.length,0);
 assert(csvText(['name'],[['=formula']]).includes("'=formula"));assert.equal(STAFF_CSV_HEADERS.length,report[0].length);
+const planned={...lesson,absent_class_log_id:null,makeup_source_schedule_id:'future-source',note:'[보강] [결석일:2026-11-20] [사전보강:future-source]'};
+const plannedCsv=staffCsvRows('2026-10',[planned],[],[],[]);assert.equal(plannedCsv[0][14],'사전 보강 예약 · 원수업 출결 대기');assert.equal(plannedCsv[0][7],'2026-11-20');assert.equal(plannedCsv[0][10],'');
+assert.equal(r.makeupBalances([abs,{...ten,makeup_source_schedule_id:'another-source',absent_class_log_id:null}],logs)[0].reservedMinutes,0);
+const managed=require(dir+'/makeupManagement.js').makeupManagementRows([abs,lesson,ten,twenty],logs);
+assert.equal(managed.find(x=>x.id==='makeup').state,r.isCompleted(lesson,logs)?'completed':'reserved');
+const reservedManaged=require(dir+'/makeupManagement.js').makeupManagementRows([abs,lesson],[]);assert.equal(reservedManaged[0].state,'reserved');assert.equal(reservedManaged[0].date,'2026-10-10');
+const completedManaged=require(dir+'/makeupManagement.js').makeupManagementRows([abs,lesson],[log(1,'2026-05-05','absent'),log(2,'2026-10-10','makeup')]);assert.equal(completedManaged[0].state,'completed');assert.equal(completedManaged[0].needsLink,false);
 console.log('PASS: staff CSV keeps day/time makeup and unlinked-review rows, excludes cancellations, exports absence dates and 40-minute totals, escapes formula cells');
 fs.rmSync(dir,{recursive:true,force:true});
+
+// Missing a makeup releases its original reservation; it never creates another entitlement.
+{const missed=log(1000,'2026-10-10','absent');const balances=r.makeupBalances([abs,lesson],[log(1,'2026-05-05','absent'),missed]);assert.equal(balances.length,1);assert.equal(balances[0].reservedMinutes,0);assert.equal(balances[0].remainingMinutes,40)}

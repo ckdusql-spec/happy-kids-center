@@ -631,20 +631,8 @@ export default function Page() {
   return (
     <main className="min-h-screen bg-slate-50 p-3 md:p-6">
       <div className="relative mx-auto max-w-7xl rounded-[28px] border border-white/70 bg-white/85 p-4 shadow-[0_20px_60px_rgba(0,0,0,0.08)] backdrop-blur md:p-6">
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-          <button
-            onClick={() => {
-              window.location.href = '/admin'
-            }}
-            className="rounded-xl bg-slate-700 px-4 py-2 text-sm font-bold text-white shadow"
-          >
-            관리자 메인
-          </button>
-
-          <div className="text-lg font-bold">정기수업관리</div>
-        </div>
-
-        {message ? <p className="mb-4 text-sm text-red-500">{message}</p> : null}
+        <header className="mb-6"><p className="workspace-eyebrow">REGULAR LESSONS</p><h1 className="text-2xl font-bold">정기수업 관리</h1><p className="mt-2 text-sm text-slate-500">반복 일정을 등록하고, 변경 적용일을 지정해 이전 수업 기록을 보존하세요.</p></header>
+        {message ? <p role="status" className="workspace-feedback">{message}</p> : null}
 
         {loading ? (
           <div className="rounded-xl border bg-slate-50 p-6 text-center text-slate-500">

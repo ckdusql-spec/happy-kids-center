@@ -1,0 +1,25 @@
+const fs=require('fs'),assert=require('node:assert/strict');
+const {PGlite}=require('@electric-sql/pglite');
+(async()=>{const db=new PGlite();try{
+ await db.exec(fs.readFileSync(__dirname+'/fixture-schema.sql','utf8'));
+ for(const f of fs.readdirSync(__dirname+'/../migrations').filter(f=>/^00[1-8]_/.test(f)).sort())await db.exec(fs.readFileSync(__dirname+'/../migrations/'+f,'utf8'));
+ await db.exec("INSERT INTO staff_accounts(login_id,name,role) VALUES('admin','admin','admin'),('one','one','employee'),('two','two','employee');INSERT INTO children(child_name) VALUES('test');");
+ const src=(await db.query("INSERT INTO schedule_entries(date,time_slot,minute_slot,teacher_id,child_id,voucher_type) VALUES('2035-11-20','09:00',0,2,1,'일반') RETURNING id")).rows[0].id;
+ const book=async(minutes,date='2035-11-18',actor=2)=>(await db.query('SELECT reserve_advance_makeup_v3($1,$2,\'10:00\',0,$3,\'family schedule\',$4) id',[src,date,minutes,actor])).rows[0].id;
+ await assert.rejects(()=>book(10,'2035-11-18',3),/본인/);
+ const first=await book(20);assert.equal((await db.query('SELECT count(*)::int n FROM class_logs')).rows[0].n,0);
+ const second=await book(20,'2035-11-19');
+ await assert.rejects(()=>book(10,'2035-11-17'),/40분/);
+ await assert.rejects(()=>db.query('SELECT record_attendance_v2($1,\'attended\',2)',[[src]]),/사전/);
+ await assert.rejects(()=>db.query('SELECT cancel_occurrences_v2($1,2)',[[src]]),/사전/);
+ await db.query('SELECT record_attendance_v2($1,\'makeup\',2)',[[first]]);
+ await db.query('SELECT record_attendance_v2($1,\'absent\',2)',[[src]]);
+ assert.equal((await db.query('SELECT count(*)::int n FROM schedule_entries WHERE makeup_source_schedule_id=$1 AND absent_class_log_id IS NOT NULL',[src])).rows[0].n,2);
+ assert.equal((await db.query('SELECT count(*)::int n FROM class_logs')).rows[0].n,2);
+ await assert.rejects(()=>book(10,'2035-11-17'),/이미 출결/);
+ await db.query('SELECT cancel_occurrences_v2($1,2)',[[second]]);
+ assert.equal((await db.query('SELECT is_active FROM schedule_entries WHERE id=$1',[src])).rows[0].is_active,true);
+ await assert.rejects(()=>db.query("SELECT save_schedule_batch_v2($1,$2,2)",[JSON.stringify([{date:'2035-11-17',time_slot:'10:00',minute_slot:0,teacher_id:2,child_id:1,voucher_type:'일반'}]),[first]]),/사전 보강/);
+ assert.equal((await db.query("SELECT has_function_privilege('anon','reserve_advance_makeup_v3(uuid,date,text,integer,integer,text,bigint)','execute') allowed")).rows[0].allowed,false);
+ console.log('PASS: advance booking before source date, no premature absence, teacher authorization, 40-minute cap, source protection, completion before absence, later automatic linking, cancellation and protected edits.');
+ }finally{await db.close()}})().catch(e=>{console.error(e);process.exit(1)});

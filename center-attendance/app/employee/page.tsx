@@ -1,4 +1,10 @@
 'use client'
+import {childHistory} from '@/lib/childHistory'
+import TaskDialog from '@/components/TaskDialog'
+import AdvanceMakeupBooking from '@/components/AdvanceMakeupBooking'
+import MakeupManager from '@/components/MakeupManager'
+import AttendancePicker from '@/components/AttendancePicker'
+import MakeupBalanceCard from '@/components/MakeupBalanceCard'
 
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '@/lib/supabase'
@@ -1009,85 +1015,15 @@ export default function EmployeePage() {
   }
 
 
-  async function loadChildInfoLogs(childId: number, monthKey: string) {
-    const { start, end } = getMonthStartEndFromKey(monthKey)
-
-    const [monthlyResult, allLogResult, scheduleResult, timeMakeupResult] = await Promise.all([
-      supabase
-        .from('class_logs')
-        .select('*')
-        .eq('child_id', childId)
-        .gte('class_date', start)
-        .lte('class_date', end)
-        .order('class_date', { ascending: true })
-        .order('created_at', { ascending: true }),
-      supabase
-        .from('class_logs')
-        .select('*')
-        .eq('child_id', childId)
-        .order('class_date', { ascending: true })
-        .order('created_at', { ascending: true }),
-      supabase
-        .from('schedule_entries')
-        .select('*')
-        .eq('child_id', childId)
-        .eq('is_active', true)
-        .eq('is_group', false)
-        .order('date', { ascending: true })
-        .order('time_slot', { ascending: true })
-        .order('minute_slot', { ascending: true }),
-      supabase
-        .from('makeup_time_logs')
-        .select('*')
-        .eq('child_id', childId)
-        .order('makeup_date', { ascending: true }),
-    ])
-
-    if (monthlyResult.error) throw monthlyResult.error
-    if (allLogResult.error) throw allLogResult.error
-    if (scheduleResult.error) throw scheduleResult.error
-    if (timeMakeupResult.error) {
-      setChildInfoMakeupTimeLogs([])
-    } else {
-      setChildInfoMakeupTimeLogs((timeMakeupResult.data ?? []) as MakeupTimeLogRow[])
-    }
-
-    setChildMonthlyLogRows((monthlyResult.data ?? []) as ClassLogRow[])
-    setChildAllAbsentLogRows((allLogResult.data ?? []) as ClassLogRow[])
-    setChildAllMakeupScheduleRows((scheduleResult.data ?? []) as ScheduleEntryRow[])
+  async function loadChildInfoLogs(childId:number,monthKey:string){
+    const {start,end}=getMonthStartEndFromKey(monthKey)
+    const {schedules,logs}=await childHistory<ScheduleEntryRow,ClassLogRow>(childId)
+    setChildMonthlyLogRows(logs.filter(l=>l.class_date>=start&&l.class_date<=end))
+    setChildAllAbsentLogRows(logs);setChildAllMakeupScheduleRows(schedules);setChildInfoMakeupTimeLogs([])
   }
-
-  async function loadMakeupAbsentCandidates(childId: number) {
-    const [allLogResult, scheduleResult, timeMakeupResult] = await Promise.all([
-      supabase
-        .from('class_logs')
-        .select('*')
-        .eq('child_id', childId)
-        .order('class_date', { ascending: false })
-        .order('created_at', { ascending: true }),
-      supabase
-        .from('schedule_entries')
-        .select('*')
-        .eq('child_id', childId)
-        .eq('is_active', true)
-        .eq('is_group', false),
-      supabase
-        .from('makeup_time_logs')
-        .select('*')
-        .eq('child_id', childId)
-        .order('makeup_date', { ascending: true }),
-    ])
-
-    if (allLogResult.error) throw allLogResult.error
-    if (scheduleResult.error) throw scheduleResult.error
-    if (timeMakeupResult.error) {
-      setScheduleChildMakeupTimeLogs([])
-    } else {
-      setScheduleChildMakeupTimeLogs((timeMakeupResult.data ?? []) as MakeupTimeLogRow[])
-    }
-
-    setMakeupAbsentCandidateLogs((allLogResult.data ?? []) as ClassLogRow[])
-    setMakeupAbsentCandidateSchedules((scheduleResult.data ?? []) as ScheduleEntryRow[])
+  async function loadMakeupAbsentCandidates(childId:number){
+    const {schedules,logs}=await childHistory<ScheduleEntryRow,ClassLogRow>(childId)
+    setMakeupAbsentCandidateLogs(logs);setMakeupAbsentCandidateSchedules(schedules);setScheduleChildMakeupTimeLogs([])
   }
 
   async function loadAll(staffId: number) {
@@ -1151,8 +1087,8 @@ export default function EmployeePage() {
 
   function renderMakeupScheduleFields(inputClassName: string) {
     return (
-      <div className="space-y-1 rounded border border-orange-200 bg-orange-50 px-2 py-2 text-xs">
-        <div className="text-[11px] font-semibold text-orange-700">보강유형</div>
+      <div className="makeup-entry-panel">
+        <div className="text-[11px] font-semibold text-orange-700">수업 종류</div><p className="field-help">보강은 월 정규수업 횟수에 포함하지 않습니다.</p>
         <select
           value={scheduleMakeupType}
           onChange={(e) => {
@@ -1167,9 +1103,9 @@ export default function EmployeePage() {
           }}
           className={inputClassName}
         >
-          <option value="none">일반</option>
-          <option value="day">일보강</option>
-          <option value="time">시간보강</option>
+          <option value="none">정규 / 일반 수업</option>
+          <option value="day">일보강 · 1회</option>
+          <option value="time">시간보강 · 분 단위</option>
         </select>
 
         {scheduleMakeupType !== 'none' && scheduleChildId ? (
@@ -1211,9 +1147,7 @@ export default function EmployeePage() {
               )}
             </select>
             {selectedScheduleMakeupProgress ? (
-              <div className="text-[11px] text-orange-700">
-                {selectedScheduleMakeupProgress.teacher_name ? `담당 ${selectedScheduleMakeupProgress.teacher_name} / ` : ''}진행 {selectedScheduleMakeupProgress.completed_minutes}/{selectedScheduleMakeupProgress.required_minutes}분 / 남음 {selectedScheduleMakeupProgress.remaining_minutes}분
-              </div>
+              <MakeupBalanceCard completed={selectedScheduleMakeupProgress.completed_minutes} required={selectedScheduleMakeupProgress.required_minutes} remaining={selectedScheduleMakeupProgress.remaining_minutes} count={selectedScheduleMakeupProgress.used_count} />
             ) : null}
           </div>
         ) : null}
@@ -1913,7 +1847,7 @@ export default function EmployeePage() {
       <div className="relative mx-auto max-w-7xl rounded-[28px] border border-white/70 bg-white/85 p-4 shadow-[0_20px_60px_rgba(0,0,0,0.08)] backdrop-blur md:p-6">
         <div className="mb-4 flex items-start justify-between gap-0">
           <div>
-            <h1 className="text-xl font-bold">직원 화면</h1>
+            <h1 className="text-2xl font-bold">내 수업 · 출결</h1><MakeupManager/><AdvanceMakeupBooking/>
             <p className="mt-0 text-sm text-slate-500">
               {user ? `${user.name} (${user.loginId || 'employee'})` : '사용자 없음'}
             </p>
@@ -1932,19 +1866,19 @@ export default function EmployeePage() {
             onClick={() => setTab('today')}
             className={`rounded-2xl px-4 py-2 text-sm font-semibold shadow-sm transition ${tab === 'today' ? 'bg-black text-white' : 'bg-white text-slate-700 border border-slate-200'}`}
           >
-            오늘보기
+            오늘 수업
           </button>
           <button
             onClick={() => setTab('schedule')}
             className={`rounded-2xl px-4 py-2 text-sm font-semibold shadow-sm transition ${tab === 'schedule' ? 'bg-black text-white' : 'bg-white text-slate-700 border border-slate-200'}`}
           >
-            일정추가
+            수업 일정 추가
           </button>
           <button
             onClick={() => setTab('week_overview')}
             className={`rounded-2xl px-4 py-2 text-sm font-semibold shadow-sm transition ${tab === 'week_overview' ? 'bg-black text-white' : 'bg-white text-slate-700 border border-slate-200'}`}
           >
-            주간보기
+            이번 주 시간표
           </button>
 
           <div className="relative">
@@ -2320,9 +2254,7 @@ export default function EmployeePage() {
         ) : null}
 
         {recordModal.open && recordModal.entry ? (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
-            <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow">
-              <h3 className="mb-3 text-lg font-bold">수업 상태 선택</h3>
+          <TaskDialog title="수업 출결 기록" description="수업 정보를 확인하고 출결 상태를 저장하세요." onClose={() => { setRecordModal({open:false,entry:null,status:'attended'}); setRecordMakeupDate('') }}>
 
               {(() => {
                 const recordChild = children.find(
@@ -2345,36 +2277,21 @@ export default function EmployeePage() {
                 )
               })()}
 
-              <select
-                value={recordModal.status}
-                onChange={(e) =>
-                  setRecordModal((prev) => ({
-                    ...prev,
-                    status: e.target.value as AttendanceStatus,
-                  }))
-                }
-                className="mb-4 w-full rounded-xl border px-[2px] py-3 md:py-2"
-              >
-                {STATUS_OPTIONS.map((status) => (
-                  <option key={status} value={status}>
-                    {getStatusLabel(status)}
-                  </option>
-                ))}
-              </select>
+              <AttendancePicker value={recordModal.status} options={STATUS_OPTIONS} onChange={status => setRecordModal(prev => ({...prev,status}))} />
 
               {recordModal.status === 'absent' ? (
                 <div className="mb-4 rounded-xl border border-orange-200 bg-orange-50 p-3">
-                  <div className="mb-2 text-sm font-bold text-orange-700">보강 일정 입력</div>
-                  <div className="mb-2 text-xs text-orange-700">선택하지 않으면 없음으로 저장됩니다.</div>
+                  <div className="mb-2 text-sm font-bold text-orange-700">보강 예약 · 선택 입력</div>
+                  <div className="mb-2 text-xs text-orange-700">날짜를 비워두면 결석만 저장합니다. 보강 예약은 나중에 할 수 있습니다.</div>
                   <input
                     type="date"
-                    value={recordMakeupDate}
+                    aria-label="보강 날짜" value={recordMakeupDate}
                     onChange={(e) => setRecordMakeupDate(e.target.value)}
                     className="mb-2 w-full rounded-xl border bg-white px-[2px] py-2 text-sm"
                   />
                   <div className="grid grid-cols-2 gap-2">
                     <select
-                      value={recordMakeupHour}
+                      aria-label="보강 시작 시" value={recordMakeupHour}
                       onChange={(e) => setRecordMakeupHour(e.target.value)}
                       className="rounded-xl border bg-white px-[2px] py-2 text-sm"
                     >
@@ -2385,7 +2302,7 @@ export default function EmployeePage() {
                       ))}
                     </select>
                     <select
-                      value={recordMakeupMinute}
+                      aria-label="보강 시작 분" value={recordMakeupMinute}
                       onChange={(e) => setRecordMakeupMinute(e.target.value)}
                       className="rounded-xl border bg-white px-[2px] py-2 text-sm"
                     >
@@ -2399,13 +2316,11 @@ export default function EmployeePage() {
                 </div>
               ) : null}
 
-              <div className="flex gap-0">
+              <div className="dialog-actions">
                 <button
                   onClick={handleSaveRecordStatus}
                   className="flex-1 rounded-xl bg-indigo-600 py-3 text-white md:py-2"
-                >
-                  저장
-                </button>
+                >출결 저장</button>
                 <button
                   onClick={() =>
                     setRecordModal({
@@ -2419,14 +2334,11 @@ export default function EmployeePage() {
                   취소
                 </button>
               </div>
-            </div>
-          </div>
+          </TaskDialog>
         ) : null}
 
         {childInfoModal.open && childInfoModal.child ? (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
-            <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow">
-              <h3 className="mb-4 text-lg font-bold">아이 정보</h3>
+          <TaskDialog title="학생 상세 정보" description="기본 정보와 월별 출결, 남은 보강을 확인하세요." onClose={() => setChildInfoModal({open:false,child:null})}>
 
               <div className="space-y-2 text-sm">
                 <div>
@@ -2467,7 +2379,7 @@ export default function EmployeePage() {
                   <div><span className="font-medium">그룹출석/보강:</span> {childInfoDates.groupAttended || '-'}</div>
                   <div><span className="font-medium">그룹결석:</span> {childInfoDates.groupAbsent || '-'}</div>
                   <div className="mt-3 rounded-xl border border-rose-100 bg-rose-50 px-3 py-2">
-                    <span className="font-semibold text-rose-700">미보강결석:</span>{' '}
+                    <span className="font-semibold text-rose-700">남은 보강 확인:</span>{' '}
                     <span className="text-rose-700">{childInfoDates.unrecoveredAbsent || '-'}</span>
                   </div>
                 </div>
@@ -2486,8 +2398,7 @@ export default function EmployeePage() {
                   닫기
                 </button>
               </div>
-            </div>
-          </div>
+          </TaskDialog>
         ) : null}
       </div>
     </main>

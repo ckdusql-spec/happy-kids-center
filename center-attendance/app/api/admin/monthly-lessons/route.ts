@@ -20,10 +20,12 @@ async function readAll<T>(table: string, columns='*', start?: string, end?: stri
 }
 export async function GET(req: NextRequest) {
   try { await requireStaff(req,true) } catch {return NextResponse.json({message:'관리자 로그인이 필요합니다.'},{status:403})}
-  const month=req.nextUrl.searchParams.get('month')||''
+  const year=req.nextUrl.searchParams.get('year')||''
+  const month=year ? year+'-01' : req.nextUrl.searchParams.get('month')||''
+  if(year&&!/^20\d{2}$/.test(year))return NextResponse.json({message:'연도를 확인하세요.'},{status:400})
   if(!/^20\d{2}-(0[1-9]|1[0-2])$/.test(month)) return NextResponse.json({message:'조회 월을 확인하세요.'},{status:400})
   try {
-    const start=shiftMonth(month,-1)+'-01',end=shiftMonth(month,2)+'-01'
+    const start=shiftMonth(month,-1)+'-01',end=year ? (Number(year)+1)+'-02-01' : shiftMonth(month,2)+'-01'
     const [schedules,logs,plans,children,teachers,rules]=await Promise.all([
       readAll<MonthlySchedule>('schedule_entries','*',start,end),
       readAll<AttendanceFact>('class_logs','*',undefined,end,'class_date'),
@@ -32,6 +34,7 @@ export async function GET(req: NextRequest) {
       readAll<{id:number;name:string}>('staff_accounts','id,name'),
       readAll<MonthlyRule>('regular_classes','id,child_id,teacher_id,voucher_type,is_active,start_date,end_date'),
     ])
+    if(year){const months=Array.from({length:12},(_,i)=>year+'-'+String(i+1).padStart(2,'0'));return NextResponse.json({year,children,teachers,months:months.map(m=>({month:m,summary:monthlySummaries(m,schedules.filter(s=>s.date>=shiftMonth(m,-1)+'-01'&&s.date<shiftMonth(m,2)+'-01'),logs,plans,activeMonthlyCourses(m,rules)).map(({schedules,makeupSchedules,...c})=>c)}))},{headers:{'Cache-Control':'no-store'}})}
     const courses=activeMonthlyCourses(month,rules)
     const summary=monthlySummaries(month,schedules,logs,plans,courses)
     const unassignedMakeups=schedules.filter(r=>r.is_active&&r.date.startsWith(month)&&makeupKind(r)!=='일반수업').length-summary.reduce((n,c)=>n+c.makeupEntries,0)

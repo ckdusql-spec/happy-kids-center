@@ -1,0 +1,3 @@
+export default function MakeupBalanceCard({ completed, required, remaining, count }: {completed:number;required:number;remaining:number;count?:number}) {
+ return <section className="makeup-balance" aria-label="보강 사용 현황"><div><span>완료한 보강</span><strong>{completed}<small>분</small></strong></div><div><span>남은 보강</span><strong>{remaining}<small>분</small></strong></div>{count!==undefined&&<div><span>사용 횟수</span><strong>{count}<small>회</small></strong></div>}<progress max={Math.max(1,required)} value={Math.min(required,Math.max(0,completed))} aria-label={`보강 ${required}분 중 ${completed}분 완료`}/><p>예약만 한 보강은 완료 시간에 포함되지 않습니다.</p></section>
+}
