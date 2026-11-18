@@ -1,0 +1,14 @@
+const fs=require('fs'),assert=require('node:assert/strict'),{PGlite}=require('@electric-sql/pglite');
+(async()=>{const db=new PGlite();try{await db.exec(fs.readFileSync(__dirname+'/fixture-schema.sql','utf8'));for(const f of fs.readdirSync(__dirname+'/../migrations').filter(f=>/^0(0[1-9]|1[0-3])_/.test(f)).sort())await db.exec(fs.readFileSync(__dirname+'/../migrations/'+f,'utf8'));
+await db.exec("INSERT INTO staff_accounts(login_id,name,role) VALUES('admin','admin','admin'),('teacher','teacher','employee');INSERT INTO children(child_name) VALUES('a'),('b');INSERT INTO class_logs(staff_id,child_id,class_date,status) VALUES(2,1,'2026-11-19','absent');");
+const set=(child,hidden,reason,actor)=>db.query('SELECT set_makeup_balance_visibility(1,$1,$2,$3,$4)',[child,hidden,reason,actor]);
+await assert.rejects(()=>set(1,true,'cleanup',2),/관리자/);await assert.rejects(()=>set(2,true,'cleanup',1),/학생/);await assert.rejects(()=>set(1,true,'',1),/사유/);
+const before=(await db.query('SELECT * FROM class_logs')).rows;
+await set(1,true,'legacy cleanup',1);assert.equal((await db.query('SELECT hidden FROM makeup_balance_visibility')).rows[0].hidden,true);
+await set(1,false,'restore',1);assert.equal((await db.query('SELECT hidden FROM makeup_balance_visibility')).rows[0].hidden,false);assert.deepEqual((await db.query('SELECT * FROM class_logs')).rows,before);
+assert.equal((await db.query("SELECT count(*)::int n FROM audit_logs WHERE action_type='makeup_balance_visibility'")).rows[0].n,2);
+assert.equal((await db.query("SELECT has_table_privilege('anon','makeup_balance_visibility','SELECT') v")).rows[0].v,false);
+await db.exec(fs.readFileSync(__dirname+'/../migrations/013_makeup_balance_visibility.sql','utf8'));
+const bundle=__dirname+'/../../../outputs/test-db-restore/apply-makeup-cleanup-checked.sql';if(fs.existsSync(bundle))await db.exec(fs.readFileSync(bundle,'utf8'));
+console.log('PASS: admin-only hide/restore, child validation, reason required, attendance preserved, audit and permissions, repeated combined update.');
+}finally{await db.close()}})().catch(e=>{console.error(e.message);process.exit(1)});
