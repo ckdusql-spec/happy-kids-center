@@ -7,6 +7,7 @@ export type ScheduleFact = {
   makeup_source_schedule_id?: string | null; absent_class_log_id?: number | null; note?: string | null; status?: string | null;
 }
 export type AttendanceFact = {
+  makeup_hidden?: boolean;
   id: number; schedule_entry_id?: string | null; staff_id: number; child_id: number; class_date: string; class_time?: string | null;
   status: string; is_group?: boolean | null; group_id?: string | null;
   created_at?: string | null; updated_at?: string | null; voucher_type?: string | null;

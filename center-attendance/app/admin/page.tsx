@@ -1473,7 +1473,7 @@ export default function AdminPage() {
   }, [scheduleChildTimeMakeupRows, scheduleChildAllAbsentLogs])
 
 
-  const scheduleMakeupAbsentProgressItems = useMemo<MakeupAbsentProgressRow[]>(() => makeupBalances(scheduleChildTimeMakeupRows.filter(row=>row.id!==editingEntryId),scheduleChildAllAbsentLogs).filter(b=>b.remainingMinutes>0).map(b=>({
+  const scheduleMakeupAbsentProgressItems = useMemo<MakeupAbsentProgressRow[]>(() => makeupBalances(scheduleChildTimeMakeupRows.filter(row=>row.id!==editingEntryId),scheduleChildAllAbsentLogs).filter(b=>b.remainingMinutes>0&&!b.absence.makeup_hidden).map(b=>({
  absent_log_id:b.absence.id,absent_date:b.absence.class_date,teacher_name:(staffs.find(s=>Number(s.id)===b.absence.staff_id)?.name??'')+' '+(b.absence.class_time ? new Date(b.absence.class_time).toLocaleTimeString('ko-KR',{timeZone:'Asia/Seoul',hour:'2-digit',minute:'2-digit',hour12:false}):''),
  required_minutes:MAKEUP_REQUIRED_MINUTES,completed_minutes:b.usedMinutes,remaining_minutes:b.remainingMinutes,completed:false,used_count:b.usedCount,reserved_minutes:b.reservedMinutes,ambiguous:b.ambiguous
  })),[scheduleChildTimeMakeupRows,scheduleChildAllAbsentLogs,editingEntryId,staffs])

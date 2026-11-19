@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "node tests/reports.cjs && node tests/database.cjs && node tests/monthly.cjs && node tests/advance-makeup.cjs && node tests/makeup-management.cjs && node tests/admin-makeup.cjs && node tests/absence-slot.cjs && node tests/balance-visibility.cjs",
+    "test": "node tests/reports.cjs && node tests/database.cjs && node tests/monthly.cjs && node tests/advance-makeup.cjs && node tests/makeup-management.cjs && node tests/admin-makeup.cjs && node tests/absence-slot.cjs && node tests/balance-visibility.cjs && node tests/early-linked-makeup.cjs",
     "typecheck": "tsc --noEmit --incremental false"
   },
   "dependencies": {

@@ -8,6 +8,8 @@ export async function GET(req:NextRequest){
  async function read(table:string){const rows:Record<string,unknown>[]=[];for(let offset=0;;offset+=500){const {data,error}=await supabaseAdmin.from(table).select('*').eq('child_id',id).order('id').range(offset,offset+499);if(error)throw error;rows.push(...data);if(data.length<500)return rows}}
  const [schedules,logs]=await Promise.all([read('schedule_entries'),read('class_logs')]);
  // All of this child's lessons are necessary to detect ambiguous same-day links across teachers.
- return NextResponse.json({schedules,logs},{headers:{'Cache-Control':'no-store'}})
+ const hidden=new Set<number>();
+ for(let i=0;i<logs.length;i+=200){const {data,error}=await supabaseAdmin.from('makeup_balance_visibility').select('absence_id').eq('hidden',true).in('absence_id',logs.slice(i,i+200).map(l=>Number(l.id)));if(error)throw error;data.forEach(v=>hidden.add(Number(v.absence_id)))}
+ return NextResponse.json({schedules,logs:logs.map(l=>({...l,makeup_hidden:hidden.has(Number(l.id))}))},{headers:{'Cache-Control':'no-store'}})
  }catch(e){return NextResponse.json({message:(e as Error).message},{status:400})}
 }
